@@ -4,7 +4,9 @@ English | [简体中文](./README.md)
 
 > A modern, cross-platform terminal / SSH client — bundling a local terminal, remote SSH, SFTP, host monitoring, port forwarding, and an AI assistant into a single desktop app.
 
-AShell focuses on performance, privacy, and customizability. All SSH credentials are encrypted at rest locally; the AI assistant runs on your own machine — your keys never leave your device.
+AShell focuses on performance, privacy, and customizability. All SSH credentials are encrypted at rest locally; the AI assistant runs on your own machine - your keys never leave your device.
+
+![AShell](./ui.png)
 
 ---
 
