@@ -1,0 +1,88 @@
+[package]
+name = "ashell"
+version = "0.1.0"
+description = "A modern cross-platform terminal / SSH client built with Tauri 2 + Vue 3"
+authors = ["vcqr"]
+license = "MIT"
+repository = "https://github.com/vcqr/ashell"
+homepage = "https://github.com/vcqr/ashell"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "ashell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP / WebSocket server
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["multipart"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "codec"] }
+futures = "0.3"
+futures-util = "0.3"
+
+# Database
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+    "chrono",
+] }
+
+# Logging
+log = "0.4"
+env_logger = "0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi", "std", "smallvec"] }
+
+# SSH / SFTP
+russh = "0"
+russh-sftp = "2"
+russh-keys = "0"
+
+# Utilities
+anyhow = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+once_cell = "1"
+bytes = "1"
+
+# Crypto - AES-GCM for credential encryption
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"
+hex = "0.4"
+subtle = "2"
+
+# System font enumeration
+font-kit = "0.14"
+
+# Local PTY (Windows ConPTY / Unix forkpty)
+portable-pty = "0.9"
+
+# Serial port
+serialport = { version = "4", default-features = false }
+
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Threading", "Win32_Foundation"] }

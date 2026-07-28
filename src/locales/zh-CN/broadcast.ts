@@ -1,0 +1,20 @@
+export default {
+  title: "广播输入",
+  source: "输入来源",
+  sourceFollowActive: "跟随当前激活 tab（现：{name}）",
+  targetTabs: "目标 tab",
+  selectedCount: "{count} 选中",
+  noTabs: "没有打开的 tab",
+  remoteWindow: "远程窗口",
+  sourceTag: "源",
+  sourceTooltip: "当前广播源；自己不能作为目标",
+  autoEnter: "发送命令片段时自动追加回车",
+  realTimeHint: "按键级实时转发；只有「输入来源」tab 的键盘输入会复制到目标。支持跨窗口。",
+  enabledHint: "打开开关后，源 tab 的键盘输入会同步到所有勾选的目标 tab。",
+  tabLabel: {
+    local: "[本地]",
+    ssh: "[SSH]",
+    remoteWindow: " [其他窗口]",
+    unnamed: "(未命名)",
+  },
+} as const

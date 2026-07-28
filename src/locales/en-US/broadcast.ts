@@ -1,0 +1,20 @@
+export default {
+  title: "Broadcast Input",
+  source: "Input source",
+  sourceFollowActive: "Follow active tab (current: {name})",
+  targetTabs: "Target tabs",
+  selectedCount: "{count} selected",
+  noTabs: "No open tabs",
+  remoteWindow: "Remote window",
+  sourceTag: "Source",
+  sourceTooltip: "Current broadcast source; cannot be a target",
+  autoEnter: "Auto-append Enter when sending command snippets",
+  realTimeHint: "Keystroke-level real-time forwarding; only the input source tab's keyboard input is copied to targets. Supports cross-window.",
+  enabledHint: "When enabled, the source tab's keyboard input will be synced to all checked target tabs.",
+  tabLabel: {
+    local: "[Local]",
+    ssh: "[SSH]",
+    remoteWindow: " [Other window]",
+    unnamed: "(Unnamed)",
+  },
+} as const

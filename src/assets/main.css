@@ -1,0 +1,116 @@
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+:root {
+  --ashell-header-h: 44px;
+  --ashell-activity-w: 0px;
+  --ashell-bg-alpha: 1;
+  --ashell-wallpaper-opacity: 1;
+  --ashell-bg: rgba(15, 17, 21, var(--ashell-bg-alpha));
+  --ashell-terminal-bg: rgba(11, 13, 18, var(--ashell-bg-alpha));
+  --ashell-panel-bg: rgba(19, 22, 28, var(--ashell-bg-alpha));
+  --ashell-panel-bg-soft: rgba(28, 32, 39, var(--ashell-bg-alpha));
+  --ashell-header-start: rgba(26, 30, 38, var(--ashell-bg-alpha));
+  --ashell-header-end: rgba(19, 22, 28, var(--ashell-bg-alpha));
+  --ashell-border: rgba(255, 255, 255, 0.08);
+  --ashell-border-soft: rgba(255, 255, 255, 0.06);
+  --ashell-text: rgba(255, 255, 255, 0.92);
+  --ashell-text-strong: #fff;
+  --ashell-text-muted: rgba(255, 255, 255, 0.55);
+  --ashell-text-subtle: rgba(255, 255, 255, 0.4);
+  --ashell-hover: rgba(255, 255, 255, 0.06);
+  --ashell-active: rgba(255, 255, 255, 0.08);
+  --ashell-shadow: rgba(0, 0, 0, 0.35);
+  --ashell-terminal-text: #e6e6e6;
+  --ashell-terminal-output: #d4d4d4;
+  --ashell-prompt: #4ade80;
+  --ashell-primary: #7c5cff;
+  --ashell-primary-hover: #9277ff;
+  --ashell-primary-pressed: #6a4ae6;
+  --ashell-bg-elevated: #1e2128;
+  --ashell-accent: #80b5ff;
+  --ashell-accent-soft: rgba(128, 181, 255, 0.18);
+  --ashell-text-secondary: var(--ashell-text-muted);
+  color-scheme: dark;
+}
+
+:root[data-ashell-theme='light'] {
+  --ashell-bg: rgba(244, 246, 251, var(--ashell-bg-alpha));
+  --ashell-terminal-bg: rgba(255, 255, 255, var(--ashell-bg-alpha));
+  --ashell-panel-bg: rgba(255, 255, 255, var(--ashell-bg-alpha));
+  --ashell-panel-bg-soft: rgba(243, 245, 250, var(--ashell-bg-alpha));
+  --ashell-header-start: rgba(255, 255, 255, var(--ashell-bg-alpha));
+  --ashell-header-end: rgba(244, 246, 251, var(--ashell-bg-alpha));
+  --ashell-border: rgba(20, 24, 33, 0.12);
+  --ashell-border-soft: rgba(20, 24, 33, 0.08);
+  --ashell-text: rgba(20, 24, 33, 0.86);
+  --ashell-text-strong: #141821;
+  --ashell-text-muted: rgba(20, 24, 33, 0.6);
+  --ashell-text-subtle: rgba(20, 24, 33, 0.45);
+  --ashell-hover: rgba(20, 24, 33, 0.06);
+  --ashell-active: rgba(124, 92, 255, 0.1);
+  --ashell-shadow: rgba(20, 24, 33, 0.14);
+  --ashell-terminal-text: #1f2937;
+  --ashell-terminal-output: #374151;
+  --ashell-prompt: #15803d;
+  --ashell-bg-elevated: #ffffff;
+  --ashell-accent: #3b82f6;
+  --ashell-accent-soft: rgba(59, 130, 246, 0.12);
+  --ashell-text-secondary: var(--ashell-text-muted);
+  color-scheme: light;
+}
+
+body {
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  color: var(--ashell-text);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root[data-ashell-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(20, 24, 33, 0.18);
+}
+
+:root[data-ashell-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 24, 33, 0.32);
+}

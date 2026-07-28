@@ -17,21 +17,29 @@ AShell 注重性能、隐私与可定制性。所有 SSH 凭证本地加密存�
 - **多 Tab 多窗口**：Tab 拖拽重排、右键菜单（重连 / 断开 / 复制连接 / 新窗口 / 复制 SSH 地址 / 重命名 / 导出会话），跨窗口无缝操作。
 - **本地终端**：Windows ConPTY / Unix forkpty，支持 PowerShell、cmd、Git Bash、Bash、Zsh、Fish。
 - **远程 SSH**：PTY + 二进制安全帧透传，颜色控制码完整保留。
+- **Telnet / 串口**：除 SSH 外，支持 Telnet 与串口终端连接。
 - **渲染加速**：WebGL 渲染 + 连字（ligatures）+ 网页链接可点 + Unicode 11 + 搜索 + 序列化。
 - **进度条识别**：自动识别 `cargo` / `brew` / `wget` / `curl` / `git` / `rsync` / `docker` 等命令的文本进度，同步到任务栏与终端顶部。
+- **命令输入建议**：Trie 前缀匹配 + 历史关键字搜索，可清空历史。
+- **sudo 自动填充**：识别 sudo 密码提示并自动填充。
 - **可配置操作**：Ctrl + 滚轮调字号、鼠标右键 / 中键行为可配、Ctrl + F 搜索浮层。
+- **断连重连**：离线恢复显示"重新连接"浮层按钮，本地终端退出后自动关闭 Tab。
 
 ### 📁 主机管理
 - **无限层级目录树**：拖拽移动子树、级联删除、跨目录复制，按目录组织你的主机。
 - **凭证加密**：密码 / 私钥用 AES-256-GCM 加密落盘，永不通过接口外泄。
 - **主机元信息**：名称、地址、端口、用户名、图标、颜色、描述，自由归类。
 - **可调宽侧面板**：边缘拖拽调宽，宽度持久化记忆。
+- **左右分栏表单**：基本信息与连接配置分栏，编辑更清晰。
 
 ### 📂 SFTP 文件管理
 - **完整 CRUD**：列出（含属主 / 权限 / 时间戳）、新建目录 / 文件、删除、重命名、属性查看。
 - **流式传输**：上传带进度与可取消、下载走原生"另存为"对话框、支持文件夹整传。
 - **路径面包屑**：可点击 + 可编辑，快速跳转。
 - **连接复用**：与终端共享同一 SSH 连接，无需重新认证。
+- **在线编辑**：内置 CodeMirror 编辑器，支持查找 / 替换、字号调节、行列状态栏。
+- **列宽可调**：表格列宽可拖动调整。
+- **权限着色**：权限列按属主 / 属组 / 其他三段独立着色。
 
 ### 📊 主机监控
 - **实时资源**：CPU / 内存 / 交换 / 磁盘 / 累计网络字节，1.5s 节流轮询。
@@ -49,11 +57,12 @@ AShell 注重性能、隐私与可定制性。所有 SSH 凭证本地加密存�
 - **跨窗口支持**：源 Tab 可选、自动追加回车，跨窗口广播无障碍。
 
 ### 🤖 AI 助手
-- **Claude 驱动**：每个终端会话独立 AI 进程，互不干扰。
+- **多 Agent 驱动**：Claude（sidecar-cc）与 Pi coding agent（sidecar-pi），每个终端会话独立进程。
+- **发送给 AI**：终端选中文本与 SFTP 右键菜单支持发送给 AI 助手。
 - **执行过程可折叠**：工具调用与返回聚合成可折叠块，对话整洁可读。
 - **破坏性操作确认**：执行前弹 y/n 确认条，敏感信息（SSH 会话凭证）不直接透露。
 - **远程命令执行**：AI 自动复用当前 SSH 会话，在你授权后执行远程命令。
-- **模型可配**：支持自定义 API Key、Base URL、模型名，兼容代理与自托管端点。
+- **模型可配**：支持自定义 API Key、Base URL、模型名，按 sidecar 类型区分显示，兼容代理与自托管端点。
 
 ### 🎨 窗口与外观
 - **透明度滑块**：实时调整窗口不透明度。
@@ -65,6 +74,7 @@ AShell 注重性能、隐私与可定制性。所有 SSH 凭证本地加密存�
 ### 🌐 国际化与启动
 - **双语**：简体中文 / English 完整覆盖，UI 语言随选随切。
 - **会话恢复**：记住上次的 Tab 列表，启动时骨架恢复。
+- **自动连接**：启动时自动连接记住的 Tab。
 - **默认 Shell**：可选 Auto / PowerShell / cmd / Git Bash / Bash / Zsh / Fish，启动自动打开本地终端。
 
 ---
@@ -81,6 +91,38 @@ AShell 注重性能、隐私与可定制性。所有 SSH 凭证本地加密存�
 | Windows ARM64 | `*.msi` / `*.exe` |
 | Linux x64 | `*.deb` / `*.rpm` / `*.AppImage` |
 | Linux ARM64 | `*.deb` / `*.rpm` / `*.AppImage` |
+
+---
+
+## 从源码构建
+
+### 环境要求
+
+- [Node.js](https://nodejs.org/) 18+
+- [Rust](https://www.rust-lang.org/)（stable）
+- [Bun](https://bun.sh/)（编译 sidecar 二进制）
+- 平台依赖：macOS 需 Xcode CLT；Windows 需 MSVC；Linux 需 webkit2gtk 等
+
+### 步骤
+
+```bash
+# 1. 安装前端依赖
+npm install
+
+# 2. 安装 sidecar 依赖
+cd sidecar-cc && npm install && cd ..
+cd sidecar-pi && npm install && cd ..
+
+# 3. 开发模式（Vite + Rust 热重载）
+npm run tauri dev
+#    dev 不会自动编译 sidecar，如需 AI 助手请先手动执行：
+npm run sidecar:build
+
+# 4. 生产构建（自动编译 sidecar + 前端 + 打包）
+npm run tauri build
+```
+
+> `npm run tauri build` 会先自动执行 `npm run sidecar:build`（编译 Claude / Pi sidecar 二进制），再执行 `npm run build`（前端类型检查 + Vite 构建），无需手动编译 sidecar。
 
 ---
 
