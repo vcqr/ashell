@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::errors::AppResult;
 use crate::handlers::{ok_msg, ApiResponse};
 use crate::models::{Host, HostCreate, HostUpdate};
-use crate::service::{self, AppState};
+use crate::service::{self, ssh_config::SshConfigHost, AppState};
 
 #[derive(Deserialize)]
 pub struct ListQuery {
@@ -59,4 +59,11 @@ pub async fn delete(
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     service::host::delete(&s.db, id).await?;
     Ok(ok_msg("deleted"))
+}
+
+/// 解析 ~/.ssh/config，返回可导入的主机列表
+pub async fn ssh_config() -> AppResult<Json<ApiResponse<Vec<SshConfigHost>>>> {
+    let hosts = service::ssh_config::parse_ssh_config()
+        .map_err(|e| crate::errors::AppError::Internal(format!("读取 ssh config 失败: {e}")))?;
+    Ok(ApiResponse::ok(hosts))
 }

@@ -33,11 +33,13 @@ import {
   CloseOutline,
   CopyOutline,
   ServerOutline,
+  DownloadOutline,
 } from "@vicons/ionicons5"
 import { FolderAddOutlined } from "@vicons/antd"
 import { useI18n } from "vue-i18n"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
+import SshConfigImportModal from "@/components/SshConfigImportModal.vue"
 import type { HostNode, Host } from "@/types"
 
 const emit = defineEmits<{
@@ -56,6 +58,7 @@ const dialog = useDialog()
 const filter = ref("")
 const selectedKeys = ref<string[]>([])
 const expandedKeys = ref<string[]>([])
+const importModalShow = ref(false)
 
 onMounted(() => {
   void iconStore.ensureLoaded()
@@ -605,6 +608,21 @@ async function onRefresh() {
           </template>
           {{ t("hosts.tree.newFolder") }}
         </NTooltip>
+        <NTooltip>
+          <template #trigger>
+            <NButton
+              size="small"
+              quaternary
+              circle
+              @click="importModalShow = true"
+            >
+              <template #icon>
+                <NIcon><DownloadOutline /></NIcon>
+              </template>
+            </NButton>
+          </template>
+          {{ t("hosts.tree.importSshConfig") }}
+        </NTooltip>
         <NButton size="small" type="primary" @click="newHostAtSelection">
           <template #icon>
             <NIcon><AddOutline /></NIcon>
@@ -768,6 +786,8 @@ async function onRefresh() {
         </template>
       </NCard>
     </NModal>
+
+    <SshConfigImportModal v-model:show="importModalShow" />
   </div>
 </template>
 

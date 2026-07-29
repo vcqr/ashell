@@ -70,6 +70,11 @@ pub fn build_router(state: AppState) -> Router {
                 .put(handlers::host::update)
                 .delete(handlers::host::delete),
         )
+        // 从 ~/.ssh/config 导入主机
+        .route(
+            "/api/hosts/ssh-config",
+            get(handlers::host::ssh_config),
+        )
         // SSH 终端 WebSocket
         .route(
             "/api/ssh/terminal/{host_id}",

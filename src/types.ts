@@ -103,6 +103,15 @@ export interface HostUpdate {
   flow_control?: string | null
 }
 
+/** 从 ~/.ssh/config 解析出的主机条目 */
+export interface SshConfigHost {
+  name: string
+  addr: string
+  port: string
+  username?: string | null
+  identity_file?: string | null
+}
+
 /* ---------- SFTP DTO ---------- */
 
 export interface SftpFile {

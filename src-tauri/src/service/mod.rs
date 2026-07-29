@@ -6,6 +6,7 @@ pub mod local_pty;
 pub mod serial;
 pub mod sftp;
 pub mod ssh;
+pub mod ssh_config;
 pub mod sysinfo;
 pub mod telnet;
 

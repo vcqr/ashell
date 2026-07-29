@@ -1,5 +1,5 @@
 import { request } from './client'
-import type { Host, HostCreate, HostUpdate, HostWithGroup } from '@/types'
+import type { Host, HostCreate, HostUpdate, HostWithGroup, SshConfigHost } from '@/types'
 
 export function listHosts(opts: { gid?: number; withGroup?: boolean } = {}): Promise<Host[]> {
   return request<Host[]>('/api/hosts', {
@@ -34,4 +34,9 @@ export function updateHost(id: number, input: HostUpdate): Promise<Host> {
 
 export function deleteHost(id: number): Promise<void> {
   return request<void>(`/api/hosts/${id}`, { method: 'DELETE' })
+}
+
+/** 从 ~/.ssh/config 解析主机列表 */
+export function listSshConfigHosts(): Promise<SshConfigHost[]> {
+  return request<SshConfigHost[]>('/api/hosts/ssh-config')
 }
