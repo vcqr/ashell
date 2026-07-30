@@ -79,6 +79,7 @@ jobs:
       - name: generate release notes
         id: release_notes
         if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         run: |
           # 获取上一个 tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
