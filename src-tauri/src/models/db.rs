@@ -146,5 +146,25 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v4: hosts 增加 SSH 保活/超时/idle 配置字段
+    if current < 4 {
+        sqlx::query("ALTER TABLE hosts ADD COLUMN keepalive_interval INTEGER")
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE hosts ADD COLUMN inactivity_timeout INTEGER")
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE hosts ADD COLUMN idle_send_interval INTEGER")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (4)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }

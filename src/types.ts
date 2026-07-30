@@ -53,6 +53,12 @@ export interface Host {
   parity?: string | null
   /** 串口流控：none/software/hardware（仅 protocol=serial） */
   flow_control?: string | null
+  /** SSH keepalive 间隔（秒），null 使用默认 30s */
+  keepalive_interval?: number | null
+  /** SSH 不活动超时（秒），null 使用默认 120s */
+  inactivity_timeout?: number | null
+  /** 终端 idle 发送空字符间隔（秒），0 或 null 表示不发送 */
+  idle_send_interval?: number | null
   created_at?: string | null
   updated_at?: string | null
 }
@@ -81,6 +87,9 @@ export interface HostCreate {
   stop_bits?: number | null
   parity?: string | null
   flow_control?: string | null
+  keepalive_interval?: number | null
+  inactivity_timeout?: number | null
+  idle_send_interval?: number | null
 }
 
 export interface HostUpdate {
@@ -101,6 +110,9 @@ export interface HostUpdate {
   stop_bits?: number | null
   parity?: string | null
   flow_control?: string | null
+  keepalive_interval?: number | null
+  inactivity_timeout?: number | null
+  idle_send_interval?: number | null
 }
 
 /** 从 ~/.ssh/config 解析出的主机条目 */

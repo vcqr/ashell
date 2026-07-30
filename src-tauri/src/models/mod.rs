@@ -64,6 +64,12 @@ pub struct Host {
     pub parity: Option<String>,
     /// 串口流控：none/software/hardware（仅 protocol=serial）
     pub flow_control: Option<String>,
+    /// SSH keepalive 间隔（秒），0 或 null 使用默认 30s
+    pub keepalive_interval: Option<i64>,
+    /// SSH 不活动超时（秒），0 或 null 使用默认 120s
+    pub inactivity_timeout: Option<i64>,
+    /// 终端 idle 时定时发送空字符的间隔（秒），0 或 null 表示不发送
+    pub idle_send_interval: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -88,6 +94,9 @@ pub struct HostCreate {
     pub stop_bits: Option<i64>,
     pub parity: Option<String>,
     pub flow_control: Option<String>,
+    pub keepalive_interval: Option<i64>,
+    pub inactivity_timeout: Option<i64>,
+    pub idle_send_interval: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +118,9 @@ pub struct HostUpdate {
     pub stop_bits: Option<i64>,
     pub parity: Option<String>,
     pub flow_control: Option<String>,
+    pub keepalive_interval: Option<i64>,
+    pub inactivity_timeout: Option<i64>,
+    pub idle_send_interval: Option<i64>,
 }
 
 /// 列表联表 DTO：包含 host 全字段 + 所属 group 名称 / 上级 gid
@@ -136,6 +148,9 @@ pub struct HostWithGroup {
     pub stop_bits: Option<i64>,
     pub parity: Option<String>,
     pub flow_control: Option<String>,
+    pub keepalive_interval: Option<i64>,
+    pub inactivity_timeout: Option<i64>,
+    pub idle_send_interval: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub group_name: Option<String>,

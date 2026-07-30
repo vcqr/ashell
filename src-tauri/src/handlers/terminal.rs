@@ -260,6 +260,17 @@ async fn run_terminal(
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
 
+    // idle 定时发送空字符保活：配置了 idle_send_interval > 0 时启用，
+    // 每隔该秒数向 PTY 发送 \x00（对终端无害，可防止 NAT/防火墙超时断连）
+    let idle_secs = host.idle_send_interval.unwrap_or(0);
+    let idle_dur = if idle_secs > 0 {
+        Duration::from_secs(idle_secs as u64)
+    } else {
+        Duration::from_secs(u64::MAX / 2)
+    };
+    let idle_timer = tokio::time::sleep(idle_dur);
+    tokio::pin!(idle_timer);
+
     let closed = false;
     loop {
         tokio::select! {
@@ -359,6 +370,10 @@ async fn run_terminal(
                     Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
                     _ => {}
                 }
+            }
+            _ = &mut idle_timer, if idle_secs > 0 => {
+                if channel.data(&[0u8][..]).await.is_err() { break; }
+                idle_timer.as_mut().reset(tokio::time::Instant::now() + idle_dur);
             }
         }
     }

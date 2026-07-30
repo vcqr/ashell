@@ -5,12 +5,15 @@ import {
   NFormItem,
   NInput,
   NInputGroup,
+  NInputNumber,
   NSelect,
   NColorPicker,
   NButton,
   NSpace,
   NGrid,
   NGi,
+  NTabs,
+  NTabPane,
   type FormInst,
   type FormRules,
   type SelectOption,
@@ -56,6 +59,9 @@ interface FormState {
   stop_bits: number
   parity: string
   flow_control: string
+  keepalive_interval: number | null
+  inactivity_timeout: number | null
+  idle_send_interval: number | null
 }
 
 function makeInitial(): FormState {
@@ -78,6 +84,9 @@ function makeInitial(): FormState {
     stop_bits: init?.stop_bits ?? 1,
     parity: init?.parity ?? "none",
     flow_control: init?.flow_control ?? "none",
+    keepalive_interval: init?.keepalive_interval ?? null,
+    inactivity_timeout: init?.inactivity_timeout ?? null,
+    idle_send_interval: init?.idle_send_interval ?? null,
   }
 }
 
@@ -246,6 +255,9 @@ async function submit() {
       stop_bits: isSerial.value ? form.stop_bits : null,
       parity: isSerial.value ? form.parity : null,
       flow_control: isSerial.value ? form.flow_control : null,
+      keepalive_interval: form.keepalive_interval,
+      inactivity_timeout: form.inactivity_timeout,
+      idle_send_interval: form.idle_send_interval,
     }
     emit("submit", payload)
   } else {
@@ -264,6 +276,9 @@ async function submit() {
       stop_bits: isSerial.value ? form.stop_bits : null,
       parity: isSerial.value ? form.parity : null,
       flow_control: isSerial.value ? form.flow_control : null,
+      keepalive_interval: form.keepalive_interval,
+      inactivity_timeout: form.inactivity_timeout,
+      idle_send_interval: form.idle_send_interval,
     }
     if (form.password.length > 0) payload.password = form.password
     if (form.private_key.length > 0) payload.private_key = form.private_key
@@ -335,7 +350,7 @@ function cancel() {
         </NFormItem>
       </div>
 
-      <!-- 右栏：协议、地址、端口、用户名、密码、私钥、私钥文件 -->
+      <!-- 右栏：协议选择 + Tab（通用配置 / 高级配置） -->
       <div class="host-form-col">
         <div class="form-section-title">{{ t("hosts.form.sectionConn") }}</div>
 
@@ -350,142 +365,186 @@ function cancel() {
           />
         </NFormItem>
 
-        <template v-if="!isSerial">
-          <NGrid :cols="3" :x-gap="12">
-            <NGi :span="2">
-              <NFormItem :label="t('hosts.form.addr')" path="addr">
-                <NInput v-model:value="form.addr" :placeholder="t('hosts.form.addrPlaceholder')" />
+        <NTabs type="line" size="small" class="host-form-tabs">
+          <NTabPane :tab="t('hosts.form.tabGeneral')" name="general">
+            <template v-if="!isSerial">
+              <NGrid :cols="3" :x-gap="12">
+                <NGi :span="2">
+                  <NFormItem :label="t('hosts.form.addr')" path="addr">
+                    <NInput v-model:value="form.addr" :placeholder="t('hosts.form.addrPlaceholder')" />
+                  </NFormItem>
+                </NGi>
+                <NGi>
+                  <NFormItem :label="t('hosts.form.port')" path="port">
+                    <NInput v-model:value="form.port" :placeholder="form.protocol === 'telnet' ? '23' : t('hosts.form.portPlaceholder')" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NFormItem :label="t('hosts.form.username')" path="username">
+                <NInput v-model:value="form.username" :placeholder="t('hosts.form.usernamePlaceholder')" />
               </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem :label="t('hosts.form.port')" path="port">
-                <NInput v-model:value="form.port" :placeholder="form.protocol === 'telnet' ? '23' : t('hosts.form.portPlaceholder')" />
-              </NFormItem>
-            </NGi>
-          </NGrid>
 
-          <NFormItem :label="t('hosts.form.username')" path="username">
-            <NInput v-model:value="form.username" :placeholder="t('hosts.form.usernamePlaceholder')" />
-          </NFormItem>
-
-          <NFormItem :label="t('hosts.form.password')" path="password">
-            <NInput
-              v-model:value="form.password"
-              type="password"
-              show-password-on="click"
-              :placeholder="props.mode === 'edit' ? t('hosts.form.passwordPlaceholder') : t('hosts.form.passwordOptional')"
-            />
-          </NFormItem>
-
-          <template v-if="isSsh">
-            <NFormItem :label="t('hosts.form.privateKey')" path="private_key">
-              <NInput
-                v-model:value="form.private_key"
-                type="textarea"
-                :autosize="{ minRows: 3, maxRows: 6 }"
-                :placeholder="
-                  props.mode === 'edit'
-                    ? t('hosts.form.privateKeyPlaceholder')
-                    : t('hosts.form.privateKeyOptional')
-                "
-              />
-            </NFormItem>
-
-            <NFormItem :label="t('hosts.form.privateKeyPath')" path="private_key_path">
-              <NInputGroup>
+              <NFormItem :label="t('hosts.form.password')" path="password">
                 <NInput
-                  v-model:value="form.private_key_path"
-                  :placeholder="t('hosts.form.privateKeyPathPlaceholder')"
+                  v-model:value="form.password"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="props.mode === 'edit' ? t('hosts.form.passwordPlaceholder') : t('hosts.form.passwordOptional')"
                 />
-                <NButton @click="pickPrivateKeyFile">{{ t("hosts.form.selectFile") }}</NButton>
-                <NButton
-                  v-if="form.private_key_path"
-                  quaternary
-                  @click="clearPrivateKeyPath"
-                >
-                  {{ t("hosts.form.clearFile") }}
-                </NButton>
-              </NInputGroup>
-            </NFormItem>
-          </template>
-        </template>
+              </NFormItem>
 
-        <template v-else>
-          <NFormItem :label="t('hosts.form.serialPath')" path="addr">
-            <NInput v-model:value="form.addr" :placeholder="t('hosts.form.serialPathPlaceholder')" />
-          </NFormItem>
+              <template v-if="isSsh">
+                <NFormItem :label="t('hosts.form.privateKey')" path="private_key">
+                  <NInput
+                    v-model:value="form.private_key"
+                    type="textarea"
+                    :autosize="{ minRows: 3, maxRows: 6 }"
+                    :placeholder="
+                      props.mode === 'edit'
+                        ? t('hosts.form.privateKeyPlaceholder')
+                        : t('hosts.form.privateKeyOptional')
+                    "
+                  />
+                </NFormItem>
 
-          <NGrid :cols="3" :x-gap="12">
-            <NGi>
-              <NFormItem :label="t('hosts.form.baudRate')" path="baud_rate">
-                <NSelect
-                  v-model:value="form.baud_rate"
-                  :options="[
-                    { label: '1200', value: 1200 },
-                    { label: '2400', value: 2400 },
-                    { label: '4800', value: 4800 },
-                    { label: '9600', value: 9600 },
-                    { label: '19200', value: 19200 },
-                    { label: '38400', value: 38400 },
-                    { label: '57600', value: 57600 },
-                    { label: '115200', value: 115200 },
-                  ]"
-                />
-              </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem :label="t('hosts.form.dataBits')" path="data_bits">
-                <NSelect
-                  v-model:value="form.data_bits"
-                  :options="[
-                    { label: '5', value: 5 },
-                    { label: '6', value: 6 },
-                    { label: '7', value: 7 },
-                    { label: '8', value: 8 },
-                  ]"
-                />
-              </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem :label="t('hosts.form.stopBits')" path="stop_bits">
-                <NSelect
-                  v-model:value="form.stop_bits"
-                  :options="[
-                    { label: '1', value: 1 },
-                    { label: '2', value: 2 },
-                  ]"
-                />
-              </NFormItem>
-            </NGi>
-          </NGrid>
+                <NFormItem :label="t('hosts.form.privateKeyPath')" path="private_key_path">
+                  <NInputGroup>
+                    <NInput
+                      v-model:value="form.private_key_path"
+                      :placeholder="t('hosts.form.privateKeyPathPlaceholder')"
+                    />
+                    <NButton @click="pickPrivateKeyFile">{{ t("hosts.form.selectFile") }}</NButton>
+                    <NButton
+                      v-if="form.private_key_path"
+                      quaternary
+                      @click="clearPrivateKeyPath"
+                    >
+                      {{ t("hosts.form.clearFile") }}
+                    </NButton>
+                  </NInputGroup>
+                </NFormItem>
+              </template>
+            </template>
 
-          <NGrid :cols="2" :x-gap="12">
-            <NGi>
-              <NFormItem :label="t('hosts.form.parity')" path="parity">
-                <NSelect
-                  v-model:value="form.parity"
-                  :options="[
-                    { label: t('hosts.form.parityNone'), value: 'none' },
-                    { label: t('hosts.form.parityOdd'), value: 'odd' },
-                    { label: t('hosts.form.parityEven'), value: 'even' },
-                  ]"
-                />
+            <template v-else>
+              <NFormItem :label="t('hosts.form.serialPath')" path="addr">
+                <NInput v-model:value="form.addr" :placeholder="t('hosts.form.serialPathPlaceholder')" />
               </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem :label="t('hosts.form.flowControl')" path="flow_control">
-                <NSelect
-                  v-model:value="form.flow_control"
-                  :options="[
-                    { label: t('hosts.form.flowNone'), value: 'none' },
-                    { label: t('hosts.form.flowSoftware'), value: 'software' },
-                    { label: t('hosts.form.flowHardware'), value: 'hardware' },
-                  ]"
-                />
-              </NFormItem>
-            </NGi>
-          </NGrid>
-        </template>
+
+              <NGrid :cols="3" :x-gap="12">
+                <NGi>
+                  <NFormItem :label="t('hosts.form.baudRate')" path="baud_rate">
+                    <NSelect
+                      v-model:value="form.baud_rate"
+                      :options="[
+                        { label: '1200', value: 1200 },
+                        { label: '2400', value: 2400 },
+                        { label: '4800', value: 4800 },
+                        { label: '9600', value: 9600 },
+                        { label: '19200', value: 19200 },
+                        { label: '38400', value: 38400 },
+                        { label: '57600', value: 57600 },
+                        { label: '115200', value: 115200 },
+                      ]"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi>
+                  <NFormItem :label="t('hosts.form.dataBits')" path="data_bits">
+                    <NSelect
+                      v-model:value="form.data_bits"
+                      :options="[
+                        { label: '5', value: 5 },
+                        { label: '6', value: 6 },
+                        { label: '7', value: 7 },
+                        { label: '8', value: 8 },
+                      ]"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi>
+                  <NFormItem :label="t('hosts.form.stopBits')" path="stop_bits">
+                    <NSelect
+                      v-model:value="form.stop_bits"
+                      :options="[
+                        { label: '1', value: 1 },
+                        { label: '2', value: 2 },
+                      ]"
+                    />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NGrid :cols="2" :x-gap="12">
+                <NGi>
+                  <NFormItem :label="t('hosts.form.parity')" path="parity">
+                    <NSelect
+                      v-model:value="form.parity"
+                      :options="[
+                        { label: t('hosts.form.parityNone'), value: 'none' },
+                        { label: t('hosts.form.parityOdd'), value: 'odd' },
+                        { label: t('hosts.form.parityEven'), value: 'even' },
+                      ]"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi>
+                  <NFormItem :label="t('hosts.form.flowControl')" path="flow_control">
+                    <NSelect
+                      v-model:value="form.flow_control"
+                      :options="[
+                        { label: t('hosts.form.flowNone'), value: 'none' },
+                        { label: t('hosts.form.flowSoftware'), value: 'software' },
+                        { label: t('hosts.form.flowHardware'), value: 'hardware' },
+                      ]"
+                    />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+            </template>
+          </NTabPane>
+
+          <NTabPane v-if="isSsh" :tab="t('hosts.form.tabAdvanced')" name="advanced">
+            <NGrid :cols="3" :x-gap="12">
+              <NGi>
+                <NFormItem :label="t('hosts.form.keepaliveInterval')" path="keepalive_interval">
+                  <NInputNumber
+                    v-model:value="form.keepalive_interval"
+                    :min="0"
+                    :placeholder="t('hosts.form.keepaliveIntervalPlaceholder')"
+                    style="width: 100%"
+                  />
+                </NFormItem>
+              </NGi>
+              <NGi>
+                <NFormItem :label="t('hosts.form.inactivityTimeout')" path="inactivity_timeout">
+                  <NInputNumber
+                    v-model:value="form.inactivity_timeout"
+                    :min="0"
+                    :placeholder="t('hosts.form.inactivityTimeoutPlaceholder')"
+                    style="width: 100%"
+                  />
+                </NFormItem>
+              </NGi>
+              <NGi>
+                <NFormItem :label="t('hosts.form.idleSendInterval')" path="idle_send_interval">
+                  <NInputNumber
+                    v-model:value="form.idle_send_interval"
+                    :min="0"
+                    :placeholder="t('hosts.form.idleSendIntervalPlaceholder')"
+                    style="width: 100%"
+                  />
+                </NFormItem>
+              </NGi>
+            </NGrid>
+            <div class="form-field-hints">
+              <p class="form-field-hint">{{ t('hosts.form.keepaliveIntervalDesc') }}</p>
+              <p class="form-field-hint">{{ t('hosts.form.inactivityTimeoutDesc') }}</p>
+              <p class="form-field-hint">{{ t('hosts.form.idleSendIntervalDesc') }}</p>
+            </div>
+          </NTabPane>
+        </NTabs>
       </div>
     </div>
 
@@ -523,5 +582,19 @@ function cancel() {
   font-weight: 600;
   color: var(--ashell-text-strong);
   margin-bottom: 8px;
+}
+.host-form-tabs {
+  margin-top: 4px;
+}
+.form-field-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.form-field-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ashell-text-3, #999);
+  line-height: 1.5;
 }
 </style>

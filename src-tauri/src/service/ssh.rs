@@ -132,8 +132,16 @@ impl Session {
         let addr = (host.addr.as_str(), port);
 
         let config = Arc::new(client::Config {
-            keepalive_interval: Some(Duration::from_secs(30)),
-            inactivity_timeout: Some(Duration::from_secs(120)),
+            keepalive_interval: host
+                .keepalive_interval
+                .filter(|&v| v > 0)
+                .map(|v| Duration::from_secs(v as u64))
+                .or(Some(Duration::from_secs(30))),
+            inactivity_timeout: host
+                .inactivity_timeout
+                .filter(|&v| v > 0)
+                .map(|v| Duration::from_secs(v as u64))
+                .or(Some(Duration::from_secs(120))),
             ..Default::default()
         });
 

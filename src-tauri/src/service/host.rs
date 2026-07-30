@@ -50,8 +50,8 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     let pk_enc = enc_opt(key, input.private_key.as_deref())?;
 
     let res = sqlx::query(
-        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, protocol, baud_rate, data_bits, stop_bits, parity, flow_control)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(input.gid)
     .bind(&input.name)
@@ -70,6 +70,9 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     .bind(input.stop_bits)
     .bind(&input.parity)
     .bind(&input.flow_control)
+    .bind(input.keepalive_interval)
+    .bind(input.inactivity_timeout)
+    .bind(input.idle_send_interval)
     .execute(pool)
     .await?;
 
@@ -146,6 +149,7 @@ pub async fn list_with_group(
         SELECT h.id, h.gid, h.name, h.icon, h.color, h.addr, h.port, h.username,
                h.password, h.desc, h.is_del, h.private_key, h.private_key_path,
                h.protocol, h.baud_rate, h.data_bits, h.stop_bits, h.parity, h.flow_control,
+               h.keepalive_interval, h.inactivity_timeout, h.idle_send_interval,
                h.created_at, h.updated_at,
                g.name AS group_name, g.parent_id AS parent_gid
         FROM hosts h
@@ -211,6 +215,9 @@ pub async fn update(
     let new_stop_bits = input.stop_bits.or(cur.stop_bits);
     let new_parity = input.parity.or(cur.parity.clone());
     let new_flow_control = input.flow_control.or(cur.flow_control.clone());
+    let new_keepalive_interval = input.keepalive_interval.or(cur.keepalive_interval);
+    let new_inactivity_timeout = input.inactivity_timeout.or(cur.inactivity_timeout);
+    let new_idle_send_interval = input.idle_send_interval.or(cur.idle_send_interval);
 
     if let Some(path) = new_private_key_path.as_deref() {
         if !path.is_empty() {
@@ -223,6 +230,7 @@ pub async fn update(
            SET gid = ?, name = ?, icon = ?, color = ?, addr = ?, port = ?, username = ?,
                password = ?, desc = ?, private_key = ?, private_key_path = ?,
                protocol = ?, baud_rate = ?, data_bits = ?, stop_bits = ?, parity = ?, flow_control = ?,
+               keepalive_interval = ?, inactivity_timeout = ?, idle_send_interval = ?,
                updated_at = datetime('now')
            WHERE id = ?"#,
     )
@@ -243,6 +251,9 @@ pub async fn update(
     .bind(new_stop_bits)
     .bind(&new_parity)
     .bind(&new_flow_control)
+    .bind(new_keepalive_interval)
+    .bind(new_inactivity_timeout)
+    .bind(new_idle_send_interval)
     .bind(id)
     .execute(pool)
     .await?;
