@@ -105,6 +105,7 @@ export default {
     sectionAdvanced: "Advanced",
     tabGeneral: "General",
     tabAdvanced: "Advanced",
+    unitSeconds: "s",
     keepaliveInterval: "Keepalive Interval",
     keepaliveIntervalPlaceholder: "Default 30s",
     keepaliveIntervalDesc: "SSH protocol keepalive packet interval (seconds)",

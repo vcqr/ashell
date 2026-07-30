@@ -105,6 +105,7 @@ export default {
     sectionAdvanced: "高级设置",
     tabGeneral: "通用配置",
     tabAdvanced: "高级配置",
+    unitSeconds: "秒",
     keepaliveInterval: "Keepalive 间隔",
     keepaliveIntervalPlaceholder: "默认 30 秒",
     keepaliveIntervalDesc: "SSH 协议级保活包发送间隔（秒）",

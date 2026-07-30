@@ -514,7 +514,9 @@ function cancel() {
                     :min="0"
                     :placeholder="t('hosts.form.keepaliveIntervalPlaceholder')"
                     style="width: 100%"
-                  />
+                  >
+                    <template #suffix>{{ t('hosts.form.unitSeconds') }}</template>
+                  </NInputNumber>
                 </NFormItem>
               </NGi>
               <NGi>
@@ -524,7 +526,9 @@ function cancel() {
                     :min="0"
                     :placeholder="t('hosts.form.inactivityTimeoutPlaceholder')"
                     style="width: 100%"
-                  />
+                  >
+                    <template #suffix>{{ t('hosts.form.unitSeconds') }}</template>
+                  </NInputNumber>
                 </NFormItem>
               </NGi>
               <NGi>
@@ -534,7 +538,9 @@ function cancel() {
                     :min="0"
                     :placeholder="t('hosts.form.idleSendIntervalPlaceholder')"
                     style="width: 100%"
-                  />
+                  >
+                    <template #suffix>{{ t('hosts.form.unitSeconds') }}</template>
+                  </NInputNumber>
                 </NFormItem>
               </NGi>
             </NGrid>

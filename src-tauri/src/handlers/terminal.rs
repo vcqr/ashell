@@ -128,6 +128,10 @@ fn push_limited(buf: &mut Vec<u8>, data: &[u8], limit: usize) {
     }
 }
 
+fn reset_idle(timer: &mut std::pin::Pin<&mut tokio::time::Sleep>, dur: Duration) {
+    timer.as_mut().reset(tokio::time::Instant::now() + dur);
+}
+
 fn tail_chars(text: &str, max: usize) -> String {
     text.chars()
         .rev()
@@ -277,6 +281,7 @@ async fn run_terminal(
             // 外部命令注入（POST /api/ssh/send/{sid}）
             Some(data) = cmd_rx.recv() => {
                 if channel.data(data.as_bytes()).await.is_err() { break; }
+                reset_idle(&mut idle_timer, idle_dur);
             }
             msg = ws_rx.next() => {
                 match msg {
@@ -292,6 +297,7 @@ async fn run_terminal(
                                             INPUT_BUF_LIMIT,
                                         );
                                         if channel.data(data.as_bytes()).await.is_err() { break; }
+                                        reset_idle(&mut idle_timer, idle_dur);
                                     }
                                     ClientMsg::Resize { cols, rows } => {
                                         let _ = channel.window_change(cols, rows, 0, 0).await;
@@ -304,19 +310,25 @@ async fn run_terminal(
                                             if !pwd.is_empty() {
                                                 let payload = format!("{pwd}\r");
                                                 if channel.data(payload.as_bytes()).await.is_err() { break; }
+                                                reset_idle(&mut idle_timer, idle_dur);
                                             }
                                         }
                                     }
                                 }
                             } else if channel.data(s.as_bytes()).await.is_err() {
                                 break;
+                            } else {
+                                reset_idle(&mut idle_timer, idle_dur);
                             }
                         } else if channel.data(s.as_bytes()).await.is_err() {
                             break;
+                        } else {
+                            reset_idle(&mut idle_timer, idle_dur);
                         }
                     }
                     Some(Ok(Message::Binary(b))) => {
                         if channel.data(&b[..]).await.is_err() { break; }
+                        reset_idle(&mut idle_timer, idle_dur);
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(_)) => {}
@@ -342,6 +354,7 @@ async fn run_terminal(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
                         }
+                        reset_idle(&mut idle_timer, idle_dur);
                     }
                     Some(ChannelMsg::ExtendedData { ref data, ext: _ }) => {
                         let bytes = data.to_vec();
@@ -358,6 +371,7 @@ async fn run_terminal(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
                         }
+                        reset_idle(&mut idle_timer, idle_dur);
                     }
                     Some(ChannelMsg::ExitStatus { exit_status: _ }) => {
                         if !closed {
@@ -373,7 +387,7 @@ async fn run_terminal(
             }
             _ = &mut idle_timer, if idle_secs > 0 => {
                 if channel.data(&[0u8][..]).await.is_err() { break; }
-                idle_timer.as_mut().reset(tokio::time::Instant::now() + idle_dur);
+                reset_idle(&mut idle_timer, idle_dur);
             }
         }
     }
