@@ -54,4 +54,10 @@ export default {
     cancel: "Cancel",
     save: "Save",
   },
+  providerSwitch: {
+    title: "Switch Provider",
+    noProvider: "No provider configured",
+    noProviderHint: "Please add an AI provider in Settings",
+    switchHint: "Restart session to take effect",
+  },
 } as const

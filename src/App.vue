@@ -26,6 +26,7 @@ import {
   SquareOutline,
   CopyOutline,
   AddOutline,
+  CubeOutline,
 } from "@vicons/ionicons5";
 import TabBar from "@/components/TabBar.vue";
 import HostsDrawer from "@/components/HostsDrawer.vue";
@@ -36,6 +37,7 @@ import SftpDrawer from "@/components/SftpDrawer.vue";
 import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
+import AiProvidersModal from "@/components/AiProvidersModal.vue";
 import { useApiStore } from "@/stores/api";
 import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
@@ -106,6 +108,7 @@ const {
   hostInfoOpen,
   forwardOpen,
   settingsOpen,
+  aiProvidersOpen,
   activityBarVisible,
   toggleAi,
   toggleSftp,
@@ -241,6 +244,16 @@ const {
                 </NTooltip>
                 <NTooltip>
                   <template #trigger>
+                    <NButton circle quaternary @click="aiProvidersOpen = true">
+                      <template #icon>
+                        <NIcon :size="18"><CubeOutline /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  {{ t("settings.ai.provider.title") }}
+                </NTooltip>
+                <NTooltip>
+                  <template #trigger>
                     <NButton circle quaternary @click="settingsOpen = true">
                       <template #icon>
                         <NIcon :size="18"><SettingsOutline /></NIcon>
@@ -372,6 +385,7 @@ const {
               :resolved-theme="resolvedTheme"
               :theme-title="themeTitle"
             />
+            <AiProvidersModal v-model:open="aiProvidersOpen" />
           </div>
         </NNotificationProvider>
       </NDialogProvider>

@@ -54,4 +54,10 @@ export default {
     cancel: "取消",
     save: "保存",
   },
+  providerSwitch: {
+    title: "切换供应商",
+    noProvider: "未配置供应商",
+    noProviderHint: "请前往设置添加 AI 供应商",
+    switchHint: "切换后需重启会话生效",
+  },
 } as const

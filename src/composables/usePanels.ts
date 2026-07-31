@@ -26,6 +26,7 @@ export function usePanels(
   const hostInfoOpen = ref(false);
   const forwardOpen = ref(false);
   const settingsOpen = ref(false);
+  const aiProvidersOpen = ref(false);
   const activityBarVisible = ref(loadActivityBarVisible());
 
   watch(activityBarVisible, (v) => {
@@ -110,6 +111,7 @@ export function usePanels(
     hostInfoOpen,
     forwardOpen,
     settingsOpen,
+    aiProvidersOpen,
     activityBarVisible,
     toggleAi,
     toggleSftp,

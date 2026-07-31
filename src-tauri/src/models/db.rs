@@ -166,5 +166,40 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v5: AI 供应商表
+    if current < 5 {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ai_providers (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                sidecar_type TEXT NOT NULL DEFAULT 'claude',
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                is_active   INTEGER NOT NULL DEFAULT 0,
+                url         TEXT NOT NULL DEFAULT '',
+                api_key     TEXT NOT NULL DEFAULT '',
+                model_ids   TEXT NOT NULL DEFAULT '',
+                active_model_id TEXT NOT NULL DEFAULT '',
+                pi_provider    TEXT NOT NULL DEFAULT '',
+                pi_model       TEXT NOT NULL DEFAULT '',
+                pi_model_ids   TEXT NOT NULL DEFAULT '',
+                pi_base_url    TEXT NOT NULL DEFAULT '',
+                pi_api_key     TEXT NOT NULL DEFAULT '',
+                pi_api         TEXT NOT NULL DEFAULT '',
+                pi_thinking_level TEXT NOT NULL DEFAULT '',
+                is_del      INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT DEFAULT (datetime('now')),
+                updated_at  TEXT DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (5)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }

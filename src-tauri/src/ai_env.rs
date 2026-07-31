@@ -76,6 +76,11 @@ fn env_path() -> Result<PathBuf, String> {
 /// 文件不存在时返回全空配置（不创建文件）。
 #[tauri::command]
 pub fn read_ai_env() -> Result<AiModelConfig, String> {
+    read_env_config()
+}
+
+/// 读取 .env 配置（pub(crate) 供 service 层迁移逻辑复用）
+pub(crate) fn read_env_config() -> Result<AiModelConfig, String> {
     let path = env_path()?;
     if !path.exists() {
         return Ok(AiModelConfig::default());
@@ -101,9 +106,14 @@ pub fn read_ai_env() -> Result<AiModelConfig, String> {
 
 /// 写入 .env：仅替换/插入感兴趣的 key，其它行原样保留。
 ///
-/// 空字符串视为"清空"——会移除对应行。
+/// 空字符串视为"清空"--会移除对应行。
 #[tauri::command]
 pub fn write_ai_env(config: AiModelConfig) -> Result<(), String> {
+    write_env_config(config)
+}
+
+/// 写入 .env 核心逻辑（pub(crate) 供 service 层 activate 复用）
+pub(crate) fn write_env_config(config: AiModelConfig) -> Result<(), String> {
     let path = env_path()?;
     let existing = if path.exists() {
         fs::read_to_string(&path).map_err(|e| format!("读取 {:?} 失败: {e}", path))?
@@ -390,6 +400,128 @@ pub fn detect_claude_path() -> Option<String> {
         None
     } else {
         Some(normalize_path(path))
+    }
+}
+
+/// 从供应商 API 获取可用模型列表。
+///
+/// api_type 决定请求端点和认证头：
+/// - "anthropic": GET {base_url}/v1/models, header x-api-key + anthropic-version
+/// - "openai":    GET {base_url}/models, header Authorization: Bearer
+/// - "google":    GET https://generativelanguage.googleapis.com/v1beta/models?key=
+#[tauri::command]
+pub async fn fetch_models(
+    base_url: String,
+    api_key: String,
+    api_type: String,
+) -> Result<Vec<String>, String> {
+    if base_url.trim().is_empty() || api_key.trim().is_empty() {
+        return Err("base_url 和 api_key 不能为空".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client 构建失败: {e}"))?;
+
+    let models: Vec<String> = match api_type.as_str() {
+        "anthropic" => {
+            let url = build_url(&base_url, "/v1/models");
+            let resp = client
+                .get(&url)
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .send()
+                .await
+                .map_err(|e| format!("请求失败: {e}"))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("HTTP {status}: {body}"));
+            }
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("解析响应失败: {e}"))?;
+            json["data"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| m["id"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        "openai" => {
+            let url = build_url(&base_url, "/models");
+            let resp = client
+                .get(&url)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .send()
+                .await
+                .map_err(|e| format!("请求失败: {e}"))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("HTTP {status}: {body}"));
+            }
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("解析响应失败: {e}"))?;
+            json["data"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| m["id"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        "google" => {
+            let url = "https://generativelanguage.googleapis.com/v1beta/models";
+            let resp = client
+                .get(url)
+                .query(&[("key", &api_key)])
+                .send()
+                .await
+                .map_err(|e| format!("请求失败: {e}"))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("HTTP {status}: {body}"));
+            }
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("解析响应失败: {e}"))?;
+            json["models"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| {
+                            m["name"]
+                                .as_str()
+                                .map(|n| n.strip_prefix("models/").unwrap_or(n).to_string())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        _ => return Err(format!("不支持的 api_type: {api_type}")),
+    };
+
+    Ok(models)
+}
+
+/// 拼接 models 端点 URL，避免 base_url 已含 /v1 时重复
+fn build_url(base_url: &str, suffix: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let suffix = suffix.trim_start_matches('/');
+    if suffix.starts_with("v1/") && base.ends_with("/v1") {
+        format!("{}/{}", base, &suffix[3..])
+    } else {
+        format!("{base}/{suffix}")
     }
 }
 

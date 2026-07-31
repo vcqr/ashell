@@ -156,3 +156,73 @@ pub struct HostWithGroup {
     pub group_name: Option<String>,
     pub parent_gid: Option<i64>,
 }
+
+/// AI 供应商
+#[allow(non_snake_case)]
+#[derive(Debug, Default, sqlx::FromRow, Clone, Serialize, Deserialize)]
+pub struct AiProvider {
+    pub id: String,
+    pub name: String,
+    pub sidecar_type: String,
+    pub sort_order: i64,
+    pub is_active: bool,
+    /// Claude sidecar: ANTHROPIC_BASE_URL
+    pub url: String,
+    /// Claude sidecar: ANTHROPIC_AUTH_TOKEN（数据库 AES-GCM 加密）
+    pub api_key: String,
+    /// Claude sidecar: 候选模型 ID（逗号分隔）
+    pub model_ids: String,
+    /// Claude sidecar: 当前模型 ID
+    pub active_model_id: String,
+    /// Pi sidecar: provider 名称
+    pub pi_provider: String,
+    /// Pi sidecar: 模型 ID
+    pub pi_model: String,
+    /// Pi sidecar: 候选模型 ID（逗号分隔）
+    pub pi_model_ids: String,
+    /// Pi sidecar: API base URL
+    pub pi_base_url: String,
+    /// Pi sidecar: API key（数据库 AES-GCM 加密）
+    pub pi_api_key: String,
+    /// Pi sidecar: API 类型
+    pub pi_api: String,
+    /// Pi sidecar: thinking level
+    pub pi_thinking_level: String,
+    pub is_del: bool,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiProviderCreate {
+    pub name: String,
+    pub sidecar_type: Option<String>,
+    pub url: Option<String>,
+    pub api_key: Option<String>,
+    pub model_ids: Option<String>,
+    pub active_model_id: Option<String>,
+    pub pi_provider: Option<String>,
+    pub pi_model: Option<String>,
+    pub pi_model_ids: Option<String>,
+    pub pi_base_url: Option<String>,
+    pub pi_api_key: Option<String>,
+    pub pi_api: Option<String>,
+    pub pi_thinking_level: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiProviderUpdate {
+    pub name: Option<String>,
+    pub sidecar_type: Option<String>,
+    pub url: Option<String>,
+    pub api_key: Option<String>,
+    pub model_ids: Option<String>,
+    pub active_model_id: Option<String>,
+    pub pi_provider: Option<String>,
+    pub pi_model: Option<String>,
+    pub pi_model_ids: Option<String>,
+    pub pi_base_url: Option<String>,
+    pub pi_api_key: Option<String>,
+    pub pi_api: Option<String>,
+    pub pi_thinking_level: Option<String>,
+}

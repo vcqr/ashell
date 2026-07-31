@@ -9,6 +9,7 @@ pub mod ssh;
 pub mod ssh_config;
 pub mod sysinfo;
 pub mod telnet;
+pub mod ai_provider;
 
 use std::sync::Arc;
 

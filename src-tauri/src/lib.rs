@@ -242,6 +242,7 @@ pub fn run() {
             ai_env::read_ai_paths,
             ai_env::write_ai_paths,
             ai_env::detect_claude_path,
+            ai_env::fetch_models,
             sidecar::spawn_sidecar,
             sidecar::write_to_sidecar,
             sidecar::kill_sidecar,

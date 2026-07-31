@@ -1,0 +1,61 @@
+use axum::extract::{Path, State};
+use axum::Json;
+
+use crate::errors::AppResult;
+use crate::handlers::ApiResponse;
+use crate::models::{AiProvider, AiProviderCreate, AiProviderUpdate};
+use crate::service::AppState;
+
+pub async fn list(State(s): State<AppState>) -> AppResult<Json<ApiResponse<Vec<AiProvider>>>> {
+    let providers = crate::service::ai_provider::list(&s.db, &s.config.crypto_key).await?;
+    Ok(ApiResponse::ok(providers))
+}
+
+pub async fn detail(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<ApiResponse<AiProvider>>> {
+    let provider =
+        crate::service::ai_provider::get_by_id(&s.db, &s.config.crypto_key, &id).await?;
+    Ok(ApiResponse::ok(provider))
+}
+
+pub async fn create(
+    State(s): State<AppState>,
+    Json(input): Json<AiProviderCreate>,
+) -> AppResult<Json<ApiResponse<AiProvider>>> {
+    let provider =
+        crate::service::ai_provider::create(&s.db, &s.config.crypto_key, input).await?;
+    Ok(ApiResponse::ok(provider))
+}
+
+pub async fn update(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<AiProviderUpdate>,
+) -> AppResult<Json<ApiResponse<AiProvider>>> {
+    let provider =
+        crate::service::ai_provider::update(&s.db, &s.config.crypto_key, &id, input).await?;
+    Ok(ApiResponse::ok(provider))
+}
+
+pub async fn delete(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    crate::service::ai_provider::delete(&s.db, &id).await?;
+    Ok(Json(ApiResponse {
+        code: 0,
+        message: "deleted".into(),
+        data: None,
+    }))
+}
+
+pub async fn activate(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<ApiResponse<AiProvider>>> {
+    let provider =
+        crate::service::ai_provider::activate(&s.db, &s.config.crypto_key, &id).await?;
+    Ok(ApiResponse::ok(provider))
+}

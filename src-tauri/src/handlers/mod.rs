@@ -8,6 +8,7 @@ pub mod sftp;
 pub mod sysinfo;
 pub mod telnet;
 pub mod terminal;
+pub mod ai_provider;
 
 use axum::Json;
 use serde::Serialize;

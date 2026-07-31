@@ -13,12 +13,12 @@ import {
   NScrollbar,
   NAvatar,
   NSpace,
+  NSelect,
+  NTag,
+  NTooltip,
+  NPopover,
   NModal,
   NCard,
-  NForm,
-  NFormItem,
-  NSelect,
-  NSpin,
 } from "naive-ui";
 import {
   SendOutline,
@@ -26,15 +26,17 @@ import {
   PersonOutline,
   RefreshOutline,
   CloseOutline,
-  SettingsOutline,
   StopCircleOutline,
   BuildOutline,
+  SwapVerticalOutline,
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
-import type { ChatMessage, ProcessStep } from "@/types";
+import type { ChatMessage, ProcessStep, AiProvider } from "@/types";
 import { useApiStore } from "@/stores/api";
 import { useAiStore } from "@/stores/ai";
 import { getApiInfo } from "@/api/client";
+import { listAiProviders, activateAiProvider, updateAiProvider } from "@/api/aiProviders";
+import { parseModelIds, resolveActiveModelId } from "@/composables/useAiConfig";
 
 const props = defineProps<{
   open: boolean;
@@ -56,185 +58,102 @@ const { t } = useI18n();
 // localStorage 不再保留同名缓存，唯一来源就是 .env 文件本身——这样
 // sidecar 启动时读到的配置与设置弹窗里看到的一定一致。
 
-type AiModelConfig = {
-  url: string;
-  key: string;
-  modelIds: string;
-  activeModelId: string;
-  sidecarType: string;
-  piProvider: string;
-  piModel: string;
-  piModelIds: string;
-  piBaseUrl: string;
-  piApiKey: string;
-  piApi: string;
-  piThinkingLevel: string;
-};
+const providers = ref<AiProvider[]>([]);
 
-function emptyConfig(): AiModelConfig {
-  return {
-    url: "", key: "", modelIds: "", activeModelId: "", sidecarType: "",
-    piProvider: "", piModel: "", piModelIds: "", piBaseUrl: "", piApiKey: "", piApi: "", piThinkingLevel: "",
-  };
-}
+const switching = ref(false);
 
-function parseModelIds(value: string) {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
+const activeProvider = computed(() =>
+  providers.value.find((p) => p.is_active) ?? null,
+);
 
-function normalizeModelIds(value: string) {
-  return parseModelIds(value).join(", ");
-}
-
-function resolveActiveModelId(modelIds: string, activeModelId: string) {
-  const list = parseModelIds(modelIds);
-  return list.includes(activeModelId) ? activeModelId : (list[0] ?? "");
-}
-
-const modelConfig = ref<AiModelConfig>(emptyConfig());
-const draftConfig = ref<AiModelConfig>(emptyConfig());
-const settingsOpen = ref(false);
-const settingsLoading = ref(false);
-const settingsSaving = ref(false);
+const activeSidecarType = computed(() =>
+  activeProvider.value?.sidecar_type || "claude",
+);
 
 const activeModelLabel = computed(() => {
-  if (activeSidecarType.value === "pi") {
-    return modelConfig.value.piModel || "No model selected";
+  const p = activeProvider.value;
+  if (!p) return "";
+  if (p.sidecar_type === "pi") {
+    return p.pi_model || "";
   }
-  return modelConfig.value.activeModelId || "No model selected";
+  return p.active_model_id || "";
 });
 
-const modelOptions = computed(() =>
-  parseModelIds(draftConfig.value.modelIds).map((id) => ({
-    label: id,
-    value: id,
+const providerOptions = computed(() =>
+  providers.value.map((p) => ({
+    label: p.name,
+    value: p.id,
   })),
 );
 
-function syncDraftActiveModel() {
-  draftConfig.value.activeModelId = resolveActiveModelId(
-    draftConfig.value.modelIds,
-    draftConfig.value.activeModelId,
-  );
-}
+const modelOptions = computed(() => {
+  const p = activeProvider.value;
+  if (!p) return [];
+  const ids = p.sidecar_type === "pi" ? p.pi_model_ids : p.model_ids;
+  const activeId = p.sidecar_type === "pi" ? p.pi_model : p.active_model_id;
+  const list = parseModelIds(ids);
+  if (activeId && !list.includes(activeId)) {
+    list.unshift(activeId);
+  }
+  return list.map((id) => ({ label: id, value: id }));
+});
 
-const sidecarTypeOptions = computed(() => [
-  { label: "Claude Agent SDK", value: "claude" },
-  { label: "Pi Coding Agent", value: "pi" },
-]);
+const selectedProviderId = computed({
+  get: () => activeProvider.value?.id ?? null,
+  set: async (val: string | null) => {
+    if (!val || val === activeProvider.value?.id) return;
+    await switchProvider(val);
+  },
+});
 
-const piApiOptions = computed(() => [
-  { label: "OpenAI Completions", value: "openai-completions" },
-  { label: "Anthropic Messages", value: "anthropic-messages" },
-  { label: "OpenAI Responses", value: "openai-responses" },
-  { label: "Google Generative AI", value: "google-generative-ai" },
-]);
+const selectedModelId = computed({
+  get: () => {
+    const p = activeProvider.value;
+    if (!p) return null;
+    return p.sidecar_type === "pi" ? (p.pi_model || null) : (p.active_model_id || null);
+  },
+  set: async (val: string | null) => {
+    if (!val || !activeProvider.value) return;
+    await switchModel(val);
+  },
+});
 
-const piThinkingLevelOptions = computed(() => [
-  { label: "Off", value: "off" },
-  { label: "Minimal", value: "minimal" },
-  { label: "Low", value: "low" },
-  { label: "Medium", value: "medium" },
-  { label: "High", value: "high" },
-  { label: "XHigh", value: "xhigh" },
-  { label: "Max", value: "max" },
-]);
-
-const isPiDraft = computed(() => draftConfig.value.sidecarType === "pi");
-
-const piModelOptions = computed(() =>
-  parseModelIds(draftConfig.value.piModelIds).map((id) => ({
-    label: id,
-    value: id,
-  })),
-);
-
-function syncDraftPiModel() {
-  draftConfig.value.piModel = resolveActiveModelId(
-    draftConfig.value.piModelIds,
-    draftConfig.value.piModel,
-  );
-}
-
-/** sidecar 类型是否与当前运行中的不同（保存后需重启 sidecar） */
-const sidecarTypeChanged = computed(
-  () => draftConfig.value.sidecarType !== modelConfig.value.sidecarType,
-);
-
-/** 当前生效的 sidecar 类型，空值视为 "claude" */
-const activeSidecarType = computed(() =>
-  modelConfig.value.sidecarType || "claude",
-);
-
-async function loadModelConfigFromBackend(): Promise<AiModelConfig> {
+async function loadProviders() {
   try {
-    const raw = await invoke<AiModelConfig>("read_ai_env");
-    return {
-      url: raw.url ?? "",
-      key: raw.key ?? "",
-      modelIds: normalizeModelIds(raw.modelIds ?? ""),
-      activeModelId: raw.activeModelId ?? "",
-      sidecarType: raw.sidecarType ?? "",
-      piProvider: raw.piProvider ?? "",
-      piModel: raw.piModel ?? "",
-      piModelIds: raw.piModelIds ?? "",
-      piBaseUrl: raw.piBaseUrl ?? "",
-      piApiKey: raw.piApiKey ?? "",
-      piApi: raw.piApi ?? "",
-      piThinkingLevel: raw.piThinkingLevel ?? "",
-    };
+    providers.value = await listAiProviders();
   } catch (err) {
-    console.error("[AI] read_ai_env failed:", err);
-    return emptyConfig();
+    console.error("[AI] loadProviders failed:", err);
   }
 }
 
-async function openSettings() {
-  settingsOpen.value = true;
-  settingsLoading.value = true;
+async function switchProvider(id: string) {
+  if (switching.value) return;
+  switching.value = true;
   try {
-    const cfg = await loadModelConfigFromBackend();
-    modelConfig.value = cfg;
-    draftConfig.value = { ...cfg };
-  } finally {
-    settingsLoading.value = false;
-  }
-}
-
-async function saveSettings() {
-  if (settingsSaving.value) return;
-  const modelIds = normalizeModelIds(draftConfig.value.modelIds);
-  const next: AiModelConfig = {
-    url: draftConfig.value.url.trim(),
-    key: draftConfig.value.key.trim(),
-    modelIds,
-    activeModelId: resolveActiveModelId(modelIds, draftConfig.value.activeModelId),
-    sidecarType: draftConfig.value.sidecarType.trim(),
-    piProvider: draftConfig.value.piProvider.trim(),
-    piModel: draftConfig.value.piModel.trim(),
-    piModelIds: draftConfig.value.piModelIds.trim(),
-    piBaseUrl: draftConfig.value.piBaseUrl.trim(),
-    piApiKey: draftConfig.value.piApiKey.trim(),
-    piApi: draftConfig.value.piApi.trim(),
-    piThinkingLevel: draftConfig.value.piThinkingLevel.trim(),
-  };
-
-  settingsSaving.value = true;
-  try {
-    await invoke("write_ai_env", { config: next });
-    modelConfig.value = next;
-    settingsOpen.value = false;
+    const activated = await activateAiProvider(id);
+    providers.value = providers.value.map((p) => ({
+      ...p,
+      is_active: p.id === activated.id,
+    }));
   } catch (err) {
-    console.error("[AI] write_ai_env failed:", err);
+    console.error("[AI] switchProvider failed:", err);
   } finally {
-    settingsSaving.value = false;
+    switching.value = false;
   }
 }
 
-// ── Panel resize ──
+async function switchModel(modelId: string) {
+  const p = activeProvider.value;
+  if (!p) return;
+  const field = p.sidecar_type === "pi" ? "pi_model" : "active_model_id";
+  try {
+    const updated = await updateAiProvider(p.id, { [field]: modelId } as Record<string, string>);
+    const idx = providers.value.findIndex((x) => x.id === updated.id);
+    if (idx >= 0) providers.value[idx] = updated;
+  } catch (err) {
+    console.error("[AI] switchModel failed:", err);
+  }
+}
 
 const MIN_WIDTH = 320;
 const DEFAULT_WIDTH = 420;
@@ -361,7 +280,7 @@ function parseMarkdown(content: string): string {
 // ── Chat state ──
 //
 // 状态分两类：
-// - 全局 UI 状态（input、settingsOpen、showConfirmDialog 等）保留在组件局部
+// - 全局 UI 状态（input、showConfirmDialog 等）保留在组件局部
 // - 每个 ssid 的会话状态（messages/seq/isTyping/...）从 useAiStore 取
 //
 // 当 props.sid 为空（无激活终端）时，组件展示 empty state，不允许 spawn 也不允许 send。
@@ -785,8 +704,8 @@ function onLinkClick(e: MouseEvent) {
 // ── Lifecycle ──
 
 onMounted(async () => {
-  // 启动时读一次 .env，让 header "Model: xxx" 立即显示当前活动模型
-  modelConfig.value = await loadModelConfigFromBackend();
+  // 启动时加载供应商列表，让 header 立即显示当前活动供应商/模型
+  await loadProviders();
 
   unlistenApiMessage = await listen<string>("api-message", (event) => {
     const ssid = currentSsid.value;
@@ -864,17 +783,41 @@ defineExpose({
               <NIcon><RefreshOutline /></NIcon>
             </template>
           </NButton>
-          <NButton
-            quaternary
-            circle
-            size="small"
-            :title="t('ai.settings')"
-            @click="openSettings"
-          >
-            <template #icon>
-              <NIcon><SettingsOutline /></NIcon>
+          <NPopover trigger="click" placement="bottom-end" :width="280">
+            <template #trigger>
+              <NButton
+                quaternary
+                circle
+                size="small"
+                :title="t('ai.providerSwitch.title')"
+              >
+                <template #icon>
+                  <NIcon><SwapVerticalOutline /></NIcon>
+                </template>
+              </NButton>
             </template>
-          </NButton>
+            <div class="switcher-popover">
+              <div class="switcher-label">{{ t("ai.providerSwitch.title") }}</div>
+              <NSelect
+                v-model:value="selectedProviderId"
+                :options="providerOptions"
+                size="small"
+                :loading="switching"
+                :placeholder="t('ai.providerSwitch.noProvider')"
+              />
+              <div class="switcher-label" style="margin-top: 8px">{{ t("settings.ai.provider.activeModel") }}</div>
+              <NSelect
+                v-model:value="selectedModelId"
+                :options="modelOptions"
+                size="small"
+                :disabled="modelOptions.length === 0"
+                :placeholder="t('settings.ai.provider.activeModelPlaceholder')"
+              />
+              <div v-if="providers.length === 0" class="switcher-hint">
+                {{ t("ai.providerSwitch.noProviderHint") }}
+              </div>
+            </div>
+          </NPopover>
           <NButton quaternary circle size="small" :title="t('ai.close')" @click="close">
             <template #icon>
               <NIcon><CloseOutline /></NIcon>
@@ -990,7 +933,6 @@ defineExpose({
         <div
           class="composer-meta"
           :class="{ 'no-border': isApprovalActive }"
-          @click="openSettings"
         >
           <NIcon :size="12"><SparklesOutline /></NIcon>
           <span class="composer-meta-label">{{ activeModelLabel }}</span>
@@ -1050,129 +992,6 @@ defineExpose({
     </aside>
 
     <!-- Model settings -->
-    <NModal v-model:show="settingsOpen">
-      <NCard
-        style="width: min(460px, 85vw)"
-        :title="t('ai.modelDialog.title')"
-        size="small"
-        :bordered="false"
-        role="dialog"
-        aria-modal="true"
-      >
-        <NSpin :show="settingsLoading">
-          <NForm label-placement="top" :model="draftConfig">
-            <NFormItem :label="t('ai.modelDialog.sidecarType')">
-              <NSelect
-                v-model:value="draftConfig.sidecarType"
-                :options="sidecarTypeOptions"
-                :placeholder="t('ai.modelDialog.sidecarTypePlaceholder')"
-              />
-            </NFormItem>
-
-            <template v-if="!isPiDraft">
-              <NFormItem :label="t('ai.modelDialog.baseUrl')">
-                <NInput
-                  v-model:value="draftConfig.url"
-                  placeholder="https://api.anthropic.com"
-                />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.authToken')">
-                <NInput
-                  v-model:value="draftConfig.key"
-                  type="password"
-                  show-password-on="click"
-                  placeholder="sk-..."
-                />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.modelIds')">
-                <NInput
-                  v-model:value="draftConfig.modelIds"
-                  type="textarea"
-                  :autosize="{ minRows: 2, maxRows: 4 }"
-                  placeholder="claude-sonnet-4-5, claude-opus-4-5"
-                  @update:value="syncDraftActiveModel"
-                />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.activeModel')">
-                <NSelect
-                  v-model:value="draftConfig.activeModelId"
-                  :options="modelOptions"
-                  :disabled="modelOptions.length === 0"
-                  :placeholder="t('ai.modelDialog.activeModelPlaceholder')"
-                />
-              </NFormItem>
-            </template>
-
-            <template v-else>
-              <NFormItem :label="t('ai.modelDialog.piApi')">
-                <NSelect
-                  v-model:value="draftConfig.piApi"
-                  :options="piApiOptions"
-                  :placeholder="t('ai.modelDialog.piApiPlaceholder')"
-                />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.piProvider')">
-                <NInput v-model:value="draftConfig.piProvider" placeholder="custom" />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.piBaseUrl')">
-                <NInput v-model:value="draftConfig.piBaseUrl" placeholder="https://api.openai.com/v1" />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.piApiKey')">
-                <NInput
-                  v-model:value="draftConfig.piApiKey"
-                  type="password"
-                  show-password-on="click"
-                  placeholder="sk-..."
-                />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.piModelIds')">
-                <NInput
-                  v-model:value="draftConfig.piModelIds"
-                  type="textarea"
-                  :autosize="{ minRows: 2, maxRows: 4 }"
-                  placeholder="deepseek-chat, deepseek-coder"
-                  @update:value="syncDraftPiModel"
-                />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.piActiveModel')">
-                <NSelect
-                  v-model:value="draftConfig.piModel"
-                  :options="piModelOptions"
-                  :disabled="piModelOptions.length === 0"
-                  :placeholder="t('ai.modelDialog.piActiveModelPlaceholder')"
-                />
-              </NFormItem>
-              <NFormItem :label="t('ai.modelDialog.piThinkingLevel')">
-                <NSelect
-                  v-model:value="draftConfig.piThinkingLevel"
-                  :options="piThinkingLevelOptions"
-                  :placeholder="t('ai.modelDialog.piThinkingLevelPlaceholder')"
-                />
-              </NFormItem>
-            </template>
-
-            <div v-if="sidecarTypeChanged" class="settings-hint">
-              {{ t("ai.modelDialog.restartHint") }}
-            </div>
-          </NForm>
-        </NSpin>
-        <template #footer>
-          <NSpace justify="end">
-            <NButton :disabled="settingsSaving" @click="settingsOpen = false">
-              {{ t("ai.modelDialog.cancel") }}
-            </NButton>
-            <NButton
-              type="primary"
-              :loading="settingsSaving"
-              :disabled="settingsLoading"
-              @click="saveSettings"
-            >
-              {{ t("ai.modelDialog.save") }}
-            </NButton>
-          </NSpace>
-        </template>
-      </NCard>
-    </NModal>
   </Teleport>
 </template>
 
@@ -1766,5 +1585,25 @@ defineExpose({
   color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.55));
   background: var(--ashell-border-soft, rgba(255, 255, 255, 0.06));
   border-radius: 6px;
+}
+
+.switcher-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.switcher-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+  margin-bottom: 2px;
+}
+
+.switcher-hint {
+  font-size: 12px;
+  color: var(--ashell-text-muted, #98a2b3);
+  margin-top: 4px;
+  line-height: 1.5;
 }
 </style>

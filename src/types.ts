@@ -348,3 +348,59 @@ export interface ForwardCreate {
   destHost?: string | null
   destPort?: number | null
 }
+
+/* ---------- AI 供应商 ---------- */
+
+export interface AiProvider {
+  id: string
+  name: string
+  sidecar_type: string
+  sort_order: number
+  is_active: boolean
+  url: string
+  api_key: string
+  model_ids: string
+  active_model_id: string
+  pi_provider: string
+  pi_model: string
+  pi_model_ids: string
+  pi_base_url: string
+  pi_api_key: string
+  pi_api: string
+  pi_thinking_level: string
+  is_del: boolean
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AiProviderCreate {
+  name: string
+  sidecar_type?: string
+  url?: string
+  api_key?: string
+  model_ids?: string
+  active_model_id?: string
+  pi_provider?: string
+  pi_model?: string
+  pi_model_ids?: string
+  pi_base_url?: string
+  pi_api_key?: string
+  pi_api?: string
+  pi_thinking_level?: string
+}
+
+export interface AiProviderUpdate {
+  name?: string
+  sidecar_type?: string
+  url?: string
+  api_key?: string
+  model_ids?: string
+  active_model_id?: string
+  pi_provider?: string
+  pi_model?: string
+  pi_model_ids?: string
+  pi_base_url?: string
+  pi_api_key?: string
+  pi_api?: string
+  pi_thinking_level?: string
+}

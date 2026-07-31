@@ -76,6 +76,9 @@ subtle = "2"
 # System font enumeration
 font-kit = "0.14"
 
+# HTTP client (fetch model list from provider APIs)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Local PTY (Windows ConPTY / Unix forkpty)
 portable-pty = "0.9"
 

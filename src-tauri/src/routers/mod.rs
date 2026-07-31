@@ -135,6 +135,21 @@ pub fn build_router(state: AppState) -> Router {
         // 主机图标资源（用户放置在 ~/.ashell/icons/）
         .route("/api/icons", get(handlers::icons::list))
         .route("/api/icons/{name}", get(handlers::icons::get))
+        // AI 供应商管理
+        .route(
+            "/api/ai-providers",
+            get(handlers::ai_provider::list).post(handlers::ai_provider::create),
+        )
+        .route(
+            "/api/ai-providers/{id}",
+            get(handlers::ai_provider::detail)
+                .put(handlers::ai_provider::update)
+                .delete(handlers::ai_provider::delete),
+        )
+        .route(
+            "/api/ai-providers/{id}/activate",
+            post(handlers::ai_provider::activate),
+        )
         // 上传体积上限放在 Router 级别（避免 MethodRouter::layer 类型推导歧义）
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT))
