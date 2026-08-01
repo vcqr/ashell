@@ -8,7 +8,8 @@
     "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "sidecar:build": "cd sidecar-cc && npm run build && cd ../sidecar-pi && npm run build"
+    "sidecar:build": "cd sidecar-cc && npm run build && cd ../sidecar-pi && npm run build",
+    "prepare": "husky"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",
@@ -55,6 +56,7 @@
     "@vicons/antd": "^0.13.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/tsconfig": "^0.9.1",
+    "husky": "^9.1.7",
     "naive-ui": "^2.44.1",
     "typescript": "^6.0.3",
     "vfonts": "^0.0.3",
