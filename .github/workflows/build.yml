@@ -100,7 +100,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "App ${{ github.ref_name }}"
+          releaseName: "${{ github.ref_name }}"
           releaseBody: ${{ steps.release_notes.outputs.body || 'See assets to download and install.' }}
           releaseDraft: false
           prerelease: false
