@@ -3,7 +3,10 @@ use axum::Json;
 
 use crate::errors::AppResult;
 use crate::handlers::ApiResponse;
-use crate::models::{AiProvider, AiProviderCreate, AiProviderUpdate};
+use crate::models::{
+    AiEngine, AiEngineActivate, AiEngineUpdate, AiEnginesState, AiProvider, AiProviderCreate,
+    AiProviderUpdate,
+};
 use crate::service::AppState;
 
 pub async fn list(State(s): State<AppState>) -> AppResult<Json<ApiResponse<Vec<AiProvider>>>> {
@@ -51,11 +54,32 @@ pub async fn delete(
     }))
 }
 
-pub async fn activate(
+// ────────────────────────── 引擎配置 ──────────────────────────
+
+pub async fn list_engines(
     State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> AppResult<Json<ApiResponse<AiProvider>>> {
-    let provider =
-        crate::service::ai_provider::activate(&s.db, &s.config.crypto_key, &id).await?;
-    Ok(ApiResponse::ok(provider))
+) -> AppResult<Json<ApiResponse<AiEnginesState>>> {
+    let state = crate::service::ai_provider::list_engines(&s.db, &s.config.crypto_key).await?;
+    Ok(ApiResponse::ok(state))
+}
+
+pub async fn update_engine(
+    State(s): State<AppState>,
+    Path(engine): Path<String>,
+    Json(input): Json<AiEngineUpdate>,
+) -> AppResult<Json<ApiResponse<AiEngine>>> {
+    let updated =
+        crate::service::ai_provider::update_engine(&s.db, &s.config.crypto_key, &engine, input)
+            .await?;
+    Ok(ApiResponse::ok(updated))
+}
+
+pub async fn activate_engine(
+    State(s): State<AppState>,
+    Json(input): Json<AiEngineActivate>,
+) -> AppResult<Json<ApiResponse<AiEnginesState>>> {
+    let state =
+        crate::service::ai_provider::activate_engine(&s.db, &s.config.crypto_key, &input.engine)
+            .await?;
+    Ok(ApiResponse::ok(state))
 }

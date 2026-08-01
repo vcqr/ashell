@@ -237,8 +237,6 @@ pub fn run() {
             commands::wallpaper::set_wallpaper,
             commands::wallpaper::get_wallpaper,
             commands::wallpaper::clear_wallpaper,
-            ai_env::read_ai_env,
-            ai_env::write_ai_env,
             ai_env::read_ai_paths,
             ai_env::write_ai_paths,
             ai_env::detect_claude_path,

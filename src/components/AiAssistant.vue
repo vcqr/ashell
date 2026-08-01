@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
+import { storeToRefs } from "pinia";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -13,10 +14,9 @@ import {
   NScrollbar,
   NAvatar,
   NSpace,
-  NSelect,
+  NDropdown,
   NTag,
   NTooltip,
-  NPopover,
   NModal,
   NCard,
 } from "naive-ui";
@@ -28,15 +28,15 @@ import {
   CloseOutline,
   StopCircleOutline,
   BuildOutline,
-  SwapVerticalOutline,
+  ChevronDownOutline,
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
-import type { ChatMessage, ProcessStep, AiProvider } from "@/types";
+import type { ChatMessage, ProcessStep } from "@/types";
 import { useApiStore } from "@/stores/api";
 import { useAiStore } from "@/stores/ai";
+import { useAiConfigStore } from "@/stores/aiConfig";
 import { getApiInfo } from "@/api/client";
-import { listAiProviders, activateAiProvider, updateAiProvider } from "@/api/aiProviders";
-import { parseModelIds, resolveActiveModelId } from "@/composables/useAiConfig";
+import { parseModelIds, sidecarTypeOptions } from "@/composables/useAiConfig";
 
 const props = defineProps<{
   open: boolean;
@@ -50,108 +50,52 @@ const emit = defineEmits<{
 
 const apiStore = useApiStore();
 const aiStore = useAiStore();
+const aiConfig = useAiConfigStore();
 const { t } = useI18n();
 
 // ── Model config ──
 //
-// 配置存储在 ~/.ashell/ai/.env，由后端 read_ai_env / write_ai_env 命令读写。
-// localStorage 不再保留同名缓存，唯一来源就是 .env 文件本身——这样
-// sidecar 启动时读到的配置与设置弹窗里看到的一定一致。
+// 供应商与引擎配置存于共享 store（useAiConfigStore），设置面板与本面板共用同一份状态。
+// 后端在切换时物化到 ~/.ashell/ai/.env，sidecar 新会话启动时读取。
 
-const providers = ref<AiProvider[]>([]);
+const { providers, enginesState, activeEngine, activeSidecarType, activeEngineLabel } =
+  storeToRefs(aiConfig);
+const switching = computed(() => aiConfig.busy);
 
-const switching = ref(false);
+/** pill 文案：供应商名 / 模型名，分两段渲染 */
+const pickerParts = computed(() => {
+  const provider = providers.value.find((p) => p.id === activeEngine.value?.provider_id);
+  return {
+    provider: provider?.name ?? "",
+    model: activeEngine.value?.active_model_id || "",
+  };
+});
 
-const activeProvider = computed(() =>
-  providers.value.find((p) => p.is_active) ?? null,
+/** 模型选择器选项：两级级联--供应商为顶级（hover 展开子菜单），模型为叶子 */
+const modelPickerOptions = computed(() =>
+  providers.value
+    .filter((p) => parseModelIds(p.model_ids).length > 0)
+    .map((p) => ({
+      label: p.name,
+      key: p.id,
+      children: parseModelIds(p.model_ids).map((mid) => ({
+        label: mid,
+        key: `${p.id}::${mid}`,
+      })),
+    })),
 );
 
-const activeSidecarType = computed(() =>
-  activeProvider.value?.sidecar_type || "claude",
-);
-
-const activeModelLabel = computed(() => {
-  const p = activeProvider.value;
-  if (!p) return "";
-  if (p.sidecar_type === "pi") {
-    return p.pi_model || "";
-  }
-  return p.active_model_id || "";
-});
-
-const providerOptions = computed(() =>
-  providers.value.map((p) => ({
-    label: p.name,
-    value: p.id,
-  })),
-);
-
-const modelOptions = computed(() => {
-  const p = activeProvider.value;
-  if (!p) return [];
-  const ids = p.sidecar_type === "pi" ? p.pi_model_ids : p.model_ids;
-  const activeId = p.sidecar_type === "pi" ? p.pi_model : p.active_model_id;
-  const list = parseModelIds(ids);
-  if (activeId && !list.includes(activeId)) {
-    list.unshift(activeId);
-  }
-  return list.map((id) => ({ label: id, value: id }));
-});
-
-const selectedProviderId = computed({
-  get: () => activeProvider.value?.id ?? null,
-  set: async (val: string | null) => {
-    if (!val || val === activeProvider.value?.id) return;
-    await switchProvider(val);
-  },
-});
-
-const selectedModelId = computed({
-  get: () => {
-    const p = activeProvider.value;
-    if (!p) return null;
-    return p.sidecar_type === "pi" ? (p.pi_model || null) : (p.active_model_id || null);
-  },
-  set: async (val: string | null) => {
-    if (!val || !activeProvider.value) return;
-    await switchModel(val);
-  },
-});
-
-async function loadProviders() {
+function onPickModel(key: string | number) {
+  const val = String(key);
+  const idx = val.indexOf("::");
+  if (idx < 0) return;
   try {
-    providers.value = await listAiProviders();
-  } catch (err) {
-    console.error("[AI] loadProviders failed:", err);
-  }
-}
-
-async function switchProvider(id: string) {
-  if (switching.value) return;
-  switching.value = true;
-  try {
-    const activated = await activateAiProvider(id);
-    providers.value = providers.value.map((p) => ({
-      ...p,
-      is_active: p.id === activated.id,
-    }));
-  } catch (err) {
-    console.error("[AI] switchProvider failed:", err);
-  } finally {
-    switching.value = false;
-  }
-}
-
-async function switchModel(modelId: string) {
-  const p = activeProvider.value;
-  if (!p) return;
-  const field = p.sidecar_type === "pi" ? "pi_model" : "active_model_id";
-  try {
-    const updated = await updateAiProvider(p.id, { [field]: modelId } as Record<string, string>);
-    const idx = providers.value.findIndex((x) => x.id === updated.id);
-    if (idx >= 0) providers.value[idx] = updated;
-  } catch (err) {
-    console.error("[AI] switchModel failed:", err);
+    aiConfig.patchEngine({
+      provider_id: val.slice(0, idx),
+      active_model_id: val.slice(idx + 2),
+    });
+  } catch (e) {
+    console.error("[AI] onPickModel failed:", e);
   }
 }
 
@@ -704,8 +648,8 @@ function onLinkClick(e: MouseEvent) {
 // ── Lifecycle ──
 
 onMounted(async () => {
-  // 启动时加载供应商列表，让 header 立即显示当前活动供应商/模型
-  await loadProviders();
+  // 启动时加载供应商与引擎配置（共享 store）
+  await aiConfig.load();
 
   unlistenApiMessage = await listen<string>("api-message", (event) => {
     const ssid = currentSsid.value;
@@ -768,7 +712,7 @@ defineExpose({
           </div>
           <div>
             <div class="title">{{ t("ai.title") }}</div>
-            <div class="subtitle">{{ t("ai.modelLabel", { model: activeModelLabel }) }}</div>
+            <div class="subtitle">{{ activeEngineLabel }}</div>
           </div>
         </NSpace>
         <NSpace :size="4">
@@ -783,41 +727,6 @@ defineExpose({
               <NIcon><RefreshOutline /></NIcon>
             </template>
           </NButton>
-          <NPopover trigger="click" placement="bottom-end" :width="280">
-            <template #trigger>
-              <NButton
-                quaternary
-                circle
-                size="small"
-                :title="t('ai.providerSwitch.title')"
-              >
-                <template #icon>
-                  <NIcon><SwapVerticalOutline /></NIcon>
-                </template>
-              </NButton>
-            </template>
-            <div class="switcher-popover">
-              <div class="switcher-label">{{ t("ai.providerSwitch.title") }}</div>
-              <NSelect
-                v-model:value="selectedProviderId"
-                :options="providerOptions"
-                size="small"
-                :loading="switching"
-                :placeholder="t('ai.providerSwitch.noProvider')"
-              />
-              <div class="switcher-label" style="margin-top: 8px">{{ t("settings.ai.provider.activeModel") }}</div>
-              <NSelect
-                v-model:value="selectedModelId"
-                :options="modelOptions"
-                size="small"
-                :disabled="modelOptions.length === 0"
-                :placeholder="t('settings.ai.provider.activeModelPlaceholder')"
-              />
-              <div v-if="providers.length === 0" class="switcher-hint">
-                {{ t("ai.providerSwitch.noProviderHint") }}
-              </div>
-            </div>
-          </NPopover>
           <NButton quaternary circle size="small" :title="t('ai.close')" @click="close">
             <template #icon>
               <NIcon><CloseOutline /></NIcon>
@@ -931,11 +840,32 @@ defineExpose({
         </div>
 
         <div
-          class="composer-meta"
+          class="composer-bar"
           :class="{ 'no-border': isApprovalActive }"
         >
-          <NIcon :size="12"><SparklesOutline /></NIcon>
-          <span class="composer-meta-label">{{ activeModelLabel }}</span>
+          <NDropdown
+            trigger="click"
+            placement="top-start"
+            :options="modelPickerOptions"
+            @select="onPickModel"
+          >
+            <NButton
+              size="tiny"
+              quaternary
+              :loading="switching"
+              :disabled="modelPickerOptions.length === 0"
+            >
+              <span class="model-pill-text">
+                <template v-if="pickerParts.provider || pickerParts.model">
+                  <span class="pill-provider">{{ pickerParts.provider }}</span>
+                  <span v-if="pickerParts.provider && pickerParts.model" class="pill-sep">/</span>
+                  <span class="pill-model">{{ pickerParts.model }}</span>
+                </template>
+                <template v-else>{{ t("ai.providerSwitch.noProvider") }}</template>
+              </span>
+              <NIcon :size="12" style="margin-left: 2px"><ChevronDownOutline /></NIcon>
+            </NButton>
+          </NDropdown>
         </div>
 
         <div class="composer">
@@ -1535,32 +1465,36 @@ defineExpose({
 
 /* ── Composer ── */
 
-.composer-meta {
+.composer-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px 4px;
-  font-size: 11px;
-  color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.55));
-  cursor: pointer;
-  user-select: none;
+  padding: 6px 16px;
   border-top: 1px solid var(--ashell-border-soft);
   flex-shrink: 0;
-  transition: color 0.15s ease;
 }
 
-.composer-meta:hover {
-  color: var(--ashell-text, rgba(255, 255, 255, 0.85));
-}
-
-.composer-meta.no-border {
+.composer-bar.no-border {
   border-top: none;
 }
 
-.composer-meta-label {
+.model-pill-text {
+  display: inline-flex;
+  align-items: center;
+}
+
+.pill-provider {
+  color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.5));
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.pill-sep {
+  margin: 0 4px;
+  opacity: 0.4;
+}
+
+.pill-model {
+  white-space: nowrap;
+  font-weight: 500;
 }
 
 .process-stop {
@@ -1585,25 +1519,5 @@ defineExpose({
   color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.55));
   background: var(--ashell-border-soft, rgba(255, 255, 255, 0.06));
   border-radius: 6px;
-}
-
-.switcher-popover {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.switcher-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-  margin-bottom: 2px;
-}
-
-.switcher-hint {
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  margin-top: 4px;
-  line-height: 1.5;
 }
 </style>

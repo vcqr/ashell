@@ -349,25 +349,16 @@ export interface ForwardCreate {
   destPort?: number | null
 }
 
-/* ---------- AI 供应商 ---------- */
+/* ---------- AI 供应商（纯端点定义，与 sidecar 引擎解耦） ---------- */
 
 export interface AiProvider {
   id: string
   name: string
-  sidecar_type: string
-  sort_order: number
-  is_active: boolean
-  url: string
+  api_type: string
+  base_url: string
   api_key: string
   model_ids: string
-  active_model_id: string
-  pi_provider: string
-  pi_model: string
-  pi_model_ids: string
-  pi_base_url: string
-  pi_api_key: string
-  pi_api: string
-  pi_thinking_level: string
+  sort_order: number
   is_del: boolean
   created_at?: string | null
   updated_at?: string | null
@@ -375,32 +366,37 @@ export interface AiProvider {
 
 export interface AiProviderCreate {
   name: string
-  sidecar_type?: string
-  url?: string
+  api_type?: string
+  base_url?: string
   api_key?: string
   model_ids?: string
-  active_model_id?: string
-  pi_provider?: string
-  pi_model?: string
-  pi_model_ids?: string
-  pi_base_url?: string
-  pi_api_key?: string
-  pi_api?: string
-  pi_thinking_level?: string
 }
 
 export interface AiProviderUpdate {
   name?: string
-  sidecar_type?: string
-  url?: string
+  api_type?: string
+  base_url?: string
   api_key?: string
   model_ids?: string
+}
+
+/* ---------- AI 引擎（sidecar）配置 ---------- */
+
+export interface AiEngine {
+  engine: string
+  provider_id: string | null
+  active_model_id: string
+  thinking_level: string
+  updated_at?: string | null
+}
+
+export interface AiEngineUpdate {
+  provider_id?: string | null
   active_model_id?: string
-  pi_provider?: string
-  pi_model?: string
-  pi_model_ids?: string
-  pi_base_url?: string
-  pi_api_key?: string
-  pi_api?: string
-  pi_thinking_level?: string
+  thinking_level?: string
+}
+
+export interface AiEnginesState {
+  active_engine: string
+  engines: AiEngine[]
 }

@@ -1,5 +1,12 @@
 import { request } from './client'
-import type { AiProvider, AiProviderCreate, AiProviderUpdate } from '@/types'
+import type {
+  AiEngine,
+  AiEnginesState,
+  AiEngineUpdate,
+  AiProvider,
+  AiProviderCreate,
+  AiProviderUpdate,
+} from '@/types'
 
 export function listAiProviders(): Promise<AiProvider[]> {
   return request<AiProvider[]>('/api/ai-providers')
@@ -21,6 +28,16 @@ export function deleteAiProvider(id: string): Promise<void> {
   return request<void>(`/api/ai-providers/${id}`, { method: 'DELETE' })
 }
 
-export function activateAiProvider(id: string): Promise<AiProvider> {
-  return request<AiProvider>(`/api/ai-providers/${id}/activate`, { method: 'POST' })
+/* ---------- AI 引擎（sidecar）配置 ---------- */
+
+export function listAiEngines(): Promise<AiEnginesState> {
+  return request<AiEnginesState>('/api/ai-engines')
+}
+
+export function updateAiEngine(engine: string, input: AiEngineUpdate): Promise<AiEngine> {
+  return request<AiEngine>(`/api/ai-engines/${engine}`, { method: 'PUT', json: input })
+}
+
+export function activateAiEngine(engine: string): Promise<AiEnginesState> {
+  return request<AiEnginesState>('/api/ai-engines/active', { method: 'PUT', json: { engine } })
 }

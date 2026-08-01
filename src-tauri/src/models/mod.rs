@@ -163,66 +163,63 @@ pub struct HostWithGroup {
 pub struct AiProvider {
     pub id: String,
     pub name: String,
-    pub sidecar_type: String,
-    pub sort_order: i64,
-    pub is_active: bool,
-    /// Claude sidecar: ANTHROPIC_BASE_URL
-    pub url: String,
-    /// Claude sidecar: ANTHROPIC_AUTH_TOKEN（数据库 AES-GCM 加密）
+    /// API 类型：openai-completions / anthropic-messages / openai-responses / google-generative-ai
+    pub api_type: String,
+    pub base_url: String,
+    /// API Key（数据库 AES-GCM 加密）
     pub api_key: String,
-    /// Claude sidecar: 候选模型 ID（逗号分隔）
+    /// 候选模型 ID（逗号分隔）
     pub model_ids: String,
-    /// Claude sidecar: 当前模型 ID
-    pub active_model_id: String,
-    /// Pi sidecar: provider 名称
-    pub pi_provider: String,
-    /// Pi sidecar: 模型 ID
-    pub pi_model: String,
-    /// Pi sidecar: 候选模型 ID（逗号分隔）
-    pub pi_model_ids: String,
-    /// Pi sidecar: API base URL
-    pub pi_base_url: String,
-    /// Pi sidecar: API key（数据库 AES-GCM 加密）
-    pub pi_api_key: String,
-    /// Pi sidecar: API 类型
-    pub pi_api: String,
-    /// Pi sidecar: thinking level
-    pub pi_thinking_level: String,
+    pub sort_order: i64,
     pub is_del: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
 
+/// Sidecar 引擎配置：每个引擎（claude / pi）一行
+#[derive(Debug, Default, sqlx::FromRow, Clone, Serialize, Deserialize)]
+pub struct AiEngine {
+    pub engine: String,
+    pub provider_id: Option<String>,
+    pub active_model_id: String,
+    /// Thinking Level（仅 pi 引擎使用）
+    pub thinking_level: String,
+    pub updated_at: Option<String>,
+}
+
+/// GET /api/ai-engines 的响应：当前激活引擎 + 全部引擎配置
+#[derive(Debug, Serialize)]
+pub struct AiEnginesState {
+    pub active_engine: String,
+    pub engines: Vec<AiEngine>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AiProviderCreate {
     pub name: String,
-    pub sidecar_type: Option<String>,
-    pub url: Option<String>,
+    pub api_type: Option<String>,
+    pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model_ids: Option<String>,
-    pub active_model_id: Option<String>,
-    pub pi_provider: Option<String>,
-    pub pi_model: Option<String>,
-    pub pi_model_ids: Option<String>,
-    pub pi_base_url: Option<String>,
-    pub pi_api_key: Option<String>,
-    pub pi_api: Option<String>,
-    pub pi_thinking_level: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AiProviderUpdate {
     pub name: Option<String>,
-    pub sidecar_type: Option<String>,
-    pub url: Option<String>,
+    pub api_type: Option<String>,
+    pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model_ids: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiEngineUpdate {
+    pub provider_id: Option<String>,
     pub active_model_id: Option<String>,
-    pub pi_provider: Option<String>,
-    pub pi_model: Option<String>,
-    pub pi_model_ids: Option<String>,
-    pub pi_base_url: Option<String>,
-    pub pi_api_key: Option<String>,
-    pub pi_api: Option<String>,
-    pub pi_thinking_level: Option<String>,
+    pub thinking_level: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiEngineActivate {
+    pub engine: String,
 }

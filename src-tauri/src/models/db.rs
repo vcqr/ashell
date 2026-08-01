@@ -201,5 +201,64 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v6: AI 供应商与 sidecar 引擎解耦
+    // 供应商表重建为纯端点定义（丢弃旧的 sidecar 混合字段），
+    // 引擎配置（关联供应商/激活模型/thinking level）独立成表。
+    // 旧数据由 service 层在表为空时从 .env 重新迁移。
+    if current < 6 {
+        sqlx::query("DROP TABLE IF EXISTS ai_providers")
+            .execute(pool)
+            .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE ai_providers (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                api_type    TEXT NOT NULL DEFAULT 'openai-completions',
+                base_url    TEXT NOT NULL DEFAULT '',
+                api_key     TEXT NOT NULL DEFAULT '',
+                model_ids   TEXT NOT NULL DEFAULT '',
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                is_del      INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT DEFAULT (datetime('now')),
+                updated_at  TEXT DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ai_engines (
+                engine          TEXT PRIMARY KEY,
+                provider_id     TEXT,
+                active_model_id TEXT NOT NULL DEFAULT '',
+                thinking_level  TEXT NOT NULL DEFAULT 'off',
+                updated_at      TEXT DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        // KV 设置表（当前激活引擎等）
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (6)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }

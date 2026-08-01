@@ -71,14 +71,6 @@ fn env_path() -> Result<PathBuf, String> {
     Ok(dir.join(".env"))
 }
 
-/// 读取 .env 并提取前端感兴趣的字段。
-///
-/// 文件不存在时返回全空配置（不创建文件）。
-#[tauri::command]
-pub fn read_ai_env() -> Result<AiModelConfig, String> {
-    read_env_config()
-}
-
 /// 读取 .env 配置（pub(crate) 供 service 层迁移逻辑复用）
 pub(crate) fn read_env_config() -> Result<AiModelConfig, String> {
     let path = env_path()?;
@@ -104,15 +96,9 @@ pub(crate) fn read_env_config() -> Result<AiModelConfig, String> {
     })
 }
 
-/// 写入 .env：仅替换/插入感兴趣的 key，其它行原样保留。
+/// 写入 .env 核心逻辑（pub(crate) 供 service 层物化复用）。
 ///
-/// 空字符串视为"清空"--会移除对应行。
-#[tauri::command]
-pub fn write_ai_env(config: AiModelConfig) -> Result<(), String> {
-    write_env_config(config)
-}
-
-/// 写入 .env 核心逻辑（pub(crate) 供 service 层 activate 复用）
+/// 仅替换/插入感兴趣的 key，其它行原样保留；空字符串视为"清空"--会移除对应行。
 pub(crate) fn write_env_config(config: AiModelConfig) -> Result<(), String> {
     let path = env_path()?;
     let existing = if path.exists() {

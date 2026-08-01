@@ -5,12 +5,10 @@ import {
   NCard,
   NButton,
   NIcon,
-  NSpace,
   NInput,
   NSelect,
   NForm,
   NFormItem,
-  NTag,
   NSpin,
   NPopconfirm,
   NEmpty,
@@ -21,7 +19,6 @@ import {
   AddOutline,
   TrashOutline,
   CloudDownloadOutline,
-  CheckmarkOutline,
   SaveOutline,
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
@@ -31,17 +28,11 @@ import {
   createAiProvider,
   updateAiProvider,
   deleteAiProvider,
-  activateAiProvider,
 } from "@/api/aiProviders";
 import {
-  sidecarTypeOptions,
-  piApiOptions,
-  piThinkingLevelOptions,
-  parseModelIds,
+  apiTypeOptions,
   normalizeModelIds,
-  resolveActiveModelId,
-  inferApiType,
-  getProviderEndpoint,
+  inferFetchApiType,
   fetchModelList,
 } from "@/composables/useAiConfig";
 
@@ -60,7 +51,6 @@ const providers = ref<AiProvider[]>([]);
 const selectedId = ref<string | null>(null);
 const loading = ref(false);
 const saving = ref(false);
-const activating = ref(false);
 const fetching = ref(false);
 
 const selectedProvider = computed(() =>
@@ -69,55 +59,33 @@ const selectedProvider = computed(() =>
 
 type Draft = {
   name: string;
-  sidecarType: string;
-  url: string;
+  apiType: string;
+  baseUrl: string;
   apiKey: string;
   modelIds: string;
-  activeModelId: string;
-  piProvider: string;
-  piModel: string;
-  piModelIds: string;
-  piBaseUrl: string;
-  piApiKey: string;
-  piApi: string;
-  piThinkingLevel: string;
 };
 
 function emptyDraft(): Draft {
   return {
-    name: "", sidecarType: "claude", url: "", apiKey: "", modelIds: "",
-    activeModelId: "", piProvider: "", piModel: "", piModelIds: "", piBaseUrl: "",
-    piApiKey: "", piApi: "", piThinkingLevel: "off",
+    name: "",
+    apiType: "openai-completions",
+    baseUrl: "",
+    apiKey: "",
+    modelIds: "",
   };
 }
 
 function providerToDraft(p: AiProvider): Draft {
   return {
     name: p.name,
-    sidecarType: p.sidecar_type || "claude",
-    url: p.url, apiKey: p.api_key, modelIds: p.model_ids, activeModelId: p.active_model_id,
-    piProvider: p.pi_provider, piModel: p.pi_model, piModelIds: p.pi_model_ids,
-    piBaseUrl: p.pi_base_url, piApiKey: p.pi_api_key, piApi: p.pi_api, piThinkingLevel: p.pi_thinking_level,
+    apiType: p.api_type || "openai-completions",
+    baseUrl: p.base_url,
+    apiKey: p.api_key,
+    modelIds: p.model_ids,
   };
 }
 
 const draft = ref<Draft>(emptyDraft());
-const isPiDraft = computed(() => draft.value.sidecarType === "pi");
-
-const modelOptions = computed(() =>
-  parseModelIds(draft.value.modelIds).map((id) => ({ label: id, value: id })),
-);
-
-const piModelOptions = computed(() =>
-  parseModelIds(draft.value.piModelIds).map((id) => ({ label: id, value: id })),
-);
-
-function syncDraftActiveModel() {
-  draft.value.activeModelId = resolveActiveModelId(draft.value.modelIds, draft.value.activeModelId);
-}
-function syncDraftPiModel() {
-  draft.value.piModel = resolveActiveModelId(draft.value.piModelIds, draft.value.piModel);
-}
 
 watch(selectedId, (id) => {
   const p = providers.value.find((x) => x.id === id);
@@ -128,11 +96,8 @@ async function loadProviders() {
   loading.value = true;
   try {
     providers.value = await listAiProviders();
-    if (providers.value.length > 0) {
-      const active = providers.value.find((p) => p.is_active);
-      selectedId.value = active?.id ?? providers.value[0].id;
-    } else {
-      selectedId.value = null;
+    selectedId.value = providers.value[0]?.id ?? null;
+    if (!selectedId.value) {
       draft.value = emptyDraft();
     }
   } catch (e) {
@@ -145,7 +110,6 @@ async function loadProviders() {
 async function addProvider() {
   const input: AiProviderCreate = {
     name: t("settings.ai.provider.addPlaceholder"),
-    sidecar_type: "claude",
   };
   try {
     const p = await createAiProvider(input);
@@ -164,22 +128,12 @@ async function saveProvider() {
   }
   saving.value = true;
   try {
-    const modelIds = normalizeModelIds(draft.value.modelIds);
-    const piModelIds = normalizeModelIds(draft.value.piModelIds);
     const updated = await updateAiProvider(selectedId.value, {
       name: draft.value.name.trim(),
-      sidecar_type: draft.value.sidecarType,
-      url: draft.value.url.trim(),
+      api_type: draft.value.apiType,
+      base_url: draft.value.baseUrl.trim(),
       api_key: draft.value.apiKey.trim(),
-      model_ids: modelIds,
-      active_model_id: resolveActiveModelId(modelIds, draft.value.activeModelId),
-      pi_provider: draft.value.piProvider.trim(),
-      pi_model: resolveActiveModelId(piModelIds, draft.value.piModel),
-      pi_model_ids: piModelIds,
-      pi_base_url: draft.value.piBaseUrl.trim(),
-      pi_api_key: draft.value.piApiKey.trim(),
-      pi_api: draft.value.piApi,
-      pi_thinking_level: draft.value.piThinkingLevel,
+      model_ids: normalizeModelIds(draft.value.modelIds),
     });
     const idx = providers.value.findIndex((p) => p.id === updated.id);
     if (idx >= 0) providers.value[idx] = updated;
@@ -197,10 +151,8 @@ async function removeProvider() {
   try {
     await deleteAiProvider(selectedId.value);
     providers.value = providers.value.filter((p) => p.id !== selectedId.value);
-    if (providers.value.length > 0) {
-      selectedId.value = providers.value[0].id;
-    } else {
-      selectedId.value = null;
+    selectedId.value = providers.value[0]?.id ?? null;
+    if (!selectedId.value) {
       draft.value = emptyDraft();
     }
     message.success(t("settings.ai.provider.delete"));
@@ -209,44 +161,21 @@ async function removeProvider() {
   }
 }
 
-async function activateProvider() {
-  if (!selectedId.value) return;
-  activating.value = true;
-  try {
-    const activated = await activateAiProvider(selectedId.value);
-    providers.value = providers.value.map((p) => ({ ...p, is_active: p.id === activated.id }));
-    message.success(t("settings.ai.provider.activated"));
-  } catch (e) {
-    message.error(t("settings.ai.provider.saveFailed", { error: String(e) }));
-  } finally {
-    activating.value = false;
-  }
-}
-
 async function fetchModels() {
-  const { baseUrl, apiKey } = getProviderEndpoint(
-    draft.value.sidecarType, draft.value.url, draft.value.piBaseUrl,
-    draft.value.apiKey, draft.value.piApiKey,
-  );
-  if (!baseUrl.trim() || !apiKey.trim()) {
+  const baseUrl = draft.value.baseUrl.trim();
+  const apiKey = draft.value.apiKey.trim();
+  if (!baseUrl || !apiKey) {
     message.warning(t("settings.ai.provider.fetchNeedKey"));
     return;
   }
-  const apiType = inferApiType(draft.value.sidecarType, draft.value.piApi);
   fetching.value = true;
   try {
-    const models = await fetchModelList(baseUrl.trim(), apiKey.trim(), apiType);
+    const models = await fetchModelList(baseUrl, apiKey, inferFetchApiType(draft.value.apiType));
     if (models.length === 0) {
       message.warning(t("settings.ai.provider.fetchFailed", { error: "empty" }));
       return;
     }
-    if (isPiDraft.value) {
-      draft.value.piModelIds = models.join(", ");
-      syncDraftPiModel();
-    } else {
-      draft.value.modelIds = models.join(", ");
-      syncDraftActiveModel();
-    }
+    draft.value.modelIds = models.join(", ");
     message.success(t("settings.ai.provider.fetchSuccess", { count: models.length }));
   } catch (e) {
     message.error(t("settings.ai.provider.fetchFailed", { error: String(e) }));
@@ -255,10 +184,7 @@ async function fetchModels() {
   }
 }
 
-const canFetchModels = computed(() => {
-  if (isPiDraft.value) return draft.value.piBaseUrl.trim() && draft.value.piApiKey.trim();
-  return draft.value.url.trim() && draft.value.apiKey.trim();
-});
+const canFetchModels = computed(() => draft.value.baseUrl.trim() && draft.value.apiKey.trim());
 
 watch(() => props.open, (v) => {
   if (v) loadProviders();
@@ -268,7 +194,7 @@ watch(() => props.open, (v) => {
 <template>
   <NModal :show="open" @update:show="(v: boolean) => emit('update:open', v)">
     <NCard
-      style="width: min(720px, 90vw); height: min(560px, 80vh)"
+      style="width: min(760px, 92vw); max-height: min(660px, 88vh)"
       :title="t('settings.ai.provider.title')"
       size="medium"
       :bordered="false"
@@ -296,9 +222,6 @@ watch(() => props.open, (v) => {
                 @click="selectedId = p.id"
               >
                 <span class="provider-item-name">{{ p.name }}</span>
-                <NTag v-if="p.is_active" size="tiny" type="success" :bordered="false" round>
-                  {{ t("settings.ai.provider.activated") }}
-                </NTag>
               </button>
               <NEmpty
                 v-if="!loading && providers.length === 0"
@@ -318,116 +241,54 @@ watch(() => props.open, (v) => {
           <template v-if="selectedProvider">
             <NScrollbar class="detail-scroll">
               <NForm label-placement="top" size="small">
-                <div class="detail-header">
-                  <NFormItem :label="t('settings.ai.provider.name')" style="flex: 1; margin-bottom: 0">
-                    <NInput v-model:value="draft.name" :placeholder="t('settings.ai.provider.namePlaceholder')" />
-                  </NFormItem>
-                  <NSpace :size="8" align="end">
-                    <NButton
-                      size="small" type="primary" :loading="activating"
-                      :disabled="selectedProvider.is_active" @click="activateProvider"
-                    >
-                      <template #icon><NIcon><CheckmarkOutline /></NIcon></template>
-                      {{ selectedProvider.is_active ? t("settings.ai.provider.activated") : t("settings.ai.provider.activate") }}
-                    </NButton>
-                    <NPopconfirm @positive-click="removeProvider">
-                      <template #trigger>
-                        <NButton size="small" quaternary type="error">
-                          <template #icon><NIcon><TrashOutline /></NIcon></template>
-                          {{ t("settings.ai.provider.delete") }}
-                        </NButton>
-                      </template>
-                      {{ t("settings.ai.provider.deleteConfirm") }}
-                    </NPopconfirm>
-                  </NSpace>
-                </div>
-
-                <NFormItem :label="t('ai.modelDialog.sidecarType')">
-                  <NSelect
-                    v-model:value="draft.sidecarType"
-                    :options="sidecarTypeOptions"
-                    :placeholder="t('ai.modelDialog.sidecarTypePlaceholder')"
-                  />
+                <NFormItem :label="t('settings.ai.provider.name')">
+                  <NInput v-model:value="draft.name" :placeholder="t('settings.ai.provider.namePlaceholder')" />
                 </NFormItem>
 
-                <template v-if="!isPiDraft">
-                  <NFormItem :label="t('ai.modelDialog.baseUrl')">
-                    <NInput v-model:value="draft.url" placeholder="https://api.anthropic.com" clearable />
-                  </NFormItem>
-                  <NFormItem :label="t('ai.modelDialog.authToken')">
-                    <NInput v-model:value="draft.apiKey" type="password" show-password-on="click" placeholder="sk-..." clearable />
-                  </NFormItem>
-                  <NFormItem>
-                    <NButton size="small" :loading="fetching" :disabled="!canFetchModels" @click="fetchModels">
-                      <template #icon><NIcon><CloudDownloadOutline /></NIcon></template>
-                      {{ fetching ? t("settings.ai.provider.fetching") : t("settings.ai.provider.fetchModels") }}
-                    </NButton>
-                  </NFormItem>
-                  <NFormItem :label="t('settings.ai.provider.modelIds')">
-                    <NInput
-                      v-model:value="draft.modelIds" type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 4 }"
-                      placeholder="claude-sonnet-4-5, claude-opus-4-5"
-                      @update:value="syncDraftActiveModel"
-                    />
-                  </NFormItem>
-                  <NFormItem :label="t('settings.ai.provider.activeModel')">
-                    <NSelect
-                      v-model:value="draft.activeModelId" :options="modelOptions"
-                      :disabled="modelOptions.length === 0"
-                      :placeholder="t('settings.ai.provider.activeModelPlaceholder')"
-                    />
-                  </NFormItem>
-                </template>
-
-                <template v-else>
-                  <NFormItem :label="t('ai.modelDialog.piApi')">
-                    <NSelect v-model:value="draft.piApi" :options="piApiOptions" :placeholder="t('ai.modelDialog.piApiPlaceholder')" />
-                  </NFormItem>
-                  <NFormItem :label="t('ai.modelDialog.piProvider')">
-                    <NInput v-model:value="draft.piProvider" placeholder="custom" />
-                  </NFormItem>
-                  <NFormItem :label="t('ai.modelDialog.piBaseUrl')">
-                    <NInput v-model:value="draft.piBaseUrl" placeholder="https://api.openai.com/v1" />
-                  </NFormItem>
-                  <NFormItem :label="t('ai.modelDialog.piApiKey')">
-                    <NInput v-model:value="draft.piApiKey" type="password" show-password-on="click" placeholder="sk-..." />
-                  </NFormItem>
-                  <NFormItem>
-                    <NButton size="small" :loading="fetching" :disabled="!canFetchModels" @click="fetchModels">
-                      <template #icon><NIcon><CloudDownloadOutline /></NIcon></template>
-                      {{ fetching ? t("settings.ai.provider.fetching") : t("settings.ai.provider.fetchModels") }}
-                    </NButton>
-                  </NFormItem>
-                  <NFormItem :label="t('settings.ai.provider.modelIds')">
-                    <NInput
-                      v-model:value="draft.piModelIds" type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 4 }"
-                      placeholder="deepseek-chat, deepseek-coder"
-                      @update:value="syncDraftPiModel"
-                    />
-                  </NFormItem>
-                  <NFormItem :label="t('settings.ai.provider.activeModel')">
-                    <NSelect
-                      v-model:value="draft.piModel" :options="piModelOptions"
-                      :disabled="piModelOptions.length === 0"
-                      :placeholder="t('settings.ai.provider.activeModelPlaceholder')"
-                    />
-                  </NFormItem>
-                  <NFormItem :label="t('ai.modelDialog.piThinkingLevel')">
-                    <NSelect
-                      v-model:value="draft.piThinkingLevel" :options="piThinkingLevelOptions"
-                      :placeholder="t('ai.modelDialog.piThinkingLevelPlaceholder')"
-                    />
-                  </NFormItem>
-                </template>
-
-                <NButton type="primary" :loading="saving" @click="saveProvider">
-                  <template #icon><NIcon><SaveOutline /></NIcon></template>
-                  {{ saving ? t("settings.ai.provider.saving") : t("settings.ai.provider.save") }}
-                </NButton>
+                <NFormItem :label="t('settings.ai.provider.apiType')">
+                  <NSelect
+                    v-model:value="draft.apiType"
+                    :options="apiTypeOptions"
+                    :placeholder="t('settings.ai.provider.apiTypePlaceholder')"
+                  />
+                </NFormItem>
+                <NFormItem :label="t('settings.ai.provider.baseUrl')">
+                  <NInput v-model:value="draft.baseUrl" placeholder="https://api.openai.com/v1" clearable />
+                </NFormItem>
+                <NFormItem :label="t('settings.ai.provider.apiKey')">
+                  <NInput v-model:value="draft.apiKey" type="password" show-password-on="click" placeholder="sk-..." clearable />
+                </NFormItem>
+                <NFormItem>
+                  <NButton size="small" :loading="fetching" :disabled="!canFetchModels" @click="fetchModels">
+                    <template #icon><NIcon><CloudDownloadOutline /></NIcon></template>
+                    {{ fetching ? t("settings.ai.provider.fetching") : t("settings.ai.provider.fetchModels") }}
+                  </NButton>
+                </NFormItem>
+                <NFormItem :label="t('settings.ai.provider.modelIds')">
+                  <NInput
+                    v-model:value="draft.modelIds" type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    placeholder="deepseek-chat, deepseek-coder"
+                  />
+                </NFormItem>
               </NForm>
             </NScrollbar>
+
+            <div class="detail-actions">
+              <NPopconfirm @positive-click="removeProvider">
+                <template #trigger>
+                  <NButton type="error">
+                    <template #icon><NIcon><TrashOutline /></NIcon></template>
+                    {{ t("settings.ai.provider.delete") }}
+                  </NButton>
+                </template>
+                {{ t("settings.ai.provider.deleteConfirm") }}
+              </NPopconfirm>
+              <NButton type="primary" :loading="saving" @click="saveProvider">
+                <template #icon><NIcon><SaveOutline /></NIcon></template>
+                {{ saving ? t("settings.ai.provider.saving") : t("settings.ai.provider.save") }}
+              </NButton>
+            </div>
           </template>
 
           <NEmpty v-else :description="t('settings.ai.provider.emptyHint')" style="padding: 40px 0" />
@@ -441,7 +302,7 @@ watch(() => props.open, (v) => {
 .provider-layout {
   display: flex;
   gap: 16px;
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 
@@ -500,6 +361,7 @@ watch(() => props.open, (v) => {
 .provider-detail {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -508,17 +370,21 @@ watch(() => props.open, (v) => {
   flex: 1;
 }
 
-.detail-header {
+.detail-actions {
   display: flex;
+  justify-content: flex-end;
+  align-items: center;
   gap: 12px;
-  align-items: flex-start;
-  margin-bottom: 8px;
+  padding-top: 12px;
+  flex-shrink: 0;
 }
 </style>
 
 <style>
-.providers-card .n-card__content {
-  height: 100%;
+.providers-card .n-card-content {
+  min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 </style>
