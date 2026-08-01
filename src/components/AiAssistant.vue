@@ -15,8 +15,6 @@ import {
   NAvatar,
   NSpace,
   NDropdown,
-  NTag,
-  NTooltip,
   NModal,
   NCard,
 } from "naive-ui";
@@ -36,7 +34,7 @@ import { useApiStore } from "@/stores/api";
 import { useAiStore } from "@/stores/ai";
 import { useAiConfigStore } from "@/stores/aiConfig";
 import { getApiInfo } from "@/api/client";
-import { parseModelIds, sidecarTypeOptions } from "@/composables/useAiConfig";
+import { parseModelIds } from "@/composables/useAiConfig";
 
 const props = defineProps<{
   open: boolean;
@@ -58,7 +56,7 @@ const { t } = useI18n();
 // 供应商与引擎配置存于共享 store（useAiConfigStore），设置面板与本面板共用同一份状态。
 // 后端在切换时物化到 ~/.ashell/ai/.env，sidecar 新会话启动时读取。
 
-const { providers, enginesState, activeEngine, activeSidecarType, activeEngineLabel } =
+const { providers, activeEngine, activeSidecarType, activeEngineLabel } =
   storeToRefs(aiConfig);
 const switching = computed(() => aiConfig.busy);
 

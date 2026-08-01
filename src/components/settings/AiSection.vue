@@ -63,7 +63,7 @@ async function switchEngine(engine: string) {
   }
 }
 
-async function patchEngine(input: { provider_id?: string | null; active_model_id?: string; thinking_level?: string }) {
+async function patchEngine(input: { provider_id?: string; active_model_id?: string; thinking_level?: string }) {
   try {
     await aiConfig.patchEngine(input);
   } catch (e) {

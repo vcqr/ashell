@@ -7,7 +7,7 @@ import {
   updateAiEngine,
   activateAiEngine,
 } from "@/api/aiProviders";
-import { sidecarTypeOptions, parseModelIds } from "@/composables/useAiConfig";
+import { sidecarTypeOptions } from "@/composables/useAiConfig";
 
 /**
  * AI 引擎与模型供应商的共享配置状态。
