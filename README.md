@@ -77,6 +77,11 @@ AShell 注重性能、隐私与可定制性。所有 SSH 凭证本地加密存�
 - **自动连接**：启动时自动连接记住的 Tab。
 - **默认 Shell**：可选 Auto / PowerShell / cmd / Git Bash / Bash / Zsh / Fish，启动自动打开本地终端。
 
+### 🔄 自动更新
+- **启动自动检查**：应用启动后自动检查 GitHub Releases 是否有新版本，发现时弹出通知。
+- **一键更新**：通知或「设置 > 关于」中点击「下载并安装」，下载完成后自动重启。
+- **更新日志**：检查到新版本时展示 Release Notes（Markdown 渲染）。
+
 ---
 
 ## 下载安装
@@ -123,6 +128,35 @@ npm run tauri build
 ```
 
 > `npm run tauri build` 会先自动执行 `npm run sidecar:build`（编译 Claude / Pi sidecar 二进制），再执行 `npm run build`（前端类型检查 + Vite 构建），无需手动编译 sidecar。
+
+---
+
+## 自动更新配置（开发者）
+
+AShell 集成了 Tauri 2 Updater，通过 GitHub Releases 分发更新。首次启用需要完成以下一次性配置：
+
+### 1. 生成签名密钥
+
+```bash
+npx @tauri-apps/cli signer generate -w ~/.tauri/ashell.key
+```
+
+按提示设置密码，命令会输出 Public Key 并将私钥写入指定文件。
+
+### 2. 配置公钥
+
+将上一步输出的 Public Key 填入 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey` 字段（替换占位符 `REPLACE_WITH_YOUR_PUBLIC_KEY`）。
+
+### 3. 添加 GitHub Secrets
+
+在仓库 **Settings → Secrets and variables → Actions** 中添加：
+
+| Secret 名 | 值 |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | 私钥文件完整内容 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 生成密钥时设置的密码 |
+
+配置完成后，每次推送 `v*` 标签触发 `tauri-action` 时会自动签名更新包并生成 `latest.json` 上传到 Release，应用内的检查更新即可正常工作。
 
 ---
 

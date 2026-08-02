@@ -38,6 +38,7 @@ import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
 import AiProvidersModal from "@/components/AiProvidersModal.vue";
+import UpdateChecker from "@/components/UpdateChecker.vue";
 import { useApiStore } from "@/stores/api";
 import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
@@ -133,6 +134,7 @@ const {
     <NMessageProvider>
       <NDialogProvider>
         <NNotificationProvider>
+          <UpdateChecker />
           <div
             class="app-root"
             :style="{

@@ -181,5 +181,17 @@ export default {
     github: "GitHub",
     gitee: "Gitee",
     loadingVersion: "Loading…",
+    checkUpdate: "Check for Updates",
+    checking: "Checking…",
+    upToDate: "You're up to date",
+    newVersionAvailable: "New version v{version} available",
+    downloadInstall: "Download & Install",
+    downloading: "Downloading…",
+    updateInstalled: "Update installed, restarting…",
+    checkFailed: "Update check failed: {error}",
+    downloadFailed: "Download failed: {error}",
+    updateNotificationDesc:
+      "Click the button below to download and install now, or go to Settings > About for details.",
+    releaseNotes: "Release Notes",
   },
 } as const

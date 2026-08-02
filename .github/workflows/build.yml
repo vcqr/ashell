@@ -42,6 +42,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: install dependencies (ubuntu only)
         if: startsWith(matrix.platform, 'ubuntu')
@@ -85,9 +87,9 @@ jobs:
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -z "$PREV_TAG" ]; then
             # 首次发布：全部 commit
-            NOTES=$(git log --pretty=format:"- %s" HEAD)
+            NOTES=$(git log --no-merges --pretty=format:"- %s" HEAD)
           else
-            NOTES=$(git log --pretty=format:"- %s" ${PREV_TAG}..HEAD)
+            NOTES=$(git log --no-merges --pretty=format:"- %s" ${PREV_TAG}..HEAD)
           fi
           # 转义换行，写入 GITHUB_OUTPUT
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
@@ -98,6 +100,8 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "${{ github.ref_name }}"

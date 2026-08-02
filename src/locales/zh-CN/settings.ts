@@ -181,5 +181,17 @@ export default {
     github: "GitHub",
     gitee: "Gitee",
     loadingVersion: "加载中…",
+    checkUpdate: "检查更新",
+    checking: "检查中…",
+    upToDate: "当前已是最新版本",
+    newVersionAvailable: "发现新版本 v{version}",
+    downloadInstall: "下载并安装",
+    downloading: "下载中…",
+    updateInstalled: "更新安装完成，正在重启…",
+    checkFailed: "检查更新失败：{error}",
+    downloadFailed: "下载更新失败：{error}",
+    updateNotificationDesc:
+      "点击下方按钮立即下载并安装，或前往「设置 > 关于」查看详情。",
+    releaseNotes: "更新日志",
   },
 } as const

@@ -146,6 +146,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppCtx::new())
         .setup(|app| {
             // 自定义应用菜单，使 macOS "关于" 面板显示正确的应用图标
