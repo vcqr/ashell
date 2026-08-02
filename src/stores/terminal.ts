@@ -29,6 +29,7 @@ export interface TerminalConfig {
   ligaturesEnabled: boolean
   progressEnabled: boolean
   commandSuggestEnabled: boolean
+  scrollback: number
 }
 
 const STORAGE_KEY = "ashell:terminal-config"
@@ -45,6 +46,8 @@ export const FONT_FAMILY_PRESETS: { label: string; value: string }[] = [
 
 export const FONT_SIZE_MIN = 10
 export const FONT_SIZE_MAX = 24
+export const SCROLLBACK_MIN = 0
+export const SCROLLBACK_MAX = 100000
 
 const DEFAULT_CONFIG: TerminalConfig = {
   fontSize: 13,
@@ -62,6 +65,7 @@ const DEFAULT_CONFIG: TerminalConfig = {
   ligaturesEnabled: false,
   progressEnabled: true,
   commandSuggestEnabled: true,
+  scrollback: 5000,
 }
 
 function clampFontSize(n: unknown): number {
@@ -141,6 +145,12 @@ function loadConfig(): TerminalConfig {
         typeof parsed.commandSuggestEnabled === "boolean"
           ? parsed.commandSuggestEnabled
           : DEFAULT_CONFIG.commandSuggestEnabled,
+      scrollback:
+        typeof parsed.scrollback === "number" &&
+        Number.isFinite(parsed.scrollback) &&
+        parsed.scrollback >= 0
+          ? Math.min(SCROLLBACK_MAX, Math.round(parsed.scrollback))
+          : DEFAULT_CONFIG.scrollback,
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -166,6 +176,7 @@ export const useTerminalStore = defineStore("terminal", () => {
   const ligaturesEnabled = ref<boolean>(initial.ligaturesEnabled)
   const progressEnabled = ref<boolean>(initial.progressEnabled)
   const commandSuggestEnabled = ref<boolean>(initial.commandSuggestEnabled)
+  const scrollback = ref<number>(initial.scrollback)
 
   /** 窗口透明度 (0.3 – 1.0)。1 = 完全不透明。控制 WebView 内容层 alpha。 */
   const WINDOW_OPACITY_KEY = "ashell:window-opacity"
@@ -316,6 +327,7 @@ export const useTerminalStore = defineStore("terminal", () => {
         ligaturesEnabled: ligaturesEnabled.value,
         progressEnabled: progressEnabled.value,
         commandSuggestEnabled: commandSuggestEnabled.value,
+        scrollback: scrollback.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch {
@@ -338,6 +350,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       ligaturesEnabled,
       progressEnabled,
       commandSuggestEnabled,
+      scrollback,
     ],
     persist,
   )
@@ -358,6 +371,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     ligaturesEnabled.value = DEFAULT_CONFIG.ligaturesEnabled
     progressEnabled.value = DEFAULT_CONFIG.progressEnabled
     commandSuggestEnabled.value = DEFAULT_CONFIG.commandSuggestEnabled
+    scrollback.value = DEFAULT_CONFIG.scrollback
     resetTerminalThemes()
   }
 
@@ -425,6 +439,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     ligaturesEnabled,
     progressEnabled,
     commandSuggestEnabled,
+    scrollback,
     windowOpacity,
     setWindowOpacity,
     windowBlur,

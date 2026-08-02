@@ -37,6 +37,7 @@ export default {
     presetGroup: "内置预设",
     systemGroup: "系统字体",
     fontSize: "字号",
+    scrollback: "滚动缓冲区",
     cursorStyle: "光标样式",
     cursorBlink: "光标闪烁",
     rightClick: "鼠标右键行为",

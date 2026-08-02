@@ -37,6 +37,7 @@ export default {
     presetGroup: "Built-in presets",
     systemGroup: "System fonts",
     fontSize: "Font size",
+    scrollback: "Scrollback",
     cursorStyle: "Cursor style",
     cursorBlink: "Cursor blink",
     rightClick: "Right-click behavior",

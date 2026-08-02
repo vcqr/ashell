@@ -783,7 +783,7 @@ onMounted(() => {
     fontSize: termStore.fontSize,
     cursorBlink: termStore.cursorBlink,
     cursorStyle: termStore.cursorStyle,
-    scrollback: 5000,
+    scrollback: termStore.scrollback,
     allowProposedApi: true,
     theme: termStore.getActiveTerminalTheme(),
     ...(isLocalOnWindows

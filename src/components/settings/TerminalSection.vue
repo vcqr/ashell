@@ -20,6 +20,8 @@ import {
   FONT_FAMILY_PRESETS,
   FONT_SIZE_MIN,
   FONT_SIZE_MAX,
+  SCROLLBACK_MIN,
+  SCROLLBACK_MAX,
   type CursorStyle,
   type RightClickAction,
   type LeftClickAction,
@@ -100,6 +102,15 @@ const leftClickOptions = computed(() => [
           :min="FONT_SIZE_MIN"
           :max="FONT_SIZE_MAX"
           :step="1"
+          style="width: 160px"
+        />
+      </NFormItem>
+      <NFormItem :label="t('settings.terminal.scrollback')" style="margin-top: 12px">
+        <NInputNumber
+          v-model:value="terminalStore.scrollback"
+          :min="SCROLLBACK_MIN"
+          :max="SCROLLBACK_MAX"
+          :step="1000"
           style="width: 160px"
         />
       </NFormItem>
