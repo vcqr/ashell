@@ -10,7 +10,8 @@ export type UpdateState =
 
 // 模块级单例状态 -- UpdateChecker（启动检查）与 AboutSection（手动检查）共享
 const updateState = ref<UpdateState>("idle");
-const pendingUpdate = ref<Update | null>(null);
+// Update 对象内部使用 ES 私有字段，不能用 ref 包裹（Proxy 会导致私有字段访问失败）
+let pendingUpdate: Update | null = null;
 const newVersion = ref("");
 const releaseBody = ref("");
 const downloadProgress = ref(0);
@@ -26,11 +27,11 @@ export function useUpdater() {
   }): Promise<boolean> {
     const silent = opts?.silent ?? false;
     updateState.value = "checking";
-    pendingUpdate.value = null;
+    pendingUpdate = null;
     try {
       const update = await check();
       if (update) {
-        pendingUpdate.value = update;
+        pendingUpdate = update;
         newVersion.value = update.version;
         releaseBody.value = update.body ?? "";
         updateState.value = "available";
@@ -53,7 +54,7 @@ export function useUpdater() {
    */
   async function downloadAndInstall(onBeforeRelaunch?: () => void): Promise<void> {
     if (updateState.value === "downloading") return;
-    const update = pendingUpdate.value;
+    const update = pendingUpdate;
     if (!update) return;
     updateState.value = "downloading";
     downloadProgress.value = 0;
@@ -99,7 +100,6 @@ export function useUpdater() {
 
   return {
     updateState,
-    pendingUpdate,
     newVersion,
     releaseBody,
     downloadProgress,
