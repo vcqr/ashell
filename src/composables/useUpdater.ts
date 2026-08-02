@@ -6,8 +6,7 @@ export type UpdateState =
   | "idle"
   | "checking"
   | "available"
-  | "downloading"
-  | "error";
+  | "downloading";
 
 // 模块级单例状态 -- UpdateChecker（启动检查）与 AboutSection（手动检查）共享
 const updateState = ref<UpdateState>("idle");
@@ -38,6 +37,8 @@ export function useUpdater() {
         return true;
       }
       updateState.value = "idle";
+      newVersion.value = "";
+      releaseBody.value = "";
       return false;
     } catch (e) {
       updateState.value = "idle";
@@ -51,6 +52,7 @@ export function useUpdater() {
    * onBeforeRelaunch 在安装完成、重启前调用，用于展示"正在重启"提示。
    */
   async function downloadAndInstall(onBeforeRelaunch?: () => void): Promise<void> {
+    if (updateState.value === "downloading") return;
     const update = pendingUpdate.value;
     if (!update) return;
     updateState.value = "downloading";

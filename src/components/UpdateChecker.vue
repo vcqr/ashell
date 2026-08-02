@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, watch, h } from "vue";
+import { onMounted, watch, h, ref } from "vue";
 import {
   useNotification,
   NButton,
@@ -22,12 +22,23 @@ const {
   hasAutoChecked,
 } = useUpdater();
 
+const activeNotification = ref<NotificationReactive | null>(null);
+
 onMounted(() => {
   // 延迟 3s 检查，避免与启动初始化争抢资源
   window.setTimeout(() => void doStartupCheck(), 3000);
 });
 
+// 下载进度同步到通知 meta（setup 级 watch，随组件生命周期自动清理）
+watch(downloadProgress, (p) => {
+  if (updateState.value === "downloading" && activeNotification.value) {
+    activeNotification.value.meta = `${t("settings.about.downloading")} ${p}%`;
+  }
+});
+
 async function doStartupCheck() {
+  // dev 模式下 updater 不可用，跳过自动检查
+  if (import.meta.env.DEV) return;
   if (hasAutoChecked()) return;
   markAutoChecked();
   const found = await checkForUpdates({ silent: true });
@@ -35,7 +46,7 @@ async function doStartupCheck() {
 }
 
 function showUpdateNotification() {
-  const n = notification.create({
+  activeNotification.value = notification.create({
     title: `🚀 ${t("settings.about.newVersionAvailable", {
       version: newVersion.value,
     })}`,
@@ -50,7 +61,7 @@ function showUpdateNotification() {
           size: "small",
           loading: updateState.value === "downloading",
           disabled: updateState.value === "downloading",
-          onClick: () => void doDownload(n),
+          onClick: () => void doDownload(),
         },
         {
           default: () => t("settings.about.downloadInstall"),
@@ -59,18 +70,17 @@ function showUpdateNotification() {
         },
       ),
   });
-
-  // 下载进度同步到通知 meta
-  watch(downloadProgress, (p) => {
-    if (updateState.value === "downloading") {
-      n.meta = `${t("settings.about.downloading")} ${p}%`;
-    }
-  });
 }
 
-async function doDownload(n: NotificationReactive) {
+async function doDownload() {
+  const n = activeNotification.value;
+  if (!n) return;
   try {
-    await downloadAndInstall();
+    await downloadAndInstall(() => {
+      n.title = `🔄 ${t("settings.about.updateInstalled")}`;
+      n.content = "";
+      n.meta = undefined;
+    });
     // downloadAndInstall 成功后会自动 relaunch，不会执行到这里
   } catch (e) {
     n.type = "error";

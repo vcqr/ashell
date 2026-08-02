@@ -81,6 +81,14 @@ async function handleDownload() {
     message.error(t("settings.about.downloadFailed", { error: String(e) }));
   }
 }
+
+function handleReleaseNotesClick(e: MouseEvent) {
+  const anchor = (e.target as HTMLElement)?.closest("a");
+  if (anchor?.href) {
+    e.preventDefault();
+    open(anchor.href);
+  }
+}
 </script>
 
 <template>
@@ -172,7 +180,7 @@ async function handleDownload() {
         {{ t("settings.about.releaseNotes") }}
       </div>
       <!-- eslint-disable-next-line vue/no-v-html -- DOMPurify 已对 marked 输出做消毒 -->
-      <div class="release-notes-body" v-html="renderedReleaseNotes"></div>
+      <div class="release-notes-body" v-html="renderedReleaseNotes" @click="handleReleaseNotesClick"></div>
     </div>
   </section>
 </template>
