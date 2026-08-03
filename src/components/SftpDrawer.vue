@@ -25,6 +25,7 @@ import {
   CreateOutline,
   DocumentOutline,
   DownloadOutline,
+  EyeOutline,
   FolderOpenOutline,
   FolderOutline,
   LinkOutline,
@@ -55,6 +56,8 @@ import RenameDialog from "@/components/sftp/RenameDialog.vue"
 import SftpUploadList from "@/components/sftp/SftpUploadList.vue"
 import SftpDownloadList from "@/components/sftp/SftpDownloadList.vue"
 import FileEditor from "@/components/sftp/FileEditor.vue"
+import FilePreview from "@/components/sftp/FilePreview.vue"
+import { isPreviewable } from "@/utils/fileType"
 
 interface Props {
   open: boolean
@@ -93,6 +96,9 @@ const downloadModalOpen = ref(false)
 
 const editorOpen = ref(false)
 const editorFile = ref<SftpFile | null>(null)
+
+const previewOpen = ref(false)
+const previewFile = ref<SftpFile | null>(null)
 
 const ctxMenuVisible = ref(false)
 const ctxMenuX = ref(0)
@@ -325,6 +331,11 @@ function confirmRemove(file: SftpFile) {
 function openEditor(file: SftpFile) {
   editorFile.value = file
   editorOpen.value = true
+}
+
+function openPreview(file: SftpFile) {
+  previewFile.value = file
+  previewOpen.value = true
 }
 
 function onEditorSaved() {
@@ -810,7 +821,11 @@ function rowProps(row: SftpFile) {
       if (row.file_type === "dir" || row.file_type === "symlink") {
         enterDir(row)
       } else if (row.file_type === "file") {
-        void onDownload(row)
+        if (isPreviewable(row.file_name)) {
+          openPreview(row)
+        } else {
+          void onDownload(row)
+        }
       }
     },
     onContextmenu: (e: MouseEvent) => {
@@ -864,6 +879,13 @@ const ctxMenuOptions = computed(() => {
   }
   const opts: Array<Record<string, unknown>> = []
   if (target.file_type === "file") {
+    if (isPreviewable(target.file_name)) {
+      opts.push({
+        label: t("sftp.ctxMenu.preview"),
+        key: "preview",
+        icon: () => h(NIcon, null, { default: () => h(EyeOutline) }),
+      })
+    }
     opts.push({
       label: t("sftp.ctxMenu.edit"),
       key: "edit",
@@ -941,7 +963,8 @@ function onCtxMenuSelect(key: string | number) {
     else if (key === "refresh") refresh()
     return
   }
-  if (key === "download") void onDownload(target)
+  if (key === "preview") openPreview(target)
+  else if (key === "download") void onDownload(target)
   else if (key === "edit") openEditor(target)
   else if (key === "rename") openRename(target)
   else if (key === "remove") confirmRemove(target)
@@ -1421,6 +1444,13 @@ function onClose() {
           :sid="props.sid"
           :file="editorFile"
           @saved="onEditorSaved"
+        />
+
+        <FilePreview
+          v-model:open="previewOpen"
+          :sid="props.sid"
+          :file="previewFile"
+          @download="onDownload"
         />
       </div>
     </aside>

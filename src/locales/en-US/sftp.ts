@@ -26,6 +26,7 @@ export default {
     newFolder: "New folder",
     newFile: "New file",
     refresh: "Refresh",
+    preview: "Preview",
     download: "Download",
     edit: "Edit",
     rename: "Rename",
@@ -136,5 +137,12 @@ export default {
     fontSizeIncrease: "Increase font size",
     lineCol: "Ln {line}, Col {col}",
     totalLines: "{count} lines",
+  },
+  preview: {
+    title: "Preview",
+    fileTooLarge: "File too large ({size}), exceeds preview limit of {max}",
+    unsupportedFormat: "Browser does not support previewing this format, please download to view",
+    maximize: "Maximize",
+    restore: "Restore",
   },
 } as const

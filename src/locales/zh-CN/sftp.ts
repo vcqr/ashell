@@ -26,6 +26,7 @@ export default {
     newFolder: "新建文件夹",
     newFile: "新建文件",
     refresh: "刷新",
+    preview: "预览",
     download: "下载",
     edit: "编辑",
     rename: "重命名",
@@ -136,5 +137,12 @@ export default {
     fontSizeIncrease: "增大字体",
     lineCol: "行 {line}，列 {col}",
     totalLines: "共 {count} 行",
+  },
+  preview: {
+    title: "预览",
+    fileTooLarge: "文件过大（{size}），超过预览上限 {max}",
+    unsupportedFormat: "浏览器不支持预览此格式，请下载后查看",
+    maximize: "最大化",
+    restore: "还原",
   },
 } as const
