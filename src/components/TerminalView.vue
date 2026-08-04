@@ -1310,6 +1310,12 @@ onBeforeUnmount(() => {
 .terminal-host :deep(.xterm) {
   height: 100%;
   width: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.terminal-host :deep(.xterm canvas) {
+  image-rendering: auto;
 }
 
 .terminal-host :deep(.xterm-viewport) {
