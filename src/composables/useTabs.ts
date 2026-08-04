@@ -215,8 +215,10 @@ export function useTabs() {
    * AI 助手可用的激活 tab：比 activeSftpTab 更宽，包含本地 PTY tab。
    * 本地 tab 的 sid 由 /api/local/terminal ws ready 帧下发，后端 local_pty 已把
    * 同一 sid 注册进终端命令/输出通道，AI sidecar 走 /api/ssh/send/{sid} 一样能注入命令。
+   * AI 助手总开关关闭时返回 undefined：面板收起、toggleAi / onSendToAi 自动失效。
    */
   const activeAiTab = computed<TerminalTab | undefined>(() => {
+    if (!startupStore.aiAssistantEnabled) return undefined;
     const t = activeTab.value;
     if (!t || !t.sid) return undefined;
     return t.status === "connected" ? t : undefined;

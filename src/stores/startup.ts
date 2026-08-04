@@ -11,6 +11,8 @@ export interface StartupConfig {
   restoreTabs: boolean
   /** 恢复记住的 tab 时是否自动重连；关闭时仅恢复骨架，等用户手动重连。 */
   autoConnectRememberedTabs: boolean
+  /** 是否启用 AI 助手；关闭时启动不加载 AI 助手，相关入口一并隐藏。 */
+  aiAssistantEnabled: boolean
 }
 
 const STORAGE_KEY = "ashell:startup-config"
@@ -20,6 +22,7 @@ const DEFAULT_CONFIG: StartupConfig = {
   defaultShell: "auto",
   restoreTabs: true,
   autoConnectRememberedTabs: false,
+  aiAssistantEnabled: true,
 }
 
 function loadConfig(): StartupConfig {
@@ -45,6 +48,10 @@ function loadConfig(): StartupConfig {
         typeof parsed.autoConnectRememberedTabs === "boolean"
           ? parsed.autoConnectRememberedTabs
           : DEFAULT_CONFIG.autoConnectRememberedTabs,
+      aiAssistantEnabled:
+        typeof parsed.aiAssistantEnabled === "boolean"
+          ? parsed.aiAssistantEnabled
+          : DEFAULT_CONFIG.aiAssistantEnabled,
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -87,6 +94,7 @@ export const useStartupStore = defineStore("startup", () => {
   const autoConnectRememberedTabs = ref<boolean>(
     initial.autoConnectRememberedTabs,
   )
+  const aiAssistantEnabled = ref<boolean>(initial.aiAssistantEnabled)
 
   function persist() {
     if (typeof localStorage === "undefined") return
@@ -96,6 +104,7 @@ export const useStartupStore = defineStore("startup", () => {
         defaultShell: defaultShell.value,
         restoreTabs: restoreTabs.value,
         autoConnectRememberedTabs: autoConnectRememberedTabs.value,
+        aiAssistantEnabled: aiAssistantEnabled.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
     } catch {
@@ -104,7 +113,13 @@ export const useStartupStore = defineStore("startup", () => {
   }
 
   watch(
-    [openLocalOnStart, defaultShell, restoreTabs, autoConnectRememberedTabs],
+    [
+      openLocalOnStart,
+      defaultShell,
+      restoreTabs,
+      autoConnectRememberedTabs,
+      aiAssistantEnabled,
+    ],
     persist,
   )
 
@@ -120,15 +135,20 @@ export const useStartupStore = defineStore("startup", () => {
   function setAutoConnectRememberedTabs(v: boolean) {
     autoConnectRememberedTabs.value = v
   }
+  function setAiAssistantEnabled(v: boolean) {
+    aiAssistantEnabled.value = v
+  }
 
   return {
     openLocalOnStart,
     defaultShell,
     restoreTabs,
     autoConnectRememberedTabs,
+    aiAssistantEnabled,
     setOpenLocalOnStart,
     setDefaultShell,
     setRestoreTabs,
     setAutoConnectRememberedTabs,
+    setAiAssistantEnabled,
   }
 })

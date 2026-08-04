@@ -106,6 +106,8 @@ export default {
   ai: {
     title: "AI Assistant",
     hint: "Configure the AI engine and Claude Code CLI path. For model provider management, click the button in the header toolbar.",
+    enabled: "Enable AI Assistant",
+    enabledDesc: "When disabled, the AI assistant is not loaded at startup and its entry points in the activity bar, terminal and SFTP are hidden. Re-enabling restores them.",
     engine: {
       title: "Engine",
       active: "Active Engine",

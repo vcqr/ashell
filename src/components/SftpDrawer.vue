@@ -47,6 +47,7 @@ import {
 } from "@/api/sftp"
 import { useI18n } from "vue-i18n"
 import { useSftpStore } from "@/stores/sftp"
+import { useStartupStore } from "@/stores/startup"
 import type { SftpFile, TransferTask } from "@/types"
 import { humanSize } from "@/utils/humanSize"
 import { joinPath, normalizePath, parentPath } from "@/utils/pathJoin"
@@ -76,6 +77,7 @@ const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
 const store = useSftpStore()
+const startupStore = useStartupStore()
 
 const loading = ref(false)
 const files = ref<SftpFile[]>([])
@@ -913,11 +915,13 @@ const ctxMenuOptions = computed(() => {
     key: "copy-path",
     icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
   })
-  opts.push({
-    label: t("sftp.ctxMenu.sendToAi"),
-    key: "send-to-ai",
-    icon: () => h(NIcon, null, { default: () => h(SparklesOutline) }),
-  })
+  if (startupStore.aiAssistantEnabled) {
+    opts.push({
+      label: t("sftp.ctxMenu.sendToAi"),
+      key: "send-to-ai",
+      icon: () => h(NIcon, null, { default: () => h(SparklesOutline) }),
+    })
+  }
   opts.push({
     label: t("sftp.ctxMenu.properties"),
     key: "props",

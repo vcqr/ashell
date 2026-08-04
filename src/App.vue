@@ -347,6 +347,7 @@ const {
               :host-info-open="hostInfoOpen"
               :forward-open="forwardOpen"
               :ai-open="aiOpen"
+              :ai-enabled="startupStore.aiAssistantEnabled"
               :has-active-session="!!activeSftpTab"
               :has-ai-session="!!activeAiTab"
               @toggle-sftp="toggleSftp"
@@ -376,6 +377,7 @@ const {
               :host-name="activeSftpTab?.title"
             />
             <AiAssistant
+              v-if="startupStore.aiAssistantEnabled"
               ref="aiAssistantRef"
               v-model:open="aiOpen"
               :sid="activeAiTab?.sid ?? null"

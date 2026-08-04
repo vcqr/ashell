@@ -5,13 +5,15 @@ interface AiSelectionOptions {
   getTerm: () => Terminal | null
   containerRef: Ref<HTMLDivElement | null>
   onSend: (text: string) => void
+  /** AI 助手总开关；返回 false 时不显示"发送给 AI"浮层。缺省视为开启。 */
+  isEnabled?: () => boolean
 }
 
 /**
  * 选中文本"发送给 AI"浮层：mouseup 时若有选区，在鼠标附近显示 ✨ 按钮
  * （限制在终端容器内），点击弹出提示词输入框，Enter 发送、Escape 取消。
  */
-export function useAiSelection({ getTerm, containerRef, onSend }: AiSelectionOptions) {
+export function useAiSelection({ getTerm, containerRef, onSend, isEnabled }: AiSelectionOptions) {
   const aiButtonVisible = ref(false)
   const aiButtonX = ref(0)
   const aiButtonY = ref(0)
@@ -24,6 +26,10 @@ export function useAiSelection({ getTerm, containerRef, onSend }: AiSelectionOpt
     if (!term) return
     if (aiPromptVisible.value) {
       cancelAiPrompt()
+      return
+    }
+    if (isEnabled && !isEnabled()) {
+      aiButtonVisible.value = false
       return
     }
     const sel = term.getSelection()

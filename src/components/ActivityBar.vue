@@ -27,6 +27,8 @@ const props = defineProps<{
   hostInfoOpen: boolean
   forwardOpen: boolean
   aiOpen: boolean
+  /** AI 助手功能总开关；关闭时整个 AI 入口不渲染 */
+  aiEnabled: boolean
   hasActiveSession: boolean
   /** AI 助手可用性：比 hasActiveSession 宽，本地 PTY tab 也算可用 */
   hasAiSession: boolean
@@ -149,7 +151,7 @@ function renderIcon(comp: unknown) {
     </NTooltip>
 
     <!-- AI 助手 -->
-    <NTooltip placement="left" :show-arrow="false">
+    <NTooltip v-if="aiEnabled" placement="left" :show-arrow="false">
       <template #trigger>
         <button
           class="ab-btn"

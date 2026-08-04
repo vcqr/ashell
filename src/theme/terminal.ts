@@ -1,10 +1,10 @@
 import type { ITheme } from "@xterm/xterm"
 
 export const terminalDarkTheme: ITheme = {
-  background: "#1a1d23",
+  background: "#0f1115",
   foreground: "#e6e6e6",
   cursor: "#80b5ff",
-  cursorAccent: "#1a1d23",
+  cursorAccent: "#0f1115",
   selectionBackground: "rgba(128, 181, 255, 0.3)",
   black: "#000000",
   red: "#ff6b6b",
@@ -25,10 +25,10 @@ export const terminalDarkTheme: ITheme = {
 }
 
 export const terminalLightTheme: ITheme = {
-  background: "#fafbfc",
+  background: "#f4f6fb",
   foreground: "#3a3f4b",
   cursor: "#3b82f6",
-  cursorAccent: "#fafbfc",
+  cursorAccent: "#f4f6fb",
   selectionBackground: "rgba(59, 130, 246, 0.18)",
   black: "#3a3f4b",
   red: "#e05561",

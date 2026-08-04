@@ -27,6 +27,7 @@ import { useI18n } from "vue-i18n"
 import { useApiStore } from "@/stores/api"
 import { useTerminalStore } from "@/stores/terminal"
 import { useBroadcastStore } from "@/stores/broadcast"
+import { useStartupStore } from "@/stores/startup"
 import { useSudoFill } from "@/composables/useSudoFill"
 import { useAiSelection } from "@/composables/useAiSelection"
 import { useTerminalSearch } from "@/composables/useTerminalSearch"
@@ -79,6 +80,7 @@ const { t, locale } = useI18n()
 const apiStore = useApiStore()
 const termStore = useTerminalStore()
 const broadcastStore = useBroadcastStore()
+const startupStore = useStartupStore()
 
 const { sudoArmed, armSudo, disarmSudo } = useSudoFill()
 
@@ -97,6 +99,7 @@ const {
   getTerm: () => term,
   containerRef,
   onSend: (text) => emit("send-to-ai", props.tab.key, text),
+  isEnabled: () => startupStore.aiAssistantEnabled,
 })
 
 const {
@@ -1300,9 +1303,8 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 0;
   overflow: hidden;
-  /* FitAddon 会按行高对齐把 rows 向下取整，xterm-viewport 高度往往比容器小
-     几像素。给底色用终端背景色，这样剩余几像素融入终端，不再露出应用底色形成缝隙。 */
-  background: var(--ashell-terminal-bg);
+  padding-left: 8px;
+  box-sizing: border-box;
 }
 
 .terminal-host :deep(.xterm) {

@@ -106,6 +106,8 @@ export default {
   ai: {
     title: "AI 助手",
     hint: "配置 AI 引擎与 Claude Code CLI 路径。模型供应商管理请点击头部工具栏的按钮。",
+    enabled: "启用 AI 助手",
+    enabledDesc: "关闭后启动时不再加载 AI 助手，活动栏、终端与 SFTP 中的 AI 入口也会被隐藏；重新开启后恢复。",
     engine: {
       title: "引擎",
       active: "当前引擎",

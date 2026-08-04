@@ -15,7 +15,7 @@ body,
   --ashell-bg-alpha: 1;
   --ashell-wallpaper-opacity: 1;
   --ashell-bg: rgba(15, 17, 21, var(--ashell-bg-alpha));
-  --ashell-terminal-bg: rgba(11, 13, 18, var(--ashell-bg-alpha));
+  --ashell-terminal-bg: var(--ashell-bg);
   --ashell-panel-bg: rgba(19, 22, 28, var(--ashell-bg-alpha));
   --ashell-panel-bg-soft: rgba(28, 32, 39, var(--ashell-bg-alpha));
   --ashell-header-start: rgba(26, 30, 38, var(--ashell-bg-alpha));
@@ -44,7 +44,6 @@ body,
 
 :root[data-ashell-theme='light'] {
   --ashell-bg: rgba(244, 246, 251, var(--ashell-bg-alpha));
-  --ashell-terminal-bg: rgba(255, 255, 255, var(--ashell-bg-alpha));
   --ashell-panel-bg: rgba(255, 255, 255, var(--ashell-bg-alpha));
   --ashell-panel-bg-soft: rgba(243, 245, 250, var(--ashell-bg-alpha));
   --ashell-header-start: rgba(255, 255, 255, var(--ashell-bg-alpha));

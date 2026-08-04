@@ -8,6 +8,7 @@ import {
   NSelect,
   NButton,
   NSpace,
+  NSwitch,
   NIcon,
   NText,
   NTag,
@@ -21,6 +22,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
 import { useAiConfigStore } from "@/stores/aiConfig";
+import { useStartupStore } from "@/stores/startup";
 import {
   sidecarTypeOptions,
   thinkingLevelOptions,
@@ -29,6 +31,7 @@ import {
 
 const { t } = useI18n();
 const message = useMessage();
+const startupStore = useStartupStore();
 
 // ── 引擎（sidecar）配置（共享 store）──
 
@@ -123,6 +126,18 @@ onMounted(async () => {
 
 <template>
   <section class="settings-section">
+    <NForm label-placement="top" size="small">
+      <NFormItem
+        :label="t('settings.ai.enabled')"
+        :feedback="t('settings.ai.enabledDesc')"
+      >
+        <NSwitch
+          :value="startupStore.aiAssistantEnabled"
+          @update:value="(v: boolean) => startupStore.setAiAssistantEnabled(v)"
+        />
+      </NFormItem>
+    </NForm>
+
     <div class="settings-section-title">{{ t("settings.ai.engine.title") }}</div>
     <NForm label-placement="top" size="small">
       <NFormItem :label="t('settings.ai.engine.active')">
