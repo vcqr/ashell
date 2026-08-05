@@ -1305,6 +1305,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   padding-left: 8px;
   box-sizing: border-box;
+  contain: layout paint;
 }
 
 .terminal-host :deep(.xterm) {
@@ -1316,6 +1317,7 @@ onBeforeUnmount(() => {
 
 .terminal-host :deep(.xterm canvas) {
   image-rendering: auto;
+  will-change: transform;
 }
 
 .terminal-host :deep(.xterm-viewport) {

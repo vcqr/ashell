@@ -154,6 +154,18 @@ export function useTerminalProgress({ getTerm, isActive }: TerminalProgressOptio
 
   function feedTextProgress(text: string) {
     if (!termStore.progressEnabled) return
+    // TUI 使用 alternate screen（ESC[?1049h），其输出不应被解析为文本进度。
+    // htop / vim / lazygit / Claude Code 等 TUI 频繁输出 spinner 字符（⠋⠙⠹）、
+    // 百分比、#/| 等，会触发 matchTextProgress 误匹配，导致 progressState 在
+    // 0 和 3 之间逐帧震荡，引发 Vue 重渲染 + Tauri setProgressBar 高频调用，
+    // 表现为终端界面严重抖动。
+    // term.write(data) 在 feedDecodedText 之前调用，故此处 buffer.type 已反映
+    // 当前的 normal/alternate 状态。
+    const term = getTerm()
+    if (term && term.buffer.active.type === "alternate") {
+      if (textProgressActive) clearTextProgressUi()
+      return
+    }
     // 按 \r / \n 切分（保留分隔符），逐段处理：
     // - \r：清空当前行缓冲（工具要重写这一行）
     // - \n：整行完成，若该行不含进度模式且此前文本进度在跑，收掉进度条
