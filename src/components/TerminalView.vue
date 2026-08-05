@@ -334,6 +334,8 @@ function onSelectionChange() {
 async function onContextMenu(e: MouseEvent) {
   const action = termStore.rightClickAction
   if (action === "contextMenu") {
+    // 放行 webview 默认菜单；stopPropagation 阻止 main.ts 里的全局 preventDefault
+    e.stopPropagation()
     return
   }
   e.preventDefault()

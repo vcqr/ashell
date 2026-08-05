@@ -168,6 +168,17 @@ const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuKey = ref<string | null>(null)
 
+/** 空白处右键：弹出根级操作菜单（新建连接 / 新建目录 / 导入 / 刷新） */
+function onBlankContextMenu(e: MouseEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  ctxMenuKey.value = null
+  ctxMenuX.value = e.clientX
+  ctxMenuY.value = e.clientY
+  ctxMenuShow.value = false
+  requestAnimationFrame(() => (ctxMenuShow.value = true))
+}
+
 /* ---------- 拖拽（pointer events，wry 稳定） ---------- */
 const DRAG_THRESHOLD = 5
 
@@ -341,7 +352,33 @@ function renderMenuIcon(comp: unknown) {
 const ctxMenuOptions = computed<DropdownOption[]>(() => {
   const node = ctxMenuKey.value ? findNode(ctxMenuKey.value) : null
   const opts: DropdownOption[] = []
-  if (!node) return opts
+  if (!node) {
+    // 空白处右键：根级操作
+    opts.push(
+      {
+        label: t("hosts.ctxMenu.newHost"),
+        key: "new-host",
+        icon: renderMenuIcon(ServerOutline),
+      },
+      {
+        label: t("hosts.tree.newFolder"),
+        key: "new-folder",
+        icon: renderMenuIcon(FolderAddOutlined),
+      },
+      { type: "divider", key: "d-blank-1" },
+      {
+        label: t("hosts.tree.importSshConfig"),
+        key: "import-ssh",
+        icon: renderMenuIcon(DownloadOutline),
+      },
+      {
+        label: t("hosts.tree.refresh"),
+        key: "refresh",
+        icon: renderMenuIcon(RefreshOutline),
+      },
+    )
+    return opts
+  }
   if (node.type === "folder") {
     opts.push(
       {
@@ -394,33 +431,37 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
 function onCtxSelect(key: string) {
   ctxMenuShow.value = false
   const targetKey = ctxMenuKey.value
-  if (!targetKey) return
-  const node = findNode(targetKey)
-  if (!node) return
+  const node = targetKey ? findNode(targetKey) : null
   switch (key) {
     case "new-folder":
-      openCreateFolder(node.id)
+      openCreateFolder(node && node.type === "folder" ? node.id : 0)
       break
     case "new-host":
-      emit("create-host", node.id)
+      emit("create-host", node && node.type === "folder" ? node.id : 0)
+      break
+    case "refresh":
+      void onRefresh()
+      break
+    case "import-ssh":
+      importModalShow.value = true
       break
     case "open":
-      if (node.type === "host") emit("open-host", node)
+      if (node?.type === "host") emit("open-host", node)
       break
     case "open-new":
-      if (node.type === "host") emit("open-host", node, true)
+      if (node?.type === "host") emit("open-host", node, true)
       break
     case "edit":
-      if (node.type === "host") openEditHost(node)
+      if (node?.type === "host") openEditHost(node)
       break
     case "copy":
-      if (node.type === "host") copyHost(node)
+      if (node?.type === "host") copyHost(node)
       break
     case "rename":
-      openRename(node)
+      if (node) openRename(node)
       break
     case "delete":
-      confirmDelete(node)
+      if (node) confirmDelete(node)
       break
   }
 }
@@ -655,6 +696,7 @@ async function onRefresh() {
       class="tree-body"
       :class="{ 'drop-on-root': dropTargetKey === '__root__' }"
       :data-drop-key="dropTargetKey ?? ''"
+      @contextmenu="onBlankContextMenu"
     >
       <NSpin :show="store.loading" class="tree-spin">
         <NEmpty

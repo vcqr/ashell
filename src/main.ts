@@ -16,6 +16,20 @@ window.addEventListener('unhandledrejection', (e) => {
   console.error('[AShell] unhandled rejection:', e.reason)
 })
 
+// 屏蔽 webview 默认右键菜单（Reload / Back / Inspect 等）。
+// 误点 Reload 会重载整个 webview，所有终端会话全部断开。
+// 例外：
+// - contentEditable 元素（CodeMirror 等富文本编辑器需要右键菜单）
+// - 有选中文本时（让用户能右键 Copy）
+// 终端区域通过 onContextMenu 里的 stopPropagation 自行决定是否放行。
+document.addEventListener('contextmenu', (e) => {
+  const target = e.target as HTMLElement | null
+  if (target && target.isContentEditable) return
+  const selection = window.getSelection()
+  if (selection && selection.toString().length > 0) return
+  e.preventDefault()
+})
+
 const app = createApp(App)
 app.use(createPinia())
 app.use(i18n)
