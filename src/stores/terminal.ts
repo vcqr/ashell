@@ -34,14 +34,22 @@ export interface TerminalConfig {
 
 const STORAGE_KEY = "ashell:terminal-config"
 
+/**
+ * 字体预设列表。每个 value 是完整的 CSS font-family 回退链。
+ *
+ * CJK 回退说明：所有预设末尾都追加了跨平台中文字体（PingFang SC / Microsoft
+ * YaHei / Noto Sans CJK SC），确保 xterm WebGL 渲染器在构建字形图集时能为
+ * 中文找到合适的字形，而不是走浏览器兜底导致模糊、宽度错位、中英文高低不齐。
+ * 顺序：英文等宽主字体 → 其他英文等宽 fallback → CJK 字体 → monospace 兜底。
+ */
 export const FONT_FAMILY_PRESETS: { label: string; value: string }[] = [
-  { label: "Fira Code", value: "'Fira Code', 'JetBrains Mono', Menlo, Consolas, monospace" },
-  { label: "JetBrains Mono", value: "'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace" },
-  { label: "Cascadia Code", value: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace" },
-  { label: "Source Code Pro", value: "'Source Code Pro', Menlo, Consolas, monospace" },
-  { label: "Menlo", value: "Menlo, Monaco, Consolas, monospace" },
-  { label: "Consolas", value: "Consolas, 'Courier New', monospace" },
-  { label: "System Monospace", value: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" },
+  { label: "Fira Code", value: "'Fira Code', 'JetBrains Mono', Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace" },
+  { label: "JetBrains Mono", value: "'JetBrains Mono', 'Fira Code', Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace" },
+  { label: "Cascadia Code", value: "'Cascadia Code', 'Cascadia Mono', Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace" },
+  { label: "Source Code Pro", value: "'Source Code Pro', Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace" },
+  { label: "Menlo", value: "Menlo, Monaco, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace" },
+  { label: "Consolas", value: "Consolas, 'Courier New', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace" },
+  { label: "System Monospace", value: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', monospace" },
 ]
 
 export const FONT_SIZE_MIN = 10
@@ -60,7 +68,7 @@ const DEFAULT_CONFIG: TerminalConfig = {
   lightTheme: defaultTerminalTheme("light"),
   webglEnabled: true,
   webLinksEnabled: true,
-  unicode11Enabled: false,
+  unicode11Enabled: true,
   searchHotkeyEnabled: true,
   ligaturesEnabled: false,
   progressEnabled: true,
