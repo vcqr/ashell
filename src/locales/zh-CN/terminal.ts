@@ -34,6 +34,10 @@ export default {
     sessionEmpty: "会话内容为空，无法导出",
     savedTo: "已保存到 {path}",
     exportFailed: "导出失败：{error}",
+    statusConnected: "已连接",
+    statusConnecting: "连接中",
+    statusError: "连接错误",
+    statusClosed: "已断开",
   },
   activityBar: {
     broadcast: "广播输入",

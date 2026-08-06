@@ -268,6 +268,15 @@ function onNewSelect(action: string) {
   }
 }
 
+function statusText(status?: string): string {
+  switch (status) {
+    case 'connecting': return t('terminal.tabBar.statusConnecting')
+    case 'error': return t('terminal.tabBar.statusError')
+    case 'closed': return t('terminal.tabBar.statusClosed')
+    default: return t('terminal.tabBar.statusConnected')
+  }
+}
+
 const ctxMenuOptions = computed<DropdownOption[]>(() => {
   const key = ctxMenuKey.value
   if (!key) return []
@@ -595,12 +604,27 @@ onBeforeUnmount(() => {
           @contextmenu="onItemContextMenu($event, tab.key)"
           @dblclick.stop="startRename(tab.key, tab.title)"
         >
-          <img
-            v-if="tab.icon && iconStore.urlOf(tab.icon)"
-            :src="iconStore.urlOf(tab.icon) ?? ''"
-            class="tab-icon"
-            alt=""
-          />
+          <div class="tab-icon-wrap">
+            <img
+              v-if="tab.icon && iconStore.urlOf(tab.icon)"
+              :src="iconStore.urlOf(tab.icon) ?? ''"
+              class="tab-icon"
+              alt=""
+            />
+            <NIcon
+              v-else
+              :size="16"
+              :color="tab.color ?? '#7c5cff'"
+              class="tab-icon-default"
+            >
+              <TerminalOutline />
+            </NIcon>
+            <span
+              class="tab-status-dot"
+              :class="`status-${tab.status ?? 'connected'}`"
+              :title="statusText(tab.status)"
+            />
+          </div>
           <NInput
             v-if="renamingKey === tab.key"
             v-model:value="renameDraft"
@@ -741,17 +765,20 @@ onBeforeUnmount(() => {
   min-width: 90px;
   white-space: nowrap;
   touch-action: none;
+  --tab-bg: transparent;
 }
 
 .tab-item:hover {
   background: var(--hover-bg, var(--ashell-hover));
   color: var(--ashell-text);
+  --tab-bg: var(--hover-bg, var(--ashell-hover));
 }
 
 .tab-item.active {
   color: var(--ashell-text-strong);
   background: var(--tab-color-bg, var(--ashell-active));
   box-shadow: inset 0 -2px 0 var(--tab-color, var(--ashell-primary));
+  --tab-bg: var(--tab-color-bg, var(--ashell-active));
 }
 
 .tab-item.is-dragging {
@@ -830,12 +857,70 @@ onBeforeUnmount(() => {
   height: 22px;
 }
 
-.tab-icon {
+/* ===== 图标容器 + 状态指示灯 badge ===== */
+.tab-icon-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-icon,
+.tab-icon-default {
   width: 16px;
   height: 16px;
   border-radius: 3px;
   object-fit: contain;
-  flex-shrink: 0;
+}
+
+.tab-status-dot {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 0 1.5px var(--tab-bg, transparent);
+  transition: background-color 0.2s ease, opacity 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.tab-status-dot.status-connected {
+  background: #4ade80;
+  opacity: 0.55;
+}
+
+.tab-status-dot.status-connecting {
+  background: #f59e0b;
+  opacity: 1;
+  animation: tab-status-pulse 1.4s ease-in-out infinite;
+}
+
+.tab-status-dot.status-error {
+  background: #ef4444;
+  opacity: 1;
+  box-shadow: 0 0 0 1.5px var(--tab-bg, transparent),
+    0 0 5px rgba(239, 68, 68, 0.45);
+}
+
+.tab-status-dot.status-closed {
+  background: var(--ashell-text-subtle, rgba(255, 255, 255, 0.3));
+  opacity: 0.4;
+}
+
+@keyframes tab-status-pulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
 }
 
 .tab-close {

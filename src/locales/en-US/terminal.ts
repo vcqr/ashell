@@ -34,6 +34,10 @@ export default {
     sessionEmpty: "Session content is empty, cannot export",
     savedTo: "Saved to {path}",
     exportFailed: "Export failed: {error}",
+    statusConnected: "Connected",
+    statusConnecting: "Connecting",
+    statusError: "Connection error",
+    statusClosed: "Disconnected",
   },
   activityBar: {
     broadcast: "Broadcast input",
