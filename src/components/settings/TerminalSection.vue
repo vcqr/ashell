@@ -25,6 +25,7 @@ import {
   type CursorStyle,
   type RightClickAction,
   type LeftClickAction,
+  type DisconnectAction,
 } from "@/stores/terminal";
 
 const { t } = useI18n();
@@ -75,6 +76,12 @@ const leftClickOptions = computed(() => [
   { label: t("settings.terminal.leftClickActions.middlePasteOnly"), value: "middlePasteOnly" as LeftClickAction },
   { label: t("settings.terminal.leftClickActions.none"), value: "none" as LeftClickAction },
 ]);
+
+const disconnectOptions = computed(() => [
+  { label: t("settings.terminal.disconnectActions.keep"), value: "keep" as DisconnectAction },
+  { label: t("settings.terminal.disconnectActions.closeTab"), value: "closeTab" as DisconnectAction },
+  { label: t("settings.terminal.disconnectActions.closeWindow"), value: "closeWindow" as DisconnectAction },
+]);
 </script>
 
 <template>
@@ -86,6 +93,7 @@ const leftClickOptions = computed(() => [
       size="small"
       :show-feedback="false"
     >
+      <div class="settings-subgroup">{{ t("settings.terminal.groupFont") }}</div>
       <NFormItem :label="t('settings.terminal.fontFamily')">
         <NSelect
           v-model:value="terminalStore.fontFamily"
@@ -96,48 +104,66 @@ const leftClickOptions = computed(() => [
           :placeholder="t('settings.terminal.fontFamilyPlaceholder')"
         />
       </NFormItem>
-      <NFormItem :label="t('settings.terminal.fontSize')" style="margin-top: 12px">
-        <NInputNumber
-          v-model:value="terminalStore.fontSize"
-          :min="FONT_SIZE_MIN"
-          :max="FONT_SIZE_MAX"
-          :step="1"
-          style="width: 160px"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.scrollback')" style="margin-top: 12px">
-        <NInputNumber
-          v-model:value="terminalStore.scrollback"
-          :min="SCROLLBACK_MIN"
-          :max="SCROLLBACK_MAX"
-          :step="1000"
-          style="width: 160px"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.cursorStyle')" style="margin-top: 12px">
-        <NRadioGroup v-model:value="terminalStore.cursorStyle">
-          <NRadioButton
-            v-for="opt in cursorStyleOptions"
-            :key="opt.value"
-            :value="opt.value"
-          >
-            {{ opt.label }}
-          </NRadioButton>
-        </NRadioGroup>
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.cursorBlink')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.cursorBlink" />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.rightClick')" style="margin-top: 12px">
+      <div class="form-row" style="margin-top: 12px">
+        <NFormItem :label="t('settings.terminal.fontSize')" style="flex: 1">
+          <NInputNumber
+            v-model:value="terminalStore.fontSize"
+            :min="FONT_SIZE_MIN"
+            :max="FONT_SIZE_MAX"
+            :step="1"
+            style="width: 100%"
+          />
+        </NFormItem>
+        <NFormItem :label="t('settings.terminal.scrollback')" style="flex: 1">
+          <NInputNumber
+            v-model:value="terminalStore.scrollback"
+            :min="SCROLLBACK_MIN"
+            :max="SCROLLBACK_MAX"
+            :step="1000"
+            style="width: 100%"
+          />
+        </NFormItem>
+      </div>
+
+      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupCursor") }}</div>
+      <div class="form-row" style="margin-top: 12px">
+        <NFormItem :label="t('settings.terminal.cursorStyle')" style="flex: 1">
+          <NRadioGroup v-model:value="terminalStore.cursorStyle">
+            <NRadioButton
+              v-for="opt in cursorStyleOptions"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </NRadioButton>
+          </NRadioGroup>
+        </NFormItem>
+        <NFormItem :label="t('settings.terminal.cursorBlink')">
+          <NSwitch v-model:value="terminalStore.cursorBlink" />
+        </NFormItem>
+      </div>
+
+      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupMouse") }}</div>
+      <div class="form-row" style="margin-top: 12px">
+        <NFormItem :label="t('settings.terminal.rightClick')" style="flex: 1">
+          <NSelect
+            v-model:value="terminalStore.rightClickAction"
+            :options="rightClickOptions"
+          />
+        </NFormItem>
+        <NFormItem :label="t('settings.terminal.leftClick')" style="flex: 1">
+          <NSelect
+            v-model:value="terminalStore.leftClickAction"
+            :options="leftClickOptions"
+          />
+        </NFormItem>
+      </div>
+
+      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupConnection") }}</div>
+      <NFormItem :label="t('settings.terminal.disconnectAction')" style="margin-top: 12px">
         <NSelect
-          v-model:value="terminalStore.rightClickAction"
-          :options="rightClickOptions"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.leftClick')" style="margin-top: 12px">
-        <NSelect
-          v-model:value="terminalStore.leftClickAction"
-          :options="leftClickOptions"
+          v-model:value="terminalStore.disconnectAction"
+          :options="disconnectOptions"
         />
       </NFormItem>
     </NForm>
@@ -199,5 +225,17 @@ const leftClickOptions = computed(() => [
   font-size: 13px;
   font-weight: 600;
   color: var(--ashell-text-strong);
+}
+
+.settings-subgroup {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.4));
+}
+
+.form-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
 }
 </style>

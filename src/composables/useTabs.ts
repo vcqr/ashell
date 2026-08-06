@@ -4,6 +4,7 @@ import { useAiStore } from "@/stores/ai";
 import { useBroadcastStore } from "@/stores/broadcast";
 import { useStartupStore } from "@/stores/startup";
 import { useHostStore } from "@/stores/hosts";
+import { useTerminalStore } from "@/stores/terminal";
 import { openTabInNewWindow } from "@/utils/newWindow";
 
 /** TerminalView 通过 defineExpose 暴露的实例方法 */
@@ -94,6 +95,7 @@ export function useTabs() {
   const broadcastStore = useBroadcastStore();
   const startupStore = useStartupStore();
   const hostStore = useHostStore();
+  const terminalStore = useTerminalStore();
 
   const hostsOpen = ref(false);
 
@@ -430,6 +432,19 @@ export function useTabs() {
     // local 终端断连后无法重连，直接关闭 tab
     if (t.kind === "local" && (status === "closed" || status === "error")) {
       closeTab(tabKey);
+      return;
+    }
+    // 远程终端断开时根据用户设置执行退出策略
+    if (status === "closed" || status === "error") {
+      const action = terminalStore.disconnectAction;
+      if (action === "closeTab" || action === "closeWindow") {
+        closeTab(tabKey);
+        if (action === "closeWindow" && tabs.value.length === 0) {
+          void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+            getCurrentWindow().close(),
+          );
+        }
+      }
     }
   }
 

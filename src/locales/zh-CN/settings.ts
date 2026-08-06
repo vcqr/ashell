@@ -32,6 +32,10 @@ export default {
   terminal: {
     title: "终端",
     rendering: "渲染与功能",
+    groupFont: "字体",
+    groupCursor: "光标",
+    groupMouse: "鼠标",
+    groupConnection: "连接",
     fontFamily: "字体",
     fontFamilyPlaceholder: "选择系统字体或手动输入字体名（回车确认）",
     presetGroup: "内置预设",
@@ -58,6 +62,12 @@ export default {
       copyAndMiddlePaste: "选中即复制 + 中键粘贴",
       middlePasteOnly: "仅中键粘贴",
       none: "不处理",
+    },
+    disconnectAction: "连接断开时",
+    disconnectActions: {
+      keep: "保持标签页（显示重连按钮）",
+      closeTab: "自动关闭标签页",
+      closeWindow: "关闭窗口（仅最后一个标签页时）",
     },
     webgl: "WebGL 渲染（更平滑、更省 CPU；GPU 不可用时自动回退）",
     webLinks: "网页链接识别（点击用系统浏览器打开）",

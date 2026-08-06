@@ -12,6 +12,7 @@ import {
 export type CursorStyle = "block" | "underline" | "bar"
 export type RightClickAction = "paste" | "smart" | "contextMenu" | "none"
 export type LeftClickAction = "copyOnSelect" | "copyAndMiddlePaste" | "middlePasteOnly" | "none"
+export type DisconnectAction = "keep" | "closeTab" | "closeWindow"
 
 export interface TerminalConfig {
   fontSize: number
@@ -20,6 +21,7 @@ export interface TerminalConfig {
   cursorBlink: boolean
   rightClickAction: RightClickAction
   leftClickAction: LeftClickAction
+  disconnectAction: DisconnectAction
   darkTheme: ITheme
   lightTheme: ITheme
   webglEnabled: boolean
@@ -64,6 +66,7 @@ const DEFAULT_CONFIG: TerminalConfig = {
   cursorBlink: true,
   rightClickAction: "paste",
   leftClickAction: "copyOnSelect",
+  disconnectAction: "keep",
   darkTheme: defaultTerminalTheme("dark"),
   lightTheme: defaultTerminalTheme("light"),
   webglEnabled: true,
@@ -98,6 +101,10 @@ function isLeftClickAction(v: unknown): v is LeftClickAction {
   )
 }
 
+function isDisconnectAction(v: unknown): v is DisconnectAction {
+  return v === "keep" || v === "closeTab" || v === "closeWindow"
+}
+
 function loadConfig(): TerminalConfig {
   if (typeof localStorage === "undefined") return { ...DEFAULT_CONFIG }
   try {
@@ -123,6 +130,9 @@ function loadConfig(): TerminalConfig {
       leftClickAction: isLeftClickAction(parsed.leftClickAction)
         ? parsed.leftClickAction
         : DEFAULT_CONFIG.leftClickAction,
+      disconnectAction: isDisconnectAction(parsed.disconnectAction)
+        ? parsed.disconnectAction
+        : DEFAULT_CONFIG.disconnectAction,
       darkTheme: mergeTerminalTheme("dark", parsed.darkTheme as Partial<ITheme> | undefined),
       lightTheme: mergeTerminalTheme("light", parsed.lightTheme as Partial<ITheme> | undefined),
       webglEnabled:
@@ -173,6 +183,7 @@ export const useTerminalStore = defineStore("terminal", () => {
   const cursorBlink = ref<boolean>(initial.cursorBlink)
   const rightClickAction = ref<RightClickAction>(initial.rightClickAction)
   const leftClickAction = ref<LeftClickAction>(initial.leftClickAction)
+  const disconnectAction = ref<DisconnectAction>(initial.disconnectAction)
 
   const darkTheme = reactive<ITheme>({ ...initial.darkTheme })
   const lightTheme = reactive<ITheme>({ ...initial.lightTheme })
@@ -326,6 +337,7 @@ export const useTerminalStore = defineStore("terminal", () => {
         cursorBlink: cursorBlink.value,
         rightClickAction: rightClickAction.value,
         leftClickAction: leftClickAction.value,
+        disconnectAction: disconnectAction.value,
         darkTheme: { ...darkTheme },
         lightTheme: { ...lightTheme },
         webglEnabled: webglEnabled.value,
@@ -351,6 +363,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       cursorBlink,
       rightClickAction,
       leftClickAction,
+      disconnectAction,
       webglEnabled,
       webLinksEnabled,
       unicode11Enabled,
@@ -372,6 +385,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     cursorBlink.value = DEFAULT_CONFIG.cursorBlink
     rightClickAction.value = DEFAULT_CONFIG.rightClickAction
     leftClickAction.value = DEFAULT_CONFIG.leftClickAction
+    disconnectAction.value = DEFAULT_CONFIG.disconnectAction
     webglEnabled.value = DEFAULT_CONFIG.webglEnabled
     webLinksEnabled.value = DEFAULT_CONFIG.webLinksEnabled
     unicode11Enabled.value = DEFAULT_CONFIG.unicode11Enabled
@@ -438,6 +452,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     cursorBlink,
     rightClickAction,
     leftClickAction,
+    disconnectAction,
     darkTheme,
     lightTheme,
     webglEnabled,

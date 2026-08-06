@@ -32,6 +32,10 @@ export default {
   terminal: {
     title: "Terminal",
     rendering: "Rendering & Features",
+    groupFont: "Font",
+    groupCursor: "Cursor",
+    groupMouse: "Mouse",
+    groupConnection: "Connection",
     fontFamily: "Font",
     fontFamilyPlaceholder: "Select a system font or type a font name (press Enter to confirm)",
     presetGroup: "Built-in presets",
@@ -58,6 +62,12 @@ export default {
       copyAndMiddlePaste: "Copy on select + middle-click paste",
       middlePasteOnly: "Middle-click paste only",
       none: "Do nothing",
+    },
+    disconnectAction: "On disconnect",
+    disconnectActions: {
+      keep: "Keep tab (show reconnect button)",
+      closeTab: "Auto-close tab",
+      closeWindow: "Close window (only when last tab)",
     },
     webgl: "WebGL rendering (smoother, lower CPU; auto-fallback when GPU unavailable)",
     webLinks: "Web link detection (open in system browser on click)",
