@@ -449,6 +449,71 @@ function installCursorBlinkGuard() {
   )
 }
 
+/**
+ * 覆盖 xterm Viewport._sync：在 alternate screen 上对 onScroll 触发的 _sync 加 rAF 节流。
+ *
+ * 问题：bufferService.onScroll 直接调用 _sync()（onResize / onBufferActivate 走
+ * queueSync 的 rAF 节流，唯独 onScroll 不走），TUI 底部频繁输出时每次 buffer scroll
+ * 都立即触发 setScrollDimensions -> Scrollable.onScroll -> 滚动条 render/reveal 循环，
+ * 造成垂直抖动。
+ *
+ * 方案：alternate screen 上，ydisp === undefined（来自 onScroll 无参调用）时改走
+ * 自定义 rAF 节流，一帧内多次 scroll 合并为一次；ydisp !== undefined（来自 queueSync
+ * 的 rAF 回调）时直接执行，不阻断正常同步。normal screen 走原始 _sync。
+ *
+ * 与 onCompositionStart 一样通过 term._core 访问 xterm 内部 API。
+ * 升级 xterm 7.x 后需检查 _viewport._sync 的内部结构是否变化。
+ */
+function installAltScreenScrollFix() {
+  if (!term) return
+  const core = (term as unknown as {
+    _core?: {
+      _viewport?: {
+        _sync: (ydisp?: number) => void
+      }
+    }
+  })._core
+
+  const viewport = core?._viewport
+  if (!viewport) return
+
+  const originalSync = viewport._sync.bind(viewport)
+  let scrollRaf: number | null = null
+
+  // 安全包装：_renderService 在终端初始化/销毁期间可能处于不一致状态，
+  // dimensions getter 会抛 TypeError。原始 _sync 的 !this._renderService guard
+  // 只检查引用是否为 falsy，不覆盖对象存在但内部 renderer 未就绪的情况。
+  function safeSync(ydisp?: number) {
+    try {
+      originalSync(ydisp)
+    } catch {
+      // ignore
+    }
+  }
+
+  viewport._sync = function (ydisp?: number) {
+    if (!term || term.buffer.active.type !== "alternate") {
+      safeSync(ydisp)
+      return
+    }
+    // ydisp !== undefined: 来自 queueSync 的 rAF 回调，直接执行
+    if (ydisp !== undefined) {
+      if (scrollRaf !== null) {
+        cancelAnimationFrame(scrollRaf)
+        scrollRaf = null
+      }
+      safeSync(ydisp)
+      return
+    }
+    // ydisp === undefined: 来自 bufferService.onScroll，走 rAF 节流
+    if (scrollRaf !== null) return
+    scrollRaf = requestAnimationFrame(() => {
+      scrollRaf = null
+      safeSync()
+    })
+  }
+}
+
 // ===== Addon 生命周期 =====
 
 function loadWebgl() {
@@ -812,6 +877,8 @@ onMounted(() => {
   // 新渲染器可能未正确继承构造函数里的 cursorBlink/cursorStyle 选项。
   // 显式重新设置一次，强制渲染器刷新光标状态。
   applyTermOptions()
+
+  installAltScreenScrollFix()
 
   term.onData((data: string) => {
     if (sudoArmed.value) {
@@ -1324,6 +1391,22 @@ onBeforeUnmount(() => {
 
 .terminal-host :deep(.xterm-viewport) {
   background: transparent !important;
+}
+
+/* TUI 应用（.enable-mouse-events 状态）下隐藏 xterm 自定义 overlay 滚动条。
+   滚动条是 position:absolute overlay，显隐仅通过 opacity 控制（100ms 出 / 800ms 隐 transition），
+   不直接影响终端布局，但其 transition 动画和鼠标事件拦截会加剧 TUI 全屏重绘时的视觉抖动。
+   opacity:0 中和 transition，pointer-events:none 防止滚动条拦截本应发给 TUI 的鼠标事件。 */
+.terminal-host :deep(.xterm.enable-mouse-events .xterm-scrollable-element > .scrollbar) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* TUI 模式下隐藏 .xterm-viewport 的原生滚动条。
+   .xterm-viewport 有 overflow-y:scroll，会显示原生滚动条；TUI 频繁触发 scroll 时
+   原生滚动条的 thumb 上下跳动是视觉抖动的直接来源之一。 */
+.terminal-host :deep(.xterm.enable-mouse-events .xterm-viewport) {
+  overflow: hidden !important;
 }
 
 /* 隐藏 xterm 的内联 composition 浮层（.composition-view）。
