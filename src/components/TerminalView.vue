@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebglAddon } from "@xterm/addon-webgl"
@@ -173,14 +173,56 @@ function sendInputToWs(data: string) {
 // ===== 离线恢复状态浮层按钮 =====
 const showReconnectBtn = ref(false)
 
+// ===== 连接中状态浮层 =====
+const currentStatus = ref<TermStatus>("connecting")
+const showConnectingOverlay = ref(false)
+let connectingOverlayTimer: number | null = null
+
 function applyTheme() {
   if (!term) return
   term.options.theme = termStore.getActiveTerminalTheme()
 }
 
 function setStatus(status: TermStatus) {
+  currentStatus.value = status
   emit("status-change", props.tab.key, status)
+  if (status === "connecting") {
+    if (connectingOverlayTimer === null) {
+      connectingOverlayTimer = window.setTimeout(() => {
+        if (currentStatus.value === "connecting") {
+          showConnectingOverlay.value = true
+        }
+        connectingOverlayTimer = null
+      }, 300)
+    }
+  } else {
+    if (connectingOverlayTimer !== null) {
+      window.clearTimeout(connectingOverlayTimer)
+      connectingOverlayTimer = null
+    }
+    showConnectingOverlay.value = false
+  }
 }
+
+const connectingLabel = computed(() => {
+  const kind = props.tab.kind
+  if (kind === "local") return t("terminal.connectingLocal")
+  if (kind === "serial") return t("terminal.connectingSerial")
+  return t("terminal.connecting")
+})
+
+const connectingTarget = computed(() => {
+  const tab = props.tab
+  if (tab.kind === "local") {
+    return tab.shell ? `Local · ${tab.shell}` : "Local"
+  }
+  if (tab.kind === "serial") return null
+  const info = tab.hostInfo
+  if (!info) return tab.title
+  const user = info.username ? `${info.username}@` : ""
+  const port = info.port && info.port !== "22" ? `:${info.port}` : ""
+  return `${user}${info.addr}${port}`
+})
 
 function clearHeartbeat() {
   if (heartbeatTimer !== null) {
@@ -969,6 +1011,17 @@ onMounted(() => {
   }
 })
 
+/** 用户取消正在建立的连接。 */
+function cancelConnect() {
+  teardownWs()
+  clearHeartbeat()
+  resetTextProgress()
+  disarmSudo()
+  setStatus("closed")
+  showReconnectBtn.value = true
+  term?.writeln(`\r\n\x1b[33m[ashell] ${t("terminal.connectingCancelled")}\x1b[0m`)
+}
+
 /** 关闭当前 ws；由右键菜单"断开连接"调用。保留 xterm 实例和缓冲区。 */
 function disconnect() {
   clearHeartbeat()
@@ -1096,6 +1149,10 @@ watch(
 onBeforeUnmount(() => {
   disposed = true
   clearHeartbeat()
+  if (connectingOverlayTimer !== null) {
+    window.clearTimeout(connectingOverlayTimer)
+    connectingOverlayTimer = null
+  }
   // 撤销 broadcast 注册，让广播配置面板里残留的 key 失效（store.purgeKey 也会顺带由 App.vue 调）
   broadcastStore.unregisterSender(props.tab.key)
   window.removeEventListener("resize", onWindowResize)
@@ -1351,6 +1408,27 @@ onBeforeUnmount(() => {
         </NIcon>
         {{ t('terminal.tabBar.reconnect') }}
       </button>
+    </Transition>
+
+    <Transition name="connecting-fade">
+      <div v-if="showConnectingOverlay" class="connecting-overlay">
+        <div class="connecting-spinner">
+          <div class="connecting-spinner-ring"></div>
+          <div class="connecting-spinner-dot"></div>
+        </div>
+        <div class="connecting-info">
+          <span class="connecting-label">{{ connectingLabel }}</span>
+          <span v-if="connectingTarget" class="connecting-target">{{ connectingTarget }}</span>
+        </div>
+        <div class="connecting-dots">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <button type="button" class="connecting-cancel" @click="cancelConnect">
+          {{ t('terminal.connectingCancel') }}
+        </button>
+      </div>
     </Transition>
   </div>
 </template>
@@ -1794,5 +1872,150 @@ onBeforeUnmount(() => {
 .suggest-fade-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+
+/* ===== 连接中浮层 ===== */
+.connecting-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.connecting-spinner {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.connecting-spinner-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--ashell-accent, #80b5ff);
+  border-right-color: var(--ashell-accent, #80b5ff);
+  animation: connecting-spin 0.9s linear infinite;
+}
+
+.connecting-spinner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ashell-accent, #80b5ff);
+  opacity: 0.35;
+  animation: connecting-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes connecting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes connecting-pulse {
+  0%, 100% {
+    opacity: 0.15;
+    transform: scale(0.75);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.15);
+  }
+}
+
+.connecting-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.connecting-label {
+  font-size: 13px;
+  color: var(--ashell-text-muted, rgba(255, 255, 255, 0.55));
+  letter-spacing: 0.4px;
+}
+
+.connecting-target {
+  font-size: 14px;
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono",
+    "Menlo", monospace;
+  color: var(--ashell-text-strong, #e6e6e6);
+  font-weight: 500;
+}
+
+.connecting-dots {
+  display: flex;
+  gap: 6px;
+  height: 8px;
+  align-items: center;
+}
+
+.connecting-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ashell-accent, #80b5ff);
+  animation: connecting-wave 1.4s ease-in-out infinite;
+}
+
+.connecting-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.connecting-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes connecting-wave {
+  0%, 60%, 100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+.connecting-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 16px;
+  background: transparent;
+  border: 1px solid var(--ashell-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  color: var(--ashell-text-muted, rgba(255, 255, 255, 0.55));
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease,
+    color 120ms ease;
+}
+
+.connecting-cancel:hover {
+  border-color: var(--ashell-accent, #80b5ff);
+  color: var(--ashell-accent, #80b5ff);
+  background: var(--ashell-accent-soft, rgba(128, 181, 255, 0.1));
+}
+
+.connecting-fade-enter-active,
+.connecting-fade-leave-active {
+  transition: opacity 250ms ease;
+}
+.connecting-fade-enter-from,
+.connecting-fade-leave-to {
+  opacity: 0;
 }
 </style>
