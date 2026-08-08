@@ -11,6 +11,7 @@ pub mod terminal;
 pub mod ai_provider;
 pub mod phrase;
 pub mod template;
+pub mod backup;
 
 use axum::Json;
 use serde::Serialize;

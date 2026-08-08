@@ -11,10 +11,11 @@ import StartupSection from "./StartupSection.vue";
 import WindowSection from "./WindowSection.vue";
 import AiSection from "./AiSection.vue";
 import AboutSection from "./AboutSection.vue";
+import BackupSection from "./BackupSection.vue";
 
 type ThemeMode = "system" | "dark" | "light";
 type ResolvedTheme = "dark" | "light";
-type SettingsTab = "general" | "theme" | "terminal" | "window" | "icons" | "startup" | "ai" | "about";
+type SettingsTab = "general" | "theme" | "terminal" | "window" | "icons" | "startup" | "ai" | "backup" | "about";
 
 defineProps<{
   open: boolean;
@@ -124,6 +125,14 @@ function close() {
           </button>
           <button
             class="settings-tab"
+            :class="{ active: activeTab === 'backup' }"
+            type="button"
+            @click="activeTab = 'backup'"
+          >
+            {{ t("settings.tabs.backup") }}
+          </button>
+          <button
+            class="settings-tab"
             :class="{ active: activeTab === 'about' }"
             type="button"
             @click="activeTab = 'about'"
@@ -146,6 +155,7 @@ function close() {
           <IconsSection v-else-if="activeTab === 'icons'" />
           <StartupSection v-else-if="activeTab === 'startup'" />
           <AiSection v-else-if="activeTab === 'ai'" />
+          <BackupSection v-else-if="activeTab === 'backup'" />
           <AboutSection v-else-if="activeTab === 'about'" />
         </div>
       </div>
