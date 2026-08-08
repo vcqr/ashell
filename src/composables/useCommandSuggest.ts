@@ -167,6 +167,24 @@ export function clearCommandSuggestData() {
 }
 
 /**
+ * 返回最近执行的命令列表（倒序，去重）。
+ * 供模板命令"从历史选择"等功能使用。
+ */
+export function getRecentCommands(limit = 20): string[] {
+  ensureLoaded()
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (let i = commandHistory.length - 1; i >= 0 && result.length < limit; i--) {
+    const cmd = commandHistory[i]
+    if (cmd && !seen.has(cmd)) {
+      seen.add(cmd)
+      result.push(cmd)
+    }
+  }
+  return result
+}
+
+/**
  * 匹配策略：
  * - 历史命令：关键字子串匹配（includes），最近使用优先
  * - 字典命令：前缀匹配（Trie），字符序

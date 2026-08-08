@@ -14,6 +14,8 @@ export default {
     titlePlaceholder: "Name this command",
     command: "Command",
     commandPlaceholder: "Command to execute, e.g. df -h",
+    pickFromHistory: "Pick from history",
+    historyPlaceholder: "Select a recently executed command…",
     description: "Description (optional)",
     descriptionPlaceholder: "What does this command do",
     cancel: "Cancel",

@@ -8,6 +8,7 @@ import {
   NIcon,
   NInput,
   NModal,
+  NSelect,
   NSpace,
   NScrollbar,
   useMessage,
@@ -22,6 +23,7 @@ import {
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
 import { useTemplateStore } from "@/stores/templates";
+import { getRecentCommands } from "@/composables/useCommandSuggest";
 import type { CommandTemplate } from "@/types";
 
 const props = defineProps<{
@@ -43,6 +45,17 @@ const editingId = ref<number | null>(null);
 const formTitle = ref("");
 const formCommand = ref("");
 const formDescription = ref("");
+
+const historyOptions = computed(() =>
+  getRecentCommands(20).map((cmd) => ({
+    label: cmd,
+    value: cmd,
+  })),
+);
+
+function onPickHistory(value: string) {
+  formCommand.value = value;
+}
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase();
@@ -233,6 +246,16 @@ async function onDelete(id: number) {
                 type="textarea"
                 :autosize="{ minRows: 2, maxRows: 6 }"
                 :placeholder="t('templates.form.commandPlaceholder')"
+              />
+            </NFormItem>
+            <NFormItem v-if="historyOptions.length > 0" :label="t('templates.form.pickFromHistory')">
+              <NSelect
+                :options="historyOptions"
+                :placeholder="t('templates.form.historyPlaceholder')"
+                filterable
+                clearable
+                :value="null"
+                @update:value="onPickHistory"
               />
             </NFormItem>
             <NFormItem :label="t('templates.form.description')">

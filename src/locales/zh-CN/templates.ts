@@ -14,6 +14,8 @@ export default {
     titlePlaceholder: "给这条命令起个名字",
     command: "命令",
     commandPlaceholder: "要执行的命令，如 df -h",
+    pickFromHistory: "从历史选择",
+    historyPlaceholder: "选择最近执行过的命令…",
     description: "描述（可选）",
     descriptionPlaceholder: "命令说明，方便日后查找",
     cancel: "取消",
