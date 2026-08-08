@@ -32,6 +32,8 @@ const props = defineProps<{
   /** AI 助手功能总开关；关闭时整个 AI 入口不渲染 */
   aiEnabled: boolean
   hasActiveSession: boolean
+  /** 任意终端会话可用（含本地 PTY），用于模板命令等不依赖 SSH 的功能 */
+  hasTerminalSession: boolean
   /** AI 助手可用性：比 hasActiveSession 宽，本地 PTY tab 也算可用 */
   hasAiSession: boolean
 }>()
@@ -112,13 +114,13 @@ function renderIcon(comp: unknown) {
           class="ab-btn"
           :class="{ active: templateOpen }"
           type="button"
-          :disabled="!hasActiveSession"
+          :disabled="!hasTerminalSession"
           @click="emit('toggle-template')"
         >
           <component :is="renderIcon(TerminalOutline)" />
         </button>
       </template>
-      {{ hasActiveSession ? t("terminal.activityBar.templates") : t("terminal.activityBar.templatesDisabled") }}
+      {{ hasTerminalSession ? t("terminal.activityBar.templates") : t("terminal.activityBar.templatesDisabled") }}
     </NTooltip>
 
     <!-- SFTP -->

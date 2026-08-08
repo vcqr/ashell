@@ -80,6 +80,7 @@ const {
   activeTabKey,
   activeSftpTab,
   activeAiTab,
+  activeTerminalTab,
   restoredTabKeys,
   terminalRefs,
   aiAssistantRef,
@@ -121,7 +122,7 @@ const {
   toggleTemplate,
   onSendToAi,
   onSftpSendToAi,
-} = usePanels(activeSftpTab, activeAiTab, aiAssistantRef);
+} = usePanels(activeSftpTab, activeAiTab, activeTerminalTab, aiAssistantRef);
 
 const {
   isMaximized,
@@ -354,6 +355,7 @@ const {
               :template-open="templateOpen"
               :ai-enabled="startupStore.aiAssistantEnabled"
               :has-active-session="!!activeSftpTab"
+              :has-terminal-session="!!activeTerminalTab"
               :has-ai-session="!!activeAiTab"
               @toggle-sftp="toggleSftp"
               @toggle-host-info="toggleHostInfo"

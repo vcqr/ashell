@@ -227,6 +227,16 @@ export function useTabs() {
     return t.status === "connected" ? t : undefined;
   });
 
+  /**
+   * 任意已连接的终端 tab（SSH / 本地 / Telnet / 串口）。
+   * 供模板命令等不依赖 SSH 会话的功能使用。
+   */
+  const activeTerminalTab = computed<TerminalTab | undefined>(() => {
+    const t = activeTab.value;
+    if (!t || !t.sid) return undefined;
+    return t.status === "connected" ? t : undefined;
+  });
+
   function openHost(node: HostNode, forceNew = false) {
     if (node.type !== "host") return;
     if (!forceNew) {
@@ -507,6 +517,7 @@ export function useTabs() {
     activeTab,
     activeSftpTab,
     activeAiTab,
+    activeTerminalTab,
     restoredTabKeys,
     terminalRefs,
     aiAssistantRef,

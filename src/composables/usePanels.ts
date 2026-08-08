@@ -19,6 +19,7 @@ function loadActivityBarVisible(): boolean {
 export function usePanels(
   activeSftpTab: ComputedRef<TerminalTab | undefined>,
   activeAiTab: ComputedRef<TerminalTab | undefined>,
+  activeTerminalTab: ComputedRef<TerminalTab | undefined>,
   aiAssistantRef: Ref<AiAssistantExposed | null>,
 ) {
   const aiOpen = ref(false);
@@ -98,7 +99,7 @@ export function usePanels(
   }
 
   function toggleTemplate() {
-    if (!activeSftpTab.value) return;
+    if (!activeTerminalTab.value) return;
     templateOpen.value = !templateOpen.value;
     if (templateOpen.value) {
       aiOpen.value = false;
@@ -113,6 +114,11 @@ export function usePanels(
       sftpOpen.value = false;
       hostInfoOpen.value = false;
       forwardOpen.value = false;
+    }
+  });
+
+  watch(activeTerminalTab, (tab) => {
+    if (!tab) {
       templateOpen.value = false;
     }
   });
