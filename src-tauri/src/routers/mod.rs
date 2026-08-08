@@ -167,6 +167,16 @@ pub fn build_router(state: AppState) -> Router {
             "/api/ai-phrases/{id}",
             axum::routing::delete(handlers::phrase::delete),
         )
+        // 模板命令
+        .route(
+            "/api/command-templates",
+            get(handlers::template::list).post(handlers::template::create),
+        )
+        .route(
+            "/api/command-templates/{id}",
+            axum::routing::put(handlers::template::update)
+                .delete(handlers::template::delete),
+        )
         // 上传体积上限放在 Router 级别（避免 MethodRouter::layer 类型推导歧义）
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT))

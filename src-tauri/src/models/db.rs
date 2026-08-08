@@ -280,5 +280,27 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v8: 模板命令（预置命令片段）
+    if current < 8 {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS command_templates (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT NOT NULL,
+                command     TEXT NOT NULL,
+                description TEXT,
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (8)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }

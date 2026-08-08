@@ -237,3 +237,28 @@ pub struct QuickPhrase {
 pub struct QuickPhraseCreate {
     pub content: String,
 }
+
+/// 模板命令（预置命令片段）
+#[derive(Debug, Default, sqlx::FromRow, Clone, Serialize, Deserialize)]
+pub struct CommandTemplate {
+    pub id: i64,
+    pub title: String,
+    pub command: String,
+    pub description: Option<String>,
+    pub sort_order: i64,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommandTemplateCreate {
+    pub title: String,
+    pub command: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommandTemplateUpdate {
+    pub title: Option<String>,
+    pub command: Option<String>,
+    pub description: Option<String>,
+}

@@ -25,6 +25,7 @@ export function usePanels(
   const sftpOpen = ref(false);
   const hostInfoOpen = ref(false);
   const forwardOpen = ref(false);
+  const templateOpen = ref(false);
   const settingsOpen = ref(false);
   const aiProvidersOpen = ref(false);
   const activityBarVisible = ref(loadActivityBarVisible());
@@ -44,6 +45,7 @@ export function usePanels(
       sftpOpen.value = false;
       hostInfoOpen.value = false;
       forwardOpen.value = false;
+      templateOpen.value = false;
     }
   }
 
@@ -69,6 +71,7 @@ export function usePanels(
       aiOpen.value = false;
       hostInfoOpen.value = false;
       forwardOpen.value = false;
+      templateOpen.value = false;
     }
   }
 
@@ -79,6 +82,7 @@ export function usePanels(
       aiOpen.value = false;
       sftpOpen.value = false;
       forwardOpen.value = false;
+      templateOpen.value = false;
     }
   }
 
@@ -89,6 +93,18 @@ export function usePanels(
       aiOpen.value = false;
       sftpOpen.value = false;
       hostInfoOpen.value = false;
+      templateOpen.value = false;
+    }
+  }
+
+  function toggleTemplate() {
+    if (!activeSftpTab.value) return;
+    templateOpen.value = !templateOpen.value;
+    if (templateOpen.value) {
+      aiOpen.value = false;
+      sftpOpen.value = false;
+      hostInfoOpen.value = false;
+      forwardOpen.value = false;
     }
   }
 
@@ -97,6 +113,7 @@ export function usePanels(
       sftpOpen.value = false;
       hostInfoOpen.value = false;
       forwardOpen.value = false;
+      templateOpen.value = false;
     }
   });
 
@@ -110,6 +127,7 @@ export function usePanels(
     sftpOpen,
     hostInfoOpen,
     forwardOpen,
+    templateOpen,
     settingsOpen,
     aiProvidersOpen,
     activityBarVisible,
@@ -117,6 +135,7 @@ export function usePanels(
     toggleSftp,
     toggleHostInfo,
     toggleForward,
+    toggleTemplate,
     onSendToAi,
     onSftpSendToAi,
   };

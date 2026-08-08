@@ -13,6 +13,7 @@ import {
   HardwareChipOutline,
   SwapHorizontalOutline,
   SparklesOutline,
+  TerminalOutline,
 } from "@vicons/ionicons5"
 import { useI18n } from "vue-i18n"
 import { useBroadcastStore } from "@/stores/broadcast"
@@ -27,6 +28,7 @@ const props = defineProps<{
   hostInfoOpen: boolean
   forwardOpen: boolean
   aiOpen: boolean
+  templateOpen: boolean
   /** AI 助手功能总开关；关闭时整个 AI 入口不渲染 */
   aiEnabled: boolean
   hasActiveSession: boolean
@@ -39,6 +41,7 @@ const emit = defineEmits<{
   "toggle-host-info": []
   "toggle-forward": []
   "toggle-ai": []
+  "toggle-template": []
 }>()
 
 const broadcastStore = useBroadcastStore()
@@ -101,6 +104,22 @@ function renderIcon(comp: unknown) {
     </NPopover>
 
     <div class="ab-divider" />
+
+    <!-- 模板命令 -->
+    <NTooltip placement="left" :show-arrow="false">
+      <template #trigger>
+        <button
+          class="ab-btn"
+          :class="{ active: templateOpen }"
+          type="button"
+          :disabled="!hasActiveSession"
+          @click="emit('toggle-template')"
+        >
+          <component :is="renderIcon(TerminalOutline)" />
+        </button>
+      </template>
+      {{ hasActiveSession ? t("terminal.activityBar.templates") : t("terminal.activityBar.templatesDisabled") }}
+    </NTooltip>
 
     <!-- SFTP -->
     <NTooltip placement="left" :show-arrow="false">

@@ -11,6 +11,7 @@ pub mod sysinfo;
 pub mod telnet;
 pub mod ai_provider;
 pub mod phrase;
+pub mod template;
 
 use std::sync::Arc;
 

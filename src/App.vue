@@ -36,6 +36,7 @@ import ActivityBar from "@/components/ActivityBar.vue";
 import SftpDrawer from "@/components/SftpDrawer.vue";
 import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
+import TemplateDrawer from "@/components/TemplateDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
 import AiProvidersModal from "@/components/AiProvidersModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
@@ -101,6 +102,7 @@ const {
   onStatusChange,
   onTitleChange,
   closeHostsIfOpen,
+  sendCommandToActive,
 } = useTabs();
 
 const {
@@ -108,6 +110,7 @@ const {
   sftpOpen,
   hostInfoOpen,
   forwardOpen,
+  templateOpen,
   settingsOpen,
   aiProvidersOpen,
   activityBarVisible,
@@ -115,6 +118,7 @@ const {
   toggleSftp,
   toggleHostInfo,
   toggleForward,
+  toggleTemplate,
   onSendToAi,
   onSftpSendToAi,
 } = usePanels(activeSftpTab, activeAiTab, aiAssistantRef);
@@ -347,6 +351,7 @@ const {
               :host-info-open="hostInfoOpen"
               :forward-open="forwardOpen"
               :ai-open="aiOpen"
+              :template-open="templateOpen"
               :ai-enabled="startupStore.aiAssistantEnabled"
               :has-active-session="!!activeSftpTab"
               :has-ai-session="!!activeAiTab"
@@ -354,6 +359,7 @@ const {
               @toggle-host-info="toggleHostInfo"
               @toggle-forward="toggleForward"
               @toggle-ai="toggleAi"
+              @toggle-template="toggleTemplate"
             />
 
             <HostsDrawer v-model:open="hostsOpen" @open-host="openHost" />
@@ -375,6 +381,10 @@ const {
               v-model:open="forwardOpen"
               :sid="activeSftpTab?.sid ?? null"
               :host-name="activeSftpTab?.title"
+            />
+            <TemplateDrawer
+              v-model:open="templateOpen"
+              @run="sendCommandToActive"
             />
             <AiAssistant
               v-if="startupStore.aiAssistantEnabled"

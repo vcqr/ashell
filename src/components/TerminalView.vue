@@ -170,6 +170,14 @@ function sendInputToWs(data: string) {
   sendJson({ kind: "cmd", data })
 }
 
+/**
+ * 向终端发送一条命令并执行（追加 \r）。
+ * 供模板命令等外部调用方使用。
+ */
+function sendCommand(cmd: string) {
+  sendJson({ kind: "cmd", data: cmd + "\r" })
+}
+
 // ===== 离线恢复状态浮层按钮 =====
 const showReconnectBtn = ref(false)
 
@@ -1057,7 +1065,7 @@ function relayout() {
   scheduleFit(true)
 }
 
-defineExpose({ disconnect, reconnect, relayout, serializeSession })
+defineExpose({ disconnect, reconnect, relayout, serializeSession, sendCommand })
 
 watch(
   () => props.active,

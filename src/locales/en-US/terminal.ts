@@ -48,6 +48,8 @@ export default {
     hostInfoDisabled: "Available after connecting",
     forward: "Port forwarding",
     forwardDisabled: "Available after connecting",
+    templates: "Command Templates",
+    templatesDisabled: "Available after connecting",
     ai: "AI assistant",
     aiDisabled: "Available after connecting",
   },

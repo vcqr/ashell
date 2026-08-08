@@ -413,3 +413,26 @@ export interface QuickPhrase {
 export interface QuickPhraseCreate {
   content: string
 }
+
+/* ---------- 模板命令 ---------- */
+
+export interface CommandTemplate {
+  id: number
+  title: string
+  command: string
+  description: string | null
+  sort_order: number
+  created_at: string | null
+}
+
+export interface CommandTemplateCreate {
+  title: string
+  command: string
+  description?: string | null
+}
+
+export interface CommandTemplateUpdate {
+  title?: string
+  command?: string
+  description?: string | null
+}

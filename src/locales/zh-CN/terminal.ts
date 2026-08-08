@@ -48,6 +48,8 @@ export default {
     hostInfoDisabled: "连接后可用",
     forward: "端口转发",
     forwardDisabled: "连接后可用",
+    templates: "模板命令",
+    templatesDisabled: "连接后可用",
     ai: "AI 助手",
     aiDisabled: "连接后可用",
   },

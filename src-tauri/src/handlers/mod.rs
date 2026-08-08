@@ -10,6 +10,7 @@ pub mod telnet;
 pub mod terminal;
 pub mod ai_provider;
 pub mod phrase;
+pub mod template;
 
 use axum::Json;
 use serde::Serialize;

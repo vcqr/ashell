@@ -13,6 +13,7 @@ export type TerminalViewExposed = {
   reconnect: () => Promise<void>;
   relayout: () => void;
   serializeSession: () => string;
+  sendCommand: (cmd: string) => void;
 };
 
 /** AiAssistant 通过 defineExpose 暴露的实例方法 */
@@ -359,6 +360,14 @@ export function useTabs() {
     }
   }
 
+  /** 向当前激活的终端发送一条命令并执行 */
+  function sendCommandToActive(cmd: string) {
+    if (!activeTabKey.value) return;
+    const inst = terminalRefs.get(activeTabKey.value);
+    if (!inst) return;
+    inst.sendCommand(cmd);
+  }
+
   function duplicateTab(key: string) {
     const t = tabs.value.find((x) => x.key === key);
     if (!t) return;
@@ -520,5 +529,6 @@ export function useTabs() {
     onStatusChange,
     onTitleChange,
     closeHostsIfOpen,
+    sendCommandToActive,
   };
 }
