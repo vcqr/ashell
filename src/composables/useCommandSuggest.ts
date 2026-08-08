@@ -470,6 +470,15 @@ export function useCommandSuggest(options: {
    * 标记为不可靠，Enter 时回退到从 xterm buffer 读取实际命令行。
    */
   function handleOnData(data: string) {
+    // TUI 应用（top/htop/vim 等）使用备用屏幕，其按键（如 q 退出）不应记入 inputBuffer
+    const t = getTerm()
+    if (t && t.buffer.active.type === "alternate") {
+      inputBuffer = ""
+      inputBufferReliable = true
+      dismiss()
+      return
+    }
+
     // Escape 序列（方向键 / Home / End / bracketed paste 等）- inputBuffer 不可靠
     if (data.startsWith("\x1b")) {
       inputBufferReliable = false
