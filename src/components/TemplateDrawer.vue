@@ -47,7 +47,7 @@ const formCommand = ref("");
 const formDescription = ref("");
 
 const historyOptions = computed(() =>
-  getRecentCommands(20).map((cmd) => ({
+  getRecentCommands(50).map((cmd) => ({
     label: cmd,
     value: cmd,
   })),
