@@ -8,7 +8,6 @@ import {
   NIcon,
   NInput,
   NModal,
-  NSelect,
   NSpace,
   NScrollbar,
   useMessage,
@@ -45,16 +44,21 @@ const editingId = ref<number | null>(null);
 const formTitle = ref("");
 const formCommand = ref("");
 const formDescription = ref("");
+const historySearch = ref("");
+const allHistory = ref<string[]>([]);
 
-const historyOptions = computed(() =>
-  getRecentCommands(500).map((cmd) => ({
-    label: cmd,
-    value: cmd,
-  })),
-);
+const filteredHistory = computed(() => {
+  const q = historySearch.value.trim().toLowerCase();
+  if (!q) return allHistory.value;
+  return allHistory.value.filter((cmd) => cmd.toLowerCase().includes(q));
+});
 
-function onPickHistory(value: string) {
-  formCommand.value = value;
+function loadHistory() {
+  allHistory.value = getRecentCommands(500);
+}
+
+function pickHistory(cmd: string) {
+  formCommand.value = cmd;
 }
 
 const filtered = computed(() => {
@@ -92,6 +96,8 @@ function openCreate() {
   formTitle.value = "";
   formCommand.value = "";
   formDescription.value = "";
+  historySearch.value = "";
+  loadHistory();
   showForm.value = true;
 }
 
@@ -100,6 +106,8 @@ function openEdit(tpl: CommandTemplate) {
   formTitle.value = tpl.title;
   formCommand.value = tpl.command;
   formDescription.value = tpl.description ?? "";
+  historySearch.value = "";
+  loadHistory();
   showForm.value = true;
 }
 
@@ -248,15 +256,31 @@ async function onDelete(id: number) {
                 :placeholder="t('templates.form.commandPlaceholder')"
               />
             </NFormItem>
-            <NFormItem v-if="historyOptions.length > 0" :label="t('templates.form.pickFromHistory')">
-              <NSelect
-                :options="historyOptions"
-                :placeholder="t('templates.form.historyPlaceholder')"
-                filterable
-                clearable
-                :value="null"
-                @update:value="onPickHistory"
-              />
+            <NFormItem v-if="allHistory.length > 0" :label="t('templates.form.pickFromHistory')">
+              <div class="history-picker">
+                <NInput
+                  v-model:value="historySearch"
+                  size="small"
+                  clearable
+                  :placeholder="t('templates.form.historyPlaceholder')"
+                >
+                  <template #prefix>
+                    <NIcon :size="14"><SearchOutline /></NIcon>
+                  </template>
+                </NInput>
+                <div v-if="filteredHistory.length > 0" class="history-list">
+                  <div
+                    v-for="cmd in filteredHistory.slice(0, 50)"
+                    :key="cmd"
+                    class="history-item"
+                    :title="cmd"
+                    @click="pickHistory(cmd)"
+                  >
+                    <code>{{ cmd }}</code>
+                  </div>
+                </div>
+                <div v-else class="history-empty">{{ t("templates.form.noHistoryMatch") }}</div>
+              </div>
             </NFormItem>
             <NFormItem :label="t('templates.form.description')">
               <NInput
@@ -423,5 +447,50 @@ async function onDelete(id: number) {
 .tpl-action-btn.danger:hover {
   background: color-mix(in srgb, #ef4444 20%, transparent);
   color: #ef4444;
+}
+
+/* ── History picker (inside form modal) ── */
+
+.history-picker {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-list {
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--ashell-border-soft);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.history-item {
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.history-item:hover {
+  background: color-mix(in srgb, var(--ashell-primary) 12%, transparent);
+}
+
+.history-item code {
+  font-family: var(--ashell-mono, "Fira Code", "JetBrains Mono", Menlo, Consolas, monospace);
+  font-size: 12px;
+  color: var(--ashell-text);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-empty {
+  font-size: 12px;
+  color: var(--ashell-text-subtle);
+  text-align: center;
+  padding: 8px 0;
 }
 </style>
