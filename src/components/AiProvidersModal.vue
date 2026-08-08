@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
+import { storeToRefs } from "pinia";
 import {
   NModal,
   NCard,
@@ -25,11 +26,11 @@ import {
 import { useI18n } from "vue-i18n";
 import type { AiProvider, AiProviderCreate } from "@/types";
 import {
-  listAiProviders,
   createAiProvider,
   updateAiProvider,
   deleteAiProvider,
 } from "@/api/aiProviders";
+import { useAiConfigStore } from "@/stores/aiConfig";
 import {
   apiTypeOptions,
   normalizeModelIds,
@@ -47,8 +48,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const message = useMessage();
+const aiConfig = useAiConfigStore();
+const { providers } = storeToRefs(aiConfig);
 
-const providers = ref<AiProvider[]>([]);
 const selectedId = ref<string | null>(null);
 const loading = ref(false);
 const saving = ref(false);
@@ -96,7 +98,7 @@ watch(selectedId, (id) => {
 async function loadProviders() {
   loading.value = true;
   try {
-    providers.value = await listAiProviders();
+    await aiConfig.load();
     selectedId.value = providers.value[0]?.id ?? null;
     if (!selectedId.value) {
       draft.value = emptyDraft();
@@ -114,7 +116,7 @@ async function addProvider() {
   };
   try {
     const p = await createAiProvider(input);
-    providers.value.push(p);
+    await aiConfig.load();
     selectedId.value = p.id;
   } catch (e) {
     message.error(t("settings.ai.provider.saveFailed", { error: String(e) }));
@@ -136,8 +138,7 @@ async function saveProvider() {
       api_key: draft.value.apiKey.trim(),
       model_ids: normalizeModelIds(draft.value.modelIds),
     });
-    const idx = providers.value.findIndex((p) => p.id === updated.id);
-    if (idx >= 0) providers.value[idx] = updated;
+    await aiConfig.load();
     draft.value = providerToDraft(updated);
     message.success(t("settings.ai.modelSaved"));
   } catch (e) {
@@ -151,7 +152,7 @@ async function removeProvider() {
   if (!selectedId.value) return;
   try {
     await deleteAiProvider(selectedId.value);
-    providers.value = providers.value.filter((p) => p.id !== selectedId.value);
+    await aiConfig.load();
     selectedId.value = providers.value[0]?.id ?? null;
     if (!selectedId.value) {
       draft.value = emptyDraft();
