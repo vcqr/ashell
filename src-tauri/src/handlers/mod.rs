@@ -9,6 +9,7 @@ pub mod sysinfo;
 pub mod telnet;
 pub mod terminal;
 pub mod ai_provider;
+pub mod phrase;
 
 use axum::Json;
 use serde::Serialize;

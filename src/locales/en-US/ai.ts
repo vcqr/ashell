@@ -36,4 +36,14 @@ export default {
     noProviderHint: "Please add an AI model provider in Settings",
     switchHint: "Restart session to take effect",
   },
+  quickPhrases: {
+    title: "Quick Phrases",
+    empty: "No saved phrases yet",
+    add: "Save as quick phrase",
+    remove: "Unfavorite",
+    delete: "Delete",
+    insert: "Click to insert into input",
+    clearAll: "Clear All",
+    clearAllConfirm: "Confirm clear?",
+  },
 } as const

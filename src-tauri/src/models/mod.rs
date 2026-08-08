@@ -223,3 +223,17 @@ pub struct AiEngineUpdate {
 pub struct AiEngineActivate {
     pub engine: String,
 }
+
+/// AI 常用语（收藏的用户消息）
+#[derive(Debug, Default, sqlx::FromRow, Clone, Serialize, Deserialize)]
+pub struct QuickPhrase {
+    pub id: i64,
+    pub content: String,
+    pub sort_order: i64,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QuickPhraseCreate {
+    pub content: String,
+}

@@ -36,4 +36,14 @@ export default {
     noProviderHint: "请前往设置添加 AI 模型供应商",
     switchHint: "切换后需重启会话生效",
   },
+  quickPhrases: {
+    title: "常用语",
+    empty: "还没有收藏的常用语",
+    add: "收藏为常用语",
+    remove: "取消收藏",
+    delete: "删除",
+    insert: "点击插入到输入框",
+    clearAll: "清空",
+    clearAllConfirm: "确认清空？",
+  },
 } as const

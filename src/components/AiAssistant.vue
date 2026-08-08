@@ -17,6 +17,7 @@ import {
   NDropdown,
   NModal,
   NCard,
+  NPopover,
 } from "naive-ui";
 import {
   SendOutline,
@@ -27,12 +28,17 @@ import {
   StopCircleOutline,
   BuildOutline,
   ChevronDownOutline,
+  StarOutline,
+  Star,
+  BookmarkOutline,
+  TrashOutline,
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
 import type { ChatMessage, ProcessStep } from "@/types";
 import { useApiStore } from "@/stores/api";
 import { useAiStore } from "@/stores/ai";
 import { useAiConfigStore } from "@/stores/aiConfig";
+import { usePhraseStore } from "@/stores/phrases";
 import { getApiInfo } from "@/api/client";
 import { parseModelIds } from "@/composables/useAiConfig";
 
@@ -49,6 +55,7 @@ const emit = defineEmits<{
 const apiStore = useApiStore();
 const aiStore = useAiStore();
 const aiConfig = useAiConfigStore();
+const phraseStore = usePhraseStore();
 const { t } = useI18n();
 
 // ── Model config ──
@@ -661,6 +668,8 @@ onMounted(async () => {
   if (currentSsid.value) {
     await ensureSidecarFor(currentSsid.value);
   }
+
+  phraseStore.load();
 });
 
 // 监听 sid 变化：仅在切到新的 ssid 且尚未 spawn 时启动新 sidecar；
@@ -682,6 +691,39 @@ onBeforeUnmount(() => {
   // sidecar 生命周期跟随对应的 SSH 终端会话，由 App.vue::onStatusChange 在
   // status 变为 closed/error 时统一回收。
 });
+
+// ── Quick phrases ──
+
+async function toggleFavorite(content: string) {
+  if (phraseStore.isFavorited(content)) {
+    await phraseStore.removeByContent(content);
+  } else {
+    await phraseStore.add(content);
+  }
+}
+
+function insertPhrase(content: string) {
+  input.value = content;
+}
+
+const clearConfirming = ref(false);
+let clearConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function handleClearAll() {
+  if (!clearConfirming.value) {
+    clearConfirming.value = true;
+    clearConfirmTimer = setTimeout(() => {
+      clearConfirming.value = false;
+    }, 3000);
+    return;
+  }
+  if (clearConfirmTimer) {
+    clearTimeout(clearConfirmTimer);
+    clearConfirmTimer = null;
+  }
+  clearConfirming.value = false;
+  await phraseStore.clearAll();
+}
 
 defineExpose({
   callStreamingApi,
@@ -802,7 +844,21 @@ defineExpose({
                   <div class="bubble-content">{{ m.content }}</div>
                 </template>
                 <span v-else class="dot">…</span>
-                <div v-if="!m.isProcess" class="bubble-time">{{ m.time }}</div>
+                <div v-if="!m.isProcess" class="bubble-footer">
+                  <span class="bubble-time">{{ m.time }}</span>
+                  <button
+                    v-if="m.role === 'user' && m.content"
+                    class="fav-btn"
+                    :class="{ active: phraseStore.isFavorited(m.content) }"
+                    :title="phraseStore.isFavorited(m.content) ? t('ai.quickPhrases.remove') : t('ai.quickPhrases.add')"
+                    @click="toggleFavorite(m.content)"
+                  >
+                    <NIcon :size="11">
+                      <Star v-if="phraseStore.isFavorited(m.content)" />
+                      <StarOutline v-else />
+                    </NIcon>
+                  </button>
+                </div>
               </div>
               <NAvatar
                 v-if="m.role === 'user'"
@@ -864,6 +920,56 @@ defineExpose({
               <NIcon :size="12" style="margin-left: 2px"><ChevronDownOutline /></NIcon>
             </NButton>
           </NDropdown>
+
+          <NPopover trigger="click" placement="top-start" :width="280">
+            <template #trigger>
+              <NButton
+                size="tiny"
+                quaternary
+                :title="t('ai.quickPhrases.title')"
+                style="margin-left: auto"
+              >
+                <NIcon :size="14"><BookmarkOutline /></NIcon>
+              </NButton>
+            </template>
+            <div class="phrases-panel">
+              <div v-if="phraseStore.phrases.length === 0" class="phrases-empty">
+                {{ t("ai.quickPhrases.empty") }}
+              </div>
+              <template v-else>
+                <div class="phrases-header">
+                  <span class="phrases-title">{{ t("ai.quickPhrases.title") }}</span>
+                  <button
+                    class="phrases-clear-btn"
+                    :class="{ confirming: clearConfirming }"
+                    @click="handleClearAll"
+                  >
+                    {{ clearConfirming ? t("ai.quickPhrases.clearAllConfirm") : t("ai.quickPhrases.clearAll") }}
+                  </button>
+                </div>
+                <div class="phrases-list">
+                  <div
+                    v-for="p in phraseStore.phrases"
+                    :key="p.id"
+                    class="phrase-item"
+                  >
+                    <span
+                      class="phrase-text"
+                      :title="t('ai.quickPhrases.insert')"
+                      @click="insertPhrase(p.content)"
+                    >{{ p.content }}</span>
+                    <button
+                      class="phrase-del"
+                      :title="t('ai.quickPhrases.delete')"
+                      @click="phraseStore.remove(p.id)"
+                    >
+                      <NIcon :size="12"><TrashOutline /></NIcon>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </NPopover>
         </div>
 
         <div class="composer">
@@ -1068,11 +1174,54 @@ defineExpose({
   color: #fff;
 }
 
+.bubble-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 4px;
+}
+
 .bubble-time {
   font-size: 10px;
   color: var(--ashell-text-subtle);
-  margin-top: 4px;
   text-align: right;
+}
+
+/* ── Favorite button (user bubbles) ── */
+
+.fav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.5);
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  padding: 0;
+}
+
+.msg.user .bubble:hover .fav-btn {
+  opacity: 1;
+}
+
+.fav-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.fav-btn.active {
+  opacity: 1;
+  color: #ffd54a;
+}
+
+.fav-btn.active:hover {
+  color: #ffe082;
 }
 
 /* ── Process block (AITOOL / TOOL_RET 聚合) ── */
@@ -1517,5 +1666,111 @@ defineExpose({
   color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.55));
   background: var(--ashell-border-soft, rgba(255, 255, 255, 0.06));
   border-radius: 6px;
+}
+
+/* ── Quick phrases panel ── */
+
+.phrases-panel {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.phrases-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--ashell-border-soft);
+  margin-bottom: 4px;
+}
+
+.phrases-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+}
+
+.phrases-clear-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--ashell-text-subtle);
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.phrases-clear-btn:hover {
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+}
+
+.phrases-clear-btn.confirming {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.phrases-empty {
+  text-align: center;
+  font-size: 12px;
+  color: var(--ashell-text-subtle);
+  padding: 16px 0;
+}
+
+.phrases-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.phrase-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.phrase-item:hover {
+  background: color-mix(in srgb, var(--ashell-primary) 12%, transparent);
+}
+
+.phrase-text {
+  flex: 1;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ashell-text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phrase-del {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ashell-text-subtle);
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  padding: 0;
+}
+
+.phrase-item:hover .phrase-del {
+  opacity: 1;
+}
+
+.phrase-del:hover {
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
 }
 </style>

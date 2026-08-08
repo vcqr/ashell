@@ -400,3 +400,16 @@ export interface AiEnginesState {
   active_engine: string
   engines: AiEngine[]
 }
+
+/* ---------- AI 常用语 ---------- */
+
+export interface QuickPhrase {
+  id: number
+  content: string
+  sort_order: number
+  created_at: string | null
+}
+
+export interface QuickPhraseCreate {
+  content: string
+}

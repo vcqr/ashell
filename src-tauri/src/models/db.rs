@@ -260,5 +260,25 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v7: AI 常用语（快捷收藏的用户消息）
+    if current < 7 {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS quick_phrases (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                content     TEXT NOT NULL,
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT DEFAULT (datetime('now'))
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (7)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
