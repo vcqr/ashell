@@ -1117,7 +1117,7 @@ onBeforeUnmount(onResizeEnd)
 
 const panelStyle = computed(() => ({
   width: `${width.value}px`,
-  transition: resizing.value ? "none" : "transform 0.25s ease",
+  transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
   transform: props.open ? "translateX(0)" : "translateX(100%)",
 }))
 
@@ -1469,11 +1469,14 @@ function onClose() {
   bottom: 0;
   background: var(--ashell-panel-bg);
   border-left: 1px solid var(--ashell-border);
-  box-shadow: -8px 0 24px var(--ashell-shadow);
   display: flex;
   flex-direction: column;
   z-index: 1000;
   user-select: text;
+}
+
+.sftp-panel.open {
+  box-shadow: -8px 0 24px var(--ashell-shadow);
 }
 
 .sftp-panel.resizing {

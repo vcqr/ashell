@@ -310,17 +310,17 @@ async function onDelete(id: number) {
   width: 360px;
   background: var(--ashell-panel-bg);
   border-left: 1px solid var(--ashell-border);
-  box-shadow: -8px 0 24px var(--ashell-shadow);
   display: flex;
   flex-direction: column;
   z-index: 1000;
   transform: translateX(100%);
-  transition: transform 0.25s ease;
+  transition: transform 0.25s ease, box-shadow 0.15s ease;
   user-select: text;
 }
 
 .tpl-panel.open {
   transform: translateX(0);
+  box-shadow: -8px 0 24px var(--ashell-shadow);
 }
 
 .panel-header {
