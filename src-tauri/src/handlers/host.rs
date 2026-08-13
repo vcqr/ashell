@@ -1,9 +1,9 @@
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::handlers::{ok_msg, ApiResponse};
 use crate::models::{Host, HostCreate, HostUpdate};
 use crate::service::{self, ssh_config::SshConfigHost, AppState};
@@ -66,4 +66,31 @@ pub async fn ssh_config() -> AppResult<Json<ApiResponse<Vec<SshConfigHost>>>> {
     let hosts = service::ssh_config::parse_ssh_config()
         .map_err(|e| crate::errors::AppError::Internal(format!("读取 ssh config 失败: {e}")))?;
     Ok(ApiResponse::ok(hosts))
+}
+
+#[derive(Deserialize)]
+pub struct RevealRequest {
+    pub password: String,
+}
+
+#[derive(Serialize)]
+pub struct RevealResponse {
+    pub password: Option<String>,
+    pub private_key: Option<String>,
+}
+
+/// 验证操作密码后返回解密的主机凭证
+pub async fn reveal(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<RevealRequest>,
+) -> AppResult<Json<ApiResponse<RevealResponse>>> {
+    if !service::op_password::verify(&s.db, &s.config.crypto_key, &req.password).await? {
+        return Err(AppError::BadRequest("incorrect operation password".into()));
+    }
+    let host = service::host::get_with_credentials(&s.db, &s.config.crypto_key, id).await?;
+    Ok(ApiResponse::ok(RevealResponse {
+        password: host.password,
+        private_key: host.private_key,
+    }))
 }

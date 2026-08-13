@@ -9,6 +9,7 @@ pub mod sysinfo;
 pub mod telnet;
 pub mod terminal;
 pub mod ai_provider;
+pub mod op_password;
 pub mod phrase;
 pub mod template;
 

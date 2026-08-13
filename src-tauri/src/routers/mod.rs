@@ -75,6 +75,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/hosts/ssh-config",
             get(handlers::host::ssh_config),
         )
+        // 查看主机加密凭证（需操作密码验证）
+        .route(
+            "/api/hosts/{id}/reveal",
+            post(handlers::host::reveal),
+        )
         // SSH 终端 WebSocket
         .route(
             "/api/ssh/terminal/{host_id}",
@@ -176,6 +181,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/command-templates/{id}",
             axum::routing::put(handlers::template::update)
                 .delete(handlers::template::delete),
+        )
+        // 操作密码管理
+        .route(
+            "/api/op-password",
+            get(handlers::op_password::status)
+                .post(handlers::op_password::set)
+                .put(handlers::op_password::change)
+                .delete(handlers::op_password::clear),
         )
         // 上传体积上限放在 Router 级别（避免 MethodRouter::layer 类型推导歧义）
         .layer(DefaultBodyLimit::disable())

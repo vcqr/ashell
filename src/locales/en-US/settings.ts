@@ -10,6 +10,7 @@ export default {
     icons: "Icons",
     startup: "Startup",
     ai: "AI Assistant",
+    security: "Security",
     about: "About",
   },
   general: {
@@ -185,6 +186,18 @@ export default {
     brightMagenta: "Bright magenta",
     brightCyan: "Bright cyan",
     brightWhite: "Bright white",
+  },
+  security: {
+    title: "Security",
+    status: "Operation Password",
+    statusSet: "Set",
+    statusNotSet: "Not set",
+    setBtn: "Set",
+    changeBtn: "Change",
+    clearBtn: "Clear",
+    clearTitle: "Clear Operation Password",
+    clearConfirm: "Clear the operation password? Revealing credentials will no longer require a password.",
+    hint: "The operation password protects host credentials (passwords and private keys). Once set, clicking \"Reveal\" while editing a host requires the operation password.",
   },
   about: {
     title: "About ASHELL",

@@ -10,6 +10,7 @@ pub mod ssh_config;
 pub mod sysinfo;
 pub mod telnet;
 pub mod ai_provider;
+pub mod op_password;
 pub mod phrase;
 pub mod template;
 

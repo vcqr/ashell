@@ -14,6 +14,7 @@ import {
   NGi,
   NTabs,
   NTabPane,
+  useMessage,
   type FormInst,
   type FormRules,
   type SelectOption,
@@ -23,6 +24,8 @@ import { useI18n } from "vue-i18n"
 import { invoke } from "@tauri-apps/api/core"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
+import { getOpPasswordStatus, revealCredentials } from "@/api/security"
+import OpPasswordModal from "@/components/OpPasswordModal.vue"
 import type { Host, HostCreate, HostUpdate, Group, HostProtocol } from "@/types"
 
 const props = defineProps<{
@@ -290,6 +293,49 @@ async function submit() {
 function cancel() {
   emit("cancel")
 }
+
+/* ---------- 查看加密凭证（操作密码保护） ---------- */
+const message = useMessage()
+const opModalShow = ref(false)
+const opModalMode = ref<"verify" | "setup">("verify")
+const revealTarget = ref<"password" | "private_key">("password")
+
+const isEditableHost = computed(() => props.mode === "edit" && !!props.initial?.id)
+
+async function startReveal(field: "password" | "private_key") {
+  revealTarget.value = field
+  try {
+    const status = await getOpPasswordStatus()
+    if (status.set) {
+      opModalMode.value = "verify"
+    } else {
+      opModalMode.value = "setup"
+    }
+    opModalShow.value = true
+  } catch (e) {
+    message.error(String(e))
+  }
+}
+
+async function onOpPasswordVerified(password: string) {
+  if (!props.initial?.id) return
+  try {
+    const result = await revealCredentials(props.initial.id, password)
+    if (revealTarget.value === "password") {
+      form.password = result.password ?? ""
+    } else {
+      form.private_key = result.private_key ?? ""
+    }
+    message.success(t("hosts.form.security.revealed"))
+  } catch (e) {
+    message.error(t("hosts.form.security.revealFailed", { error: String(e) }))
+  }
+}
+
+function onOpPasswordDone() {
+  opModalMode.value = "verify"
+  opModalShow.value = true
+}
 </script>
 
 <template>
@@ -386,26 +432,36 @@ function cancel() {
               </NFormItem>
 
               <NFormItem :label="t('hosts.form.password')" path="password">
-                <NInput
-                  v-model:value="form.password"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="props.mode === 'edit' ? t('hosts.form.passwordPlaceholder') : t('hosts.form.passwordOptional')"
-                />
+                <NInputGroup>
+                  <NInput
+                    v-model:value="form.password"
+                    type="password"
+                    show-password-on="click"
+                    :placeholder="props.mode === 'edit' ? t('hosts.form.passwordPlaceholder') : t('hosts.form.passwordOptional')"
+                  />
+                  <NButton v-if="isEditableHost" quaternary @click="startReveal('password')">
+                    {{ t('hosts.form.security.reveal') }}
+                  </NButton>
+                </NInputGroup>
               </NFormItem>
 
               <template v-if="isSsh">
                 <NFormItem :label="t('hosts.form.privateKey')" path="private_key">
-                  <NInput
-                    v-model:value="form.private_key"
-                    type="textarea"
-                    :autosize="{ minRows: 3, maxRows: 6 }"
-                    :placeholder="
-                      props.mode === 'edit'
-                        ? t('hosts.form.privateKeyPlaceholder')
-                        : t('hosts.form.privateKeyOptional')
-                    "
-                  />
+                  <div class="private-key-wrap">
+                    <NInput
+                      v-model:value="form.private_key"
+                      type="textarea"
+                      :autosize="{ minRows: 3, maxRows: 6 }"
+                      :placeholder="
+                        props.mode === 'edit'
+                          ? t('hosts.form.privateKeyPlaceholder')
+                          : t('hosts.form.privateKeyOptional')
+                      "
+                    />
+                    <NButton v-if="isEditableHost" quaternary size="small" class="reveal-btn" @click="startReveal('private_key')">
+                      {{ t('hosts.form.security.reveal') }}
+                    </NButton>
+                  </div>
                 </NFormItem>
 
                 <NFormItem :label="t('hosts.form.privateKeyPath')" path="private_key_path">
@@ -560,6 +616,13 @@ function cancel() {
         {{ props.mode === "create" ? t("hosts.form.create") : t("hosts.form.save") }}
       </NButton>
     </NSpace>
+
+    <OpPasswordModal
+      v-model:show="opModalShow"
+      :mode="opModalMode"
+      @verified="onOpPasswordVerified"
+      @done="onOpPasswordDone"
+    />
   </NForm>
 </template>
 
@@ -602,5 +665,14 @@ function cancel() {
   font-size: 12px;
   color: var(--ashell-text-3, #999);
   line-height: 1.5;
+}
+.private-key-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.reveal-btn {
+  align-self: flex-start;
 }
 </style>

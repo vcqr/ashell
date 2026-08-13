@@ -10,6 +10,7 @@ export default {
     icons: "图标",
     startup: "启动",
     ai: "AI 助手",
+    security: "安全",
     about: "关于",
   },
   general: {
@@ -185,6 +186,18 @@ export default {
     brightMagenta: "亮品红",
     brightCyan: "亮青",
     brightWhite: "亮白",
+  },
+  security: {
+    title: "安全",
+    status: "操作密码",
+    statusSet: "已设置",
+    statusNotSet: "未设置",
+    setBtn: "设置",
+    changeBtn: "修改",
+    clearBtn: "清除",
+    clearTitle: "清除操作密码",
+    clearConfirm: "确定清除操作密码？清除后查看加密凭证将不再需要密码。",
+    hint: "操作密码用于保护主机加密的密码和私钥。设置后，在编辑主机时点击「查看」按钮需输入操作密码才能查看。",
   },
   about: {
     title: "关于 ASHELL",
