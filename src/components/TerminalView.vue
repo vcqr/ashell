@@ -942,9 +942,13 @@ onMounted(() => {
       disarmSudo()
     }
 
+    // 先发送输入到 WebSocket，再做命令建议等同步处理。
+    // onSuggestData 内部会同步执行 Trie 匹配 + Vue 响应式更新 + DOM 测量（getBoundingClientRect），
+    // 快速打字时这些同步操作阻塞主线程，导致浏览器合并/丢弃后续键盘事件，表现为丢字。
+    sendJson({ kind: "cmd", data })
+
     onSuggestData(data)
 
-    sendJson({ kind: "cmd", data })
     // 广播：当本 tab 是当前 source（且广播已激活）时，把同一份输入复制到所有 target tab。
     // 经 ws 注入而非 term.onData，所以不会触发目标 tab 的回环。
     if (broadcastStore.enabled) {

@@ -1,4 +1,4 @@
-import { computed, ref } from "vue"
+import { computed, onBeforeUnmount, ref } from "vue"
 import type { Ref } from "vue"
 import type { Terminal } from "@xterm/xterm"
 import {
@@ -319,7 +319,28 @@ export function useCommandSuggest(options: {
 
   // ---- 核心逻辑 ----
 
+  let suggestRaf: number | null = null
+
+  function cancelSuggestRaf() {
+    if (suggestRaf !== null) {
+      cancelAnimationFrame(suggestRaf)
+      suggestRaf = null
+    }
+  }
+
+  /**
+   * rAF 节流的建议刷新入口。快速打字时每帧只做一次 Trie 匹配 + DOM 定位，
+   * 避免每次按键都同步执行 matchCommands + getBoundingClientRect 阻塞主线程。
+   */
   function updateSuggestions() {
+    if (suggestRaf !== null) return
+    suggestRaf = requestAnimationFrame(() => {
+      suggestRaf = null
+      doUpdateSuggestions()
+    })
+  }
+
+  function doUpdateSuggestions() {
     if (!isEnabled()) {
       dismiss()
       return
@@ -349,6 +370,7 @@ export function useCommandSuggest(options: {
   }
 
   function dismiss() {
+    cancelSuggestRaf()
     suggestVisible.value = false
     allMatches.value = []
     selectedIndex.value = 0
@@ -616,6 +638,10 @@ export function useCommandSuggest(options: {
   function onMousedown() {
     dismiss()
   }
+
+  onBeforeUnmount(() => {
+    cancelSuggestRaf()
+  })
 
   return {
     suggestVisible,
