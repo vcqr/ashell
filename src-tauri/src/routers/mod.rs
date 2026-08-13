@@ -71,25 +71,16 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(handlers::host::delete),
         )
         // 从 ~/.ssh/config 导入主机
-        .route(
-            "/api/hosts/ssh-config",
-            get(handlers::host::ssh_config),
-        )
+        .route("/api/hosts/ssh-config", get(handlers::host::ssh_config))
         // 查看主机加密凭证（需操作密码验证）
-        .route(
-            "/api/hosts/{id}/reveal",
-            post(handlers::host::reveal),
-        )
+        .route("/api/hosts/{id}/reveal", post(handlers::host::reveal))
         // SSH 终端 WebSocket
         .route(
             "/api/ssh/terminal/{host_id}",
             get(handlers::terminal::ws_handler),
         )
         // 本地 PTY 终端 WebSocket
-        .route(
-            "/api/local/terminal",
-            get(handlers::local::ws_handler),
-        )
+        .route("/api/local/terminal", get(handlers::local::ws_handler))
         // Telnet 终端 WebSocket
         .route(
             "/api/telnet/terminal/{host_id}",
@@ -114,10 +105,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/ssh/sftp/remove_file",
             post(handlers::sftp::remove_file),
         )
-        .route(
-            "/api/ssh/sftp/remove_dir",
-            post(handlers::sftp::remove_dir),
-        )
+        .route("/api/ssh/sftp/remove_dir", post(handlers::sftp::remove_dir))
         .route("/api/ssh/sftp/rename", post(handlers::sftp::rename))
         .route("/api/ssh/sftp/download", get(handlers::sftp::download))
         .route("/api/ssh/sftp/upload", post(handlers::sftp::upload))
@@ -179,8 +167,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/command-templates/{id}",
-            axum::routing::put(handlers::template::update)
-                .delete(handlers::template::delete),
+            axum::routing::put(handlers::template::update).delete(handlers::template::delete),
         )
         // 操作密码管理
         .route(
@@ -190,6 +177,21 @@ pub fn build_router(state: AppState) -> Router {
                 .put(handlers::op_password::change)
                 .delete(handlers::op_password::clear),
         )
+        // 备份与恢复（S3）
+        .route(
+            "/api/backup/config",
+            get(handlers::backup::get_config).put(handlers::backup::save_config),
+        )
+        .route("/api/backup/test", post(handlers::backup::test_connection))
+        .route("/api/backup/create", post(handlers::backup::create_backup))
+        .route("/api/backup/export", post(handlers::backup::export_backup))
+        .route("/api/backup/list", get(handlers::backup::list_backups))
+        .route(
+            "/api/backup/restore",
+            post(handlers::backup::restore_backup),
+        )
+        .route("/api/backup/import", post(handlers::backup::import_backup))
+        .route("/api/backup/delete", post(handlers::backup::delete_backup))
         // 上传体积上限放在 Router 级别（避免 MethodRouter::layer 类型推导歧义）
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT))

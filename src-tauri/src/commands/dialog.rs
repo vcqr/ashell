@@ -74,3 +74,29 @@ pub async fn pick_private_key_file(app: tauri::AppHandle) -> Result<Option<Strin
         .map_err(|e| format!("dialog channel closed: {e}"))?;
     Ok(chosen.map(|p| p.to_string_lossy().into_owned()))
 }
+
+/// 弹出系统"打开文件"对话框选择 JSON 文件，读取内容并返回。
+/// 用户取消时返回 None。
+#[tauri::command]
+pub async fn open_text_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use std::sync::mpsc;
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = mpsc::channel::<Option<std::path::PathBuf>>();
+    app.dialog()
+        .file()
+        .add_filter("JSON", &["json"])
+        .pick_file(move |path| {
+            let pb = path.and_then(|p| p.into_path().ok());
+            let _ = tx.send(pb);
+        });
+    let chosen = rx
+        .recv()
+        .map_err(|e| format!("dialog channel closed: {e}"))?;
+    let Some(path) = chosen else {
+        return Ok(None);
+    };
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read {}: {e}", path.display()))?;
+    Ok(Some(content))
+}

@@ -13,6 +13,7 @@ pub mod ai_provider;
 pub mod op_password;
 pub mod phrase;
 pub mod template;
+pub mod backup;
 
 use std::sync::Arc;
 

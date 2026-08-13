@@ -12,10 +12,21 @@ import WindowSection from "./WindowSection.vue";
 import AiSection from "./AiSection.vue";
 import SecuritySection from "./SecuritySection.vue";
 import AboutSection from "./AboutSection.vue";
+import BackupSection from "./BackupSection.vue";
 
 type ThemeMode = "system" | "dark" | "light";
 type ResolvedTheme = "dark" | "light";
-type SettingsTab = "general" | "theme" | "terminal" | "window" | "icons" | "startup" | "ai" | "security" | "about";
+type SettingsTab =
+  | "general"
+  | "theme"
+  | "terminal"
+  | "window"
+  | "icons"
+  | "startup"
+  | "ai"
+  | "backup"
+  | "security"
+  | "about";
 
 defineProps<{
   open: boolean;
@@ -38,10 +49,7 @@ function close() {
 </script>
 
 <template>
-  <NModal
-    :show="open"
-    @update:show="(v: boolean) => emit('update:open', v)"
-  >
+  <NModal :show="open" @update:show="(v: boolean) => emit('update:open', v)">
     <NCard
       style="width: min(900px, 88vw); height: min(680px, 84vh)"
       :title="t('settings.title')"
@@ -133,6 +141,14 @@ function close() {
           </button>
           <button
             class="settings-tab"
+            :class="{ active: activeTab === 'backup' }"
+            type="button"
+            @click="activeTab = 'backup'"
+          >
+            {{ t("settings.tabs.backup") }}
+          </button>
+          <button
+            class="settings-tab"
             :class="{ active: activeTab === 'about' }"
             type="button"
             @click="activeTab = 'about'"
@@ -156,6 +172,7 @@ function close() {
           <StartupSection v-else-if="activeTab === 'startup'" />
           <AiSection v-else-if="activeTab === 'ai'" />
           <SecuritySection v-else-if="activeTab === 'security'" />
+          <BackupSection v-else-if="activeTab === 'backup'" />
           <AboutSection v-else-if="activeTab === 'about'" />
         </div>
       </div>
