@@ -6,6 +6,7 @@ import {
   NInput,
   NInputGroup,
   NInputNumber,
+  NIcon,
   NSelect,
   NColorPicker,
   NButton,
@@ -20,6 +21,7 @@ import {
   type SelectOption,
   type SelectRenderTag,
 } from "naive-ui"
+import { EyeOutline, EyeOffOutline } from "@vicons/ionicons5"
 import { useI18n } from "vue-i18n"
 import { invoke } from "@tauri-apps/api/core"
 import { useHostStore } from "@/stores/hosts"
@@ -99,6 +101,8 @@ watch(
   () => [props.initial, props.defaultGid, props.mode] as const,
   () => {
     Object.assign(form, makeInitial())
+    passwordRevealed.value = false
+    passwordVisible.value = false
   },
 )
 
@@ -299,6 +303,8 @@ const message = useMessage()
 const opModalShow = ref(false)
 const opModalMode = ref<"verify" | "setup">("verify")
 const revealTarget = ref<"password" | "private_key">("password")
+const passwordVisible = ref(false)
+const passwordRevealed = ref(false)
 
 const isEditableHost = computed(() => props.mode === "edit" && !!props.initial?.id)
 
@@ -317,12 +323,22 @@ async function startReveal(field: "password" | "private_key") {
   }
 }
 
+async function handlePasswordEyeClick() {
+  if (isEditableHost.value && !passwordRevealed.value && !form.password) {
+    await startReveal("password")
+  } else {
+    passwordVisible.value = !passwordVisible.value
+  }
+}
+
 async function onOpPasswordVerified(password: string) {
   if (!props.initial?.id) return
   try {
     const result = await revealCredentials(props.initial.id, password)
     if (revealTarget.value === "password") {
       form.password = result.password ?? ""
+      passwordRevealed.value = true
+      passwordVisible.value = true
     } else {
       form.private_key = result.private_key ?? ""
     }
@@ -432,17 +448,21 @@ function onOpPasswordDone() {
               </NFormItem>
 
               <NFormItem :label="t('hosts.form.password')" path="password">
-                <NInputGroup>
-                  <NInput
-                    v-model:value="form.password"
-                    type="password"
-                    show-password-on="click"
-                    :placeholder="props.mode === 'edit' ? t('hosts.form.passwordPlaceholder') : t('hosts.form.passwordOptional')"
-                  />
-                  <NButton v-if="isEditableHost" quaternary @click="startReveal('password')">
-                    {{ t('hosts.form.security.reveal') }}
-                  </NButton>
-                </NInputGroup>
+                <NInput
+                  v-model:value="form.password"
+                  :type="isEditableHost ? (passwordVisible ? 'text' : 'password') : 'password'"
+                  :show-password-on="isEditableHost ? undefined : 'click'"
+                  :placeholder="props.mode === 'edit' ? t('hosts.form.passwordPlaceholder') : t('hosts.form.passwordOptional')"
+                >
+                  <template v-if="isEditableHost" #suffix>
+                    <div class="eye-toggle" @click="handlePasswordEyeClick">
+                      <NIcon :size="18">
+                        <EyeOffOutline v-if="passwordVisible" />
+                        <EyeOutline v-else />
+                      </NIcon>
+                    </div>
+                  </template>
+                </NInput>
               </NFormItem>
 
               <template v-if="isSsh">
@@ -458,9 +478,11 @@ function onOpPasswordDone() {
                           : t('hosts.form.privateKeyOptional')
                       "
                     />
-                    <NButton v-if="isEditableHost" quaternary size="small" class="reveal-btn" @click="startReveal('private_key')">
-                      {{ t('hosts.form.security.reveal') }}
-                    </NButton>
+                    <div v-if="isEditableHost" class="private-key-eye" @click="startReveal('private_key')">
+                      <NIcon :size="16">
+                        <EyeOutline />
+                      </NIcon>
+                    </div>
                   </div>
                 </NFormItem>
 
@@ -668,11 +690,34 @@ function onOpPasswordDone() {
 }
 .private-key-wrap {
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  position: relative;
 }
-.reveal-btn {
-  align-self: flex-start;
+.private-key-eye {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--ashell-text-3, #999);
+  transition: color 0.2s, background 0.2s;
+}
+.private-key-eye:hover {
+  color: inherit;
+  background: rgba(127, 127, 127, 0.12);
+}
+.eye-toggle {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  color: var(--ashell-text-3, #999);
+  transition: color 0.2s;
+}
+.eye-toggle:hover {
+  color: inherit;
 }
 </style>

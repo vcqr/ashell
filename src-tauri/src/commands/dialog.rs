@@ -64,7 +64,6 @@ pub async fn pick_private_key_file(app: tauri::AppHandle) -> Result<Option<Strin
     let (tx, rx) = mpsc::channel::<Option<std::path::PathBuf>>();
     app.dialog()
         .file()
-        .add_filter("私钥", &["pem", "key", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"])
         .pick_file(move |path| {
             let pb = path.and_then(|p| p.into_path().ok());
             let _ = tx.send(pb);
