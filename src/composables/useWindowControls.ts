@@ -100,22 +100,11 @@ export function useWindowControls(
     appWindow.close();
   }
 
-  function onHeaderDblClick(e: MouseEvent) {
-    const header = e.currentTarget as HTMLElement;
-    let el = e.target as HTMLElement | null;
-    while (el && el !== header) {
-      if (el.dataset.tauriDragRegion === "false") return;
-      el = el.parentElement;
-    }
-    void toggleMaximize();
-  }
-
   return {
     isMaximized,
     isMac,
     minimizeWindow,
     toggleMaximize,
     closeWindow,
-    onHeaderDblClick,
   };
 }
