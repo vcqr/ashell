@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.10",
+    "@earendil-works/pi-coding-agent": "^0.84.1",
     "dotenv": "^17.4.2"
   }
 }
