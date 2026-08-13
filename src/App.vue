@@ -439,6 +439,7 @@ const {
     var(--ashell-header-start) 0%,
     var(--ashell-header-end) 100%
   );
+  border-bottom: 1px solid var(--ashell-border);
   z-index: 10;
 }
 
