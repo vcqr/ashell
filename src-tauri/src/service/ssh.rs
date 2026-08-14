@@ -20,8 +20,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, mpsc};
 
 use crate::errors::{AppError, AppResult};
-use crate::models::Host;
+use crate::models::{DbPool, Host};
 use crate::service::forward as forward_svc;
+use crate::service::host as host_svc;
 use crate::service::sftp as sftp_svc;
 
 static SSH_CLIENT_MAP: Lazy<RwLock<HashMap<String, Arc<Session>>>> =
@@ -120,18 +121,89 @@ impl Handler for ClientHandler {
 pub struct Session {
     handle: AsyncMutex<Handle<ClientHandler>>,
     sid_slot: Arc<AsyncMutex<Option<String>>>,
+    /// 跳板机会话：目标连接建立在其 direct-tcpip 通道之上，
+    /// 必须与目标会话同生命周期（断开目标后一并断开）
+    jump: Option<Box<Session>>,
 }
 
 impl Session {
-    /// 通过主机配置（凭证已解密）建立 SSH 连接
-    pub async fn connect(host: &Host) -> AppResult<Self> {
+    /// 通过主机配置（凭证已解密）建立 SSH 连接。
+    ///
+    /// 若配置了 `jump_host_id`：先连接跳板机，在其上开 direct-tcpip 通道
+    /// 隧道到目标机，再在隧道上完成目标机的 SSH 握手（仅支持一级跳板）。
+    pub async fn connect(pool: &DbPool, crypto_key: &[u8; 32], host: &Host) -> AppResult<Self> {
+        let Some(jump_id) = host.jump_host_id else {
+            return Self::connect_direct(host).await;
+        };
+
+        let jump_host = host_svc::get_with_credentials(pool, crypto_key, jump_id)
+            .await
+            .map_err(|e| AppError::Ssh(format!("load jump host {jump_id}: {e}")))?;
+        if jump_host.protocol != "ssh" {
+            return Err(AppError::Ssh("jump host must use SSH protocol".into()));
+        }
+
+        let jump_sess = Self::connect_direct(&jump_host)
+            .await
+            .map_err(|e| AppError::Ssh(format!("jump host connect: {e}")))?;
+
+        let port: u16 = host
+            .port
+            .parse()
+            .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
+        let channel = jump_sess
+            .channel_open_direct_tcpip(&host.addr, port, "127.0.0.1", 0)
+            .await
+            .map_err(|e| AppError::Ssh(format!("jump host direct_tcpip: {e}")))?;
+
+        let mut sess = Self::connect_stream(host, channel.into_stream()).await?;
+        sess.jump = Some(Box::new(jump_sess));
+        Ok(sess)
+    }
+
+    /// 直接 TCP 连接目标主机
+    async fn connect_direct(host: &Host) -> AppResult<Self> {
         let port: u16 = host
             .port
             .parse()
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
         let addr = (host.addr.as_str(), port);
 
-        let config = Arc::new(client::Config {
+        let (handler, sid_slot) = ClientHandler::new();
+        let mut handle = client::connect(Self::build_config(host), addr, handler)
+            .await
+            .map_err(|e| AppError::Ssh(format!("connect: {e}")))?;
+
+        Self::authenticate(&mut handle, host).await?;
+
+        Ok(Self {
+            handle: AsyncMutex::new(handle),
+            sid_slot,
+            jump: None,
+        })
+    }
+
+    /// 在已有流上完成 SSH 握手（跳板机 direct-tcpip 通道）
+    async fn connect_stream<R>(host: &Host, stream: R) -> AppResult<Self>
+    where
+        R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        let (handler, sid_slot) = ClientHandler::new();
+        let mut handle = client::connect_stream(Self::build_config(host), stream, handler)
+            .await
+            .map_err(|e| AppError::Ssh(format!("connect via jump host: {e}")))?;
+
+        Self::authenticate(&mut handle, host).await?;
+
+        Ok(Self {
+            handle: AsyncMutex::new(handle),
+            sid_slot,
+            jump: None,
+        })
+    }
+
+    fn build_config(host: &Host) -> Arc<client::Config> {
+        Arc::new(client::Config {
             keepalive_interval: host
                 .keepalive_interval
                 .filter(|&v| v > 0)
@@ -143,13 +215,11 @@ impl Session {
                 .map(|v| Duration::from_secs(v as u64))
                 .or(Some(Duration::from_secs(120))),
             ..Default::default()
-        });
+        })
+    }
 
-        let (handler, sid_slot) = ClientHandler::new();
-        let mut handle = client::connect(config, addr, handler)
-            .await
-            .map_err(|e| AppError::Ssh(format!("connect: {e}")))?;
-
+    /// 密码 / 私钥认证（先密码后私钥），失败返回错误
+    async fn authenticate(handle: &mut Handle<ClientHandler>, host: &Host) -> AppResult<()> {
         // 优先使用密码认证（行为与 demo 保持一致）
         let mut authed = false;
         if let Some(pwd) = host.password.as_deref() {
@@ -205,11 +275,7 @@ impl Session {
         if !authed {
             return Err(AppError::Ssh("authentication failed".into()));
         }
-
-        Ok(Self {
-            handle: AsyncMutex::new(handle),
-            sid_slot,
-        })
+        Ok(())
     }
 
     /// 把 sid 写入 client handler，使后续远程转发回连能路由到本会话
@@ -345,6 +411,10 @@ impl Session {
             .await
             .disconnect(Disconnect::ByApplication, "bye", "en")
             .await;
+        if let Some(jump) = &self.jump {
+            // Box::pin 打断递归 future（jump 实际只有一层）
+            Box::pin(jump.disconnect()).await;
+        }
     }
 }
 

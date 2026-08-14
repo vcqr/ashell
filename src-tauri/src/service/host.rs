@@ -46,12 +46,22 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
         }
     }
 
+    // 跳板机仅对 SSH 协议有意义
+    let jump_host_id = if protocol == "ssh" {
+        input.jump_host_id
+    } else {
+        None
+    };
+    if let Some(jump_id) = jump_host_id {
+        validate_jump_host(pool, jump_id, None).await?;
+    }
+
     let password_enc = enc_opt(key, input.password.as_deref())?;
     let pk_enc = enc_opt(key, input.private_key.as_deref())?;
 
     let res = sqlx::query(
-        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval, jump_host_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(input.gid)
     .bind(&input.name)
@@ -73,10 +83,30 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     .bind(input.keepalive_interval)
     .bind(input.inactivity_timeout)
     .bind(input.idle_send_interval)
+    .bind(jump_host_id)
     .execute(pool)
     .await?;
 
     get_by_id(pool, res.last_insert_rowid()).await
+}
+
+/// 校验跳板机引用：必须存在、必须是 SSH 主机、不允许多级跳、不能指向自己
+async fn validate_jump_host(pool: &DbPool, jump_id: i64, self_id: Option<i64>) -> AppResult<()> {
+    if Some(jump_id) == self_id {
+        return Err(AppError::BadRequest("跳板机不能是主机自身".into()));
+    }
+    let jump = get_by_id(pool, jump_id).await.map_err(|_| {
+        AppError::BadRequest(format!("跳板机主机不存在: {jump_id}"))
+    })?;
+    if jump.protocol != "ssh" {
+        return Err(AppError::BadRequest("跳板机必须是 SSH 主机".into()));
+    }
+    if jump.jump_host_id.is_some() {
+        return Err(AppError::BadRequest(
+            "暂不支持多级跳板：所选跳板机自身也配置了跳板机".into(),
+        ));
+    }
+    Ok(())
 }
 
 async fn ensure_group_exists(pool: &DbPool, gid: i64) -> AppResult<()> {
@@ -150,6 +180,7 @@ pub async fn list_with_group(
                h.password, h.desc, h.is_del, h.private_key, h.private_key_path,
                h.protocol, h.baud_rate, h.data_bits, h.stop_bits, h.parity, h.flow_control,
                h.keepalive_interval, h.inactivity_timeout, h.idle_send_interval,
+               h.jump_host_id,
                h.created_at, h.updated_at,
                g.name AS group_name, g.parent_id AS parent_gid
         FROM hosts h
@@ -219,6 +250,23 @@ pub async fn update(
     let new_inactivity_timeout = input.inactivity_timeout.or(cur.inactivity_timeout);
     let new_idle_send_interval = input.idle_send_interval.or(cur.idle_send_interval);
 
+    // 双层 Option：None = 不修改；Some(None) = 清除；Some(Some(id)) = 设置
+    let new_jump_host_id = match input.jump_host_id {
+        Some(v) => v,
+        None => cur.jump_host_id,
+    };
+    if new_protocol == "ssh" {
+        if let Some(jump_id) = new_jump_host_id {
+            validate_jump_host(pool, jump_id, Some(id)).await?;
+        }
+    }
+    // 非 SSH 协议强制清除跳板机配置
+    let new_jump_host_id = if new_protocol == "ssh" {
+        new_jump_host_id
+    } else {
+        None
+    };
+
     if let Some(path) = new_private_key_path.as_deref() {
         if !path.is_empty() {
             ensure_private_key_path(path)?;
@@ -231,6 +279,7 @@ pub async fn update(
                password = ?, desc = ?, private_key = ?, private_key_path = ?,
                protocol = ?, baud_rate = ?, data_bits = ?, stop_bits = ?, parity = ?, flow_control = ?,
                keepalive_interval = ?, inactivity_timeout = ?, idle_send_interval = ?,
+               jump_host_id = ?,
                updated_at = datetime('now')
            WHERE id = ?"#,
     )
@@ -254,6 +303,7 @@ pub async fn update(
     .bind(new_keepalive_interval)
     .bind(new_inactivity_timeout)
     .bind(new_idle_send_interval)
+    .bind(new_jump_host_id)
     .bind(id)
     .execute(pool)
     .await?;
@@ -262,6 +312,18 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &DbPool, id: i64) -> AppResult<()> {
+    // 被其他主机作为跳板机引用时禁止删除，避免引用方连接时才报错
+    let refs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM hosts WHERE jump_host_id = ? AND is_del = 0")
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+    if refs > 0 {
+        return Err(AppError::BadRequest(format!(
+            "该主机被 {refs} 台主机作为跳板机引用，请先解除引用再删除"
+        )));
+    }
+
     let res = sqlx::query(
         "UPDATE hosts SET is_del = 1, updated_at = datetime('now') WHERE id = ? AND is_del = 0",
     )

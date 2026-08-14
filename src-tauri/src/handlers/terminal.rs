@@ -222,8 +222,8 @@ async fn run_terminal(
         .await
         .map_err(|e| anyhow::anyhow!("load host: {e}"))?;
 
-    // 2) 建立 SSH session 并注册到全局
-    let session = Session::connect(&host)
+    // 2) 建立 SSH session 并注册到全局（配置了跳板机时内部自动双跳）
+    let session = Session::connect(&state.db, &state.config.crypto_key, &host)
         .await
         .map_err(|e| anyhow::anyhow!("ssh connect: {e}"))?;
     let session_arc = Arc::new(session);

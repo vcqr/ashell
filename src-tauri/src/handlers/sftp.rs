@@ -50,7 +50,8 @@ pub async fn open(
     let host =
         service::host::get_with_credentials(&state.db, &state.config.crypto_key, req.host_id)
             .await?;
-    let session = ssh_svc::Session::connect(&host).await?;
+    let session =
+        ssh_svc::Session::connect(&state.db, &state.config.crypto_key, &host).await?;
     let session_arc = Arc::new(session);
     ssh_svc::set_client(sid.clone(), session_arc.clone()).await;
     session_arc.open_sftp(&sid).await?;

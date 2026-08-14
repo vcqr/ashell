@@ -302,5 +302,17 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v9: hosts 增加跳板机引用（指向另一台 SSH 主机的 id，仅支持一级）
+    if current < 9 {
+        sqlx::query("ALTER TABLE hosts ADD COLUMN jump_host_id INTEGER")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (9)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }

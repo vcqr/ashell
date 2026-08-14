@@ -70,6 +70,8 @@ pub struct Host {
     pub inactivity_timeout: Option<i64>,
     /// 终端 idle 时定时发送空字符的间隔（秒），0 或 null 表示不发送
     pub idle_send_interval: Option<i64>,
+    /// 跳板机主机 id（仅 SSH；连接时先连该主机再经 direct-tcpip 转发到目标，仅支持一级）
+    pub jump_host_id: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -97,6 +99,7 @@ pub struct HostCreate {
     pub keepalive_interval: Option<i64>,
     pub inactivity_timeout: Option<i64>,
     pub idle_send_interval: Option<i64>,
+    pub jump_host_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +124,8 @@ pub struct HostUpdate {
     pub keepalive_interval: Option<i64>,
     pub inactivity_timeout: Option<i64>,
     pub idle_send_interval: Option<i64>,
+    /// 双层 Option：缺省 = 不修改；显式 null = 清除；数值 = 设置
+    pub jump_host_id: Option<Option<i64>>,
 }
 
 /// 列表联表 DTO：包含 host 全字段 + 所属 group 名称 / 上级 gid
@@ -151,6 +156,7 @@ pub struct HostWithGroup {
     pub keepalive_interval: Option<i64>,
     pub inactivity_timeout: Option<i64>,
     pub idle_send_interval: Option<i64>,
+    pub jump_host_id: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub group_name: Option<String>,

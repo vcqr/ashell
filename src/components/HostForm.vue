@@ -27,6 +27,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
 import { getOpPasswordStatus, revealCredentials } from "@/api/security"
+import { listHosts } from "@/api/hosts"
 import OpPasswordModal from "@/components/OpPasswordModal.vue"
 import type { Host, HostCreate, HostUpdate, Group, HostProtocol } from "@/types"
 
@@ -67,6 +68,7 @@ interface FormState {
   keepalive_interval: number | null
   inactivity_timeout: number | null
   idle_send_interval: number | null
+  jump_host_id: number | null
 }
 
 function makeInitial(): FormState {
@@ -92,6 +94,7 @@ function makeInitial(): FormState {
     keepalive_interval: init?.keepalive_interval ?? null,
     inactivity_timeout: init?.inactivity_timeout ?? null,
     idle_send_interval: init?.idle_send_interval ?? null,
+    jump_host_id: init?.jump_host_id ?? null,
   }
 }
 
@@ -122,8 +125,30 @@ const groupOptions = computed<SelectOption[]>(() => {
 /* ---------- 图标选项（来自 ~/.ashell/icons/） ---------- */
 const iconStore = useIconStore()
 
+/* ---------- 跳板机候选（仅 SSH 主机；自身及已配置跳板机的主机不可选） ---------- */
+const allHosts = ref<Host[]>([])
+
+async function loadJumpCandidates() {
+  try {
+    allHosts.value = await listHosts()
+  } catch {
+    allHosts.value = []
+  }
+}
+
 onMounted(() => {
   void iconStore.ensureLoaded()
+  void loadJumpCandidates()
+})
+
+const jumpOptions = computed<SelectOption[]>(() => {
+  const selfId = props.initial?.id
+  return allHosts.value
+    .filter((h) => h.protocol === "ssh" && h.id !== selfId && h.jump_host_id == null)
+    .map((h) => ({
+      label: `${h.name} (${h.username}@${h.addr})`,
+      value: h.id,
+    }))
 })
 
 const iconOptions = computed<SelectOption[]>(() => {
@@ -265,6 +290,7 @@ async function submit() {
       keepalive_interval: form.keepalive_interval,
       inactivity_timeout: form.inactivity_timeout,
       idle_send_interval: form.idle_send_interval,
+      jump_host_id: isSsh.value ? form.jump_host_id : null,
     }
     emit("submit", payload)
   } else {
@@ -286,6 +312,8 @@ async function submit() {
       keepalive_interval: form.keepalive_interval,
       inactivity_timeout: form.inactivity_timeout,
       idle_send_interval: form.idle_send_interval,
+      // 显式 null = 清除跳板机配置
+      jump_host_id: isSsh.value ? form.jump_host_id : null,
     }
     if (form.password.length > 0) payload.password = form.password
     if (form.private_key.length > 0) payload.private_key = form.private_key
@@ -627,6 +655,19 @@ function onOpPasswordDone() {
               <p class="form-field-hint">{{ t('hosts.form.inactivityTimeoutDesc') }}</p>
               <p class="form-field-hint">{{ t('hosts.form.idleSendIntervalDesc') }}</p>
             </div>
+          </NTabPane>
+
+          <NTabPane v-if="isSsh" :tab="t('hosts.form.tabJump')" name="jump">
+            <NFormItem :label="t('hosts.form.jumpHost')" path="jump_host_id">
+              <NSelect
+                v-model:value="form.jump_host_id"
+                :options="jumpOptions"
+                filterable
+                clearable
+                :placeholder="t('hosts.form.jumpHostPlaceholder')"
+              />
+            </NFormItem>
+            <p class="form-field-hint">{{ t("hosts.form.jumpHostDesc") }}</p>
           </NTabPane>
         </NTabs>
       </div>
