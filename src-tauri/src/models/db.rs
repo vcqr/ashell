@@ -316,3 +316,185 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Row;
+
+    const LATEST_VERSION: i64 = 9;
+
+    async fn current_version(pool: &DbPool) -> i64 {
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn table_names(pool: &DbPool) -> Vec<String> {
+        let rows = sqlx::query(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.iter().map(|r| r.get::<String, _>("name")).collect()
+    }
+
+    #[tokio::test]
+    async fn fresh_db_migrates_to_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("fresh.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        assert_eq!(current_version(&pool).await, LATEST_VERSION);
+
+        let tables = table_names(&pool).await;
+        for expected in [
+            "groups",
+            "hosts",
+            "ai_providers",
+            "ai_engines",
+            "app_settings",
+            "quick_phrases",
+            "command_templates",
+            "schema_version",
+        ] {
+            assert!(tables.contains(&expected.to_string()), "missing table {expected}");
+        }
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn migration_is_idempotent_and_keeps_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("idempotent.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO groups (parent_id, name, path, level) VALUES (0, 'prod', '/', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 释放连接后对同一文件再次 init：迁移不应重复执行，数据必须保留
+        pool.close().await;
+        let pool2 = init_pool(&db_path).await.unwrap();
+
+        assert_eq!(current_version(&pool2).await, LATEST_VERSION);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM groups WHERE name = 'prod'")
+            .fetch_one(&pool2)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        pool2.close().await;
+    }
+
+    /// 模拟 v1 旧库（0.1.x 早期版本只建了 groups/hosts）升级到最新：
+    /// 既有主机数据不能丢，v2+ 新增列必须可用。
+    #[tokio::test]
+    async fn upgrade_from_v1_preserves_data_and_adds_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("legacy_v1.db");
+
+        {
+            let opts = SqliteConnectOptions::from_str(&format!(
+                "sqlite://{}",
+                db_path.to_string_lossy().replace('\\', "/")
+            ))
+            .unwrap()
+            .create_if_missing(true);
+            let legacy = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(opts)
+                .await
+                .unwrap();
+
+            // v1 的表结构（与 migrate 中 current < 1 分支一致）
+            sqlx::query(
+                r#"
+                CREATE TABLE groups (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    parent_id   INTEGER NOT NULL DEFAULT 0,
+                    name        TEXT NOT NULL,
+                    path        TEXT NOT NULL DEFAULT '/',
+                    level       INTEGER NOT NULL DEFAULT 0,
+                    is_del      INTEGER NOT NULL DEFAULT 0,
+                    created_at  TEXT DEFAULT (datetime('now')),
+                    updated_at  TEXT DEFAULT (datetime('now'))
+                );
+                CREATE TABLE hosts (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    gid         INTEGER NOT NULL DEFAULT 0,
+                    name        TEXT NOT NULL,
+                    icon        TEXT,
+                    color       TEXT,
+                    addr        TEXT NOT NULL,
+                    port        TEXT NOT NULL DEFAULT '22',
+                    username    TEXT NOT NULL,
+                    password    TEXT,
+                    desc        TEXT,
+                    is_del      INTEGER NOT NULL DEFAULT 0,
+                    private_key TEXT,
+                    created_at  TEXT DEFAULT (datetime('now')),
+                    updated_at  TEXT DEFAULT (datetime('now'))
+                );
+                CREATE TABLE schema_version (
+                    version     INTEGER PRIMARY KEY,
+                    applied_at  TEXT DEFAULT (datetime('now'))
+                );
+                INSERT INTO schema_version (version) VALUES (1);
+                "#,
+            )
+            .execute(&legacy)
+            .await
+            .unwrap();
+
+            sqlx::query(
+                "INSERT INTO hosts (gid, name, addr, port, username, password) \
+                 VALUES (0, 'legacy-host', '192.168.1.10', '22', 'admin', 'old-cipher')",
+            )
+            .execute(&legacy)
+            .await
+            .unwrap();
+
+            legacy.close().await;
+        }
+
+        // 跑完整迁移
+        let pool = init_pool(&db_path).await.unwrap();
+
+        assert_eq!(current_version(&pool).await, LATEST_VERSION);
+
+        // 旧数据完整保留
+        let row = sqlx::query("SELECT name, addr, username, password FROM hosts WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("name"), "legacy-host");
+        assert_eq!(row.get::<String, _>("addr"), "192.168.1.10");
+        assert_eq!(row.get::<String, _>("username"), "admin");
+        assert_eq!(row.get::<String, _>("password"), "old-cipher");
+
+        // v2+ 新增列可写（v2 private_key_path、v3 protocol、v9 jump_host_id）
+        sqlx::query(
+            "UPDATE hosts SET private_key_path = '/tmp/id_ed25519', protocol = 'ssh', \
+             jump_host_id = 3 WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let proto: String =
+            sqlx::query_scalar("SELECT protocol FROM hosts WHERE id = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(proto, "ssh");
+
+        pool.close().await;
+    }
+}

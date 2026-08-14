@@ -653,3 +653,203 @@ pub async fn import_backup(
 
     Ok(data.command_history)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models;
+
+    fn crypto_key_a() -> [u8; 32] {
+        [7u8; 32]
+    }
+
+    fn crypto_key_b() -> [u8; 32] {
+        // 模拟另一台设备：本地凭证密钥不同
+        [9u8; 32]
+    }
+
+    async fn setup_db(path: &std::path::Path) -> DbPool {
+        models::init_pool(path).await.expect("init pool")
+    }
+
+    async fn seed_data(pool: &DbPool, key: &[u8; 32]) {
+        sqlx::query("INSERT INTO groups (parent_id, name, path, level) VALUES (0, 'prod', '/', 0)")
+            .execute(pool)
+            .await
+            .unwrap();
+
+        let enc_pw = config::crypto::encrypt(key, "hunter2-密码").unwrap();
+        sqlx::query(
+            "INSERT INTO hosts (gid, name, addr, port, username, password) \
+             VALUES (1, 'web-1', '10.0.0.1', '22', 'root', ?)",
+        )
+        .bind(&enc_pw)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let enc_api = config::crypto::encrypt(key, "sk-test-123").unwrap();
+        sqlx::query(
+            "INSERT INTO ai_providers (id, name, api_type, base_url, api_key, model_ids) \
+             VALUES ('p1', 'OpenAI', 'openai-completions', 'https://api.example.com', ?, 'gpt-x')",
+        )
+        .bind(&enc_api)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO command_templates (title, command, description) \
+             VALUES ('磁盘', 'df -h', '查看磁盘')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn host_count(pool: &DbPool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM hosts")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// 库 A 导出 -> 库 B 导入：业务数据完整、凭证用库 B 的密钥重新加密、
+    /// 命令历史原样返回。这是"换机恢复"的完整链路。
+    #[tokio::test]
+    async fn export_import_roundtrip_across_devices() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool_a = setup_db(&dir.path().join("a.db")).await;
+        seed_data(&pool_a, &crypto_key_a()).await;
+
+        let exported = export_backup(
+            &pool_a,
+            &crypto_key_a(),
+            vec!["df -h".into(), "top".into()],
+            "backup-pass".into(),
+        )
+        .await
+        .unwrap();
+
+        // 导出内容不含明文凭证（只有密码加密后的封装）
+        assert!(!exported.contains("hunter2"));
+        assert!(!exported.contains("sk-test-123"));
+
+        // 另一台设备（不同的本地凭证密钥）导入
+        let pool_b = setup_db(&dir.path().join("b.db")).await;
+        let history = import_backup(&pool_b, &crypto_key_b(), &exported, "backup-pass")
+            .await
+            .unwrap();
+
+        assert_eq!(history, vec!["df -h".to_string(), "top".to_string()]);
+
+        // 业务数据完整
+        assert_eq!(host_count(&pool_b).await, 1);
+        let group_name: String =
+            sqlx::query_scalar("SELECT name FROM groups WHERE parent_id = 0")
+                .fetch_one(&pool_b)
+                .await
+                .unwrap();
+        assert_eq!(group_name, "prod");
+
+        // 凭证已用库 B 的密钥重新加密，且能解回原文
+        let stored_pw: String =
+            sqlx::query_scalar("SELECT password FROM hosts WHERE name = 'web-1'")
+                .fetch_one(&pool_b)
+                .await
+                .unwrap();
+        assert_ne!(stored_pw, "hunter2-密码");
+        assert_eq!(
+            config::crypto::decrypt(&crypto_key_b(), &stored_pw).unwrap(),
+            "hunter2-密码"
+        );
+
+        let stored_api: String =
+            sqlx::query_scalar("SELECT api_key FROM ai_providers WHERE id = 'p1'")
+                .fetch_one(&pool_b)
+                .await
+                .unwrap();
+        assert_eq!(
+            config::crypto::decrypt(&crypto_key_b(), &stored_api).unwrap(),
+            "sk-test-123"
+        );
+
+        pool_a.close().await;
+        pool_b.close().await;
+    }
+
+    /// 导入会先清空目标表：残留的旧数据必须被替换，而不是叠加。
+    #[tokio::test]
+    async fn import_replaces_existing_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool_a = setup_db(&dir.path().join("a.db")).await;
+        seed_data(&pool_a, &crypto_key_a()).await;
+        let exported = export_backup(&pool_a, &crypto_key_a(), Vec::new(), "pw".into())
+            .await
+            .unwrap();
+
+        let pool_b = setup_db(&dir.path().join("b.db")).await;
+        seed_data(&pool_b, &crypto_key_a()).await; // 目标库已有同名旧数据
+
+        import_backup(&pool_b, &crypto_key_a(), &exported, "pw")
+            .await
+            .unwrap();
+
+        assert_eq!(host_count(&pool_b).await, 1);
+
+        let groups: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM groups")
+            .fetch_one(&pool_b)
+            .await
+            .unwrap();
+        assert_eq!(groups, 1);
+
+        pool_a.close().await;
+        pool_b.close().await;
+    }
+
+    #[tokio::test]
+    async fn wrong_password_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = setup_db(&dir.path().join("a.db")).await;
+        seed_data(&pool, &crypto_key_a()).await;
+
+        let exported =
+            export_backup(&pool, &crypto_key_a(), Vec::new(), "correct-horse".into())
+                .await
+                .unwrap();
+
+        let pool_b = setup_db(&dir.path().join("b.db")).await;
+        let key = crypto_key_a();
+        let err = import_backup(&pool_b, &key, &exported, "wrong-pass");
+        assert!(err.await.is_err());
+
+        pool.close().await;
+        pool_b.close().await;
+    }
+
+    #[tokio::test]
+    async fn tampered_export_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = setup_db(&dir.path().join("a.db")).await;
+        let exported =
+            export_backup(&pool, &crypto_key_a(), Vec::new(), "pw".into())
+                .await
+                .unwrap();
+
+        // 篡改密文中间一个字符
+        let mut chars: Vec<char> = exported.chars().collect();
+        let mid = chars.len() / 2;
+        chars[mid] = if chars[mid] == 'A' { 'B' } else { 'A' };
+        let tampered: String = chars.into_iter().collect();
+
+        let pool_b = setup_db(&dir.path().join("b.db")).await;
+        assert!(
+            import_backup(&pool_b, &crypto_key_a(), &tampered, "pw")
+                .await
+                .is_err()
+        );
+
+        pool.close().await;
+        pool_b.close().await;
+    }
+}

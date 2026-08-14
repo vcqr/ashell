@@ -37,3 +37,70 @@ pub fn decrypt(key: &[u8; 32], encoded: &str) -> AppResult<String> {
         .map_err(|e| AppError::Crypto(e.to_string()))?;
     String::from_utf8(plain).map_err(|e| AppError::Crypto(e.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key_a() -> [u8; 32] {
+        [1u8; 32]
+    }
+
+    fn key_b() -> [u8; 32] {
+        [2u8; 32]
+    }
+
+    #[test]
+    fn roundtrip_plain_ascii() {
+        let ct = encrypt(&key_a(), "s3cret-password").unwrap();
+        assert_ne!(ct, "s3cret-password");
+        assert_eq!(decrypt(&key_a(), &ct).unwrap(), "s3cret-password");
+    }
+
+    #[test]
+    fn roundtrip_cjk_and_multiline() {
+        // 凭证可能含中文备注 / 多行私钥
+        let plain = "密码 p@ss\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc\ndef\n";
+        let ct = encrypt(&key_a(), plain).unwrap();
+        assert_eq!(decrypt(&key_a(), &ct).unwrap(), plain);
+    }
+
+    #[test]
+    fn roundtrip_empty_string() {
+        let ct = encrypt(&key_a(), "").unwrap();
+        assert_eq!(decrypt(&key_a(), &ct).unwrap(), "");
+    }
+
+    #[test]
+    fn nonce_is_random_per_encryption() {
+        // 同一明文两次加密应产生不同密文（随机 nonce），且都能解回
+        let a = encrypt(&key_a(), "same").unwrap();
+        let b = encrypt(&key_a(), "same").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(decrypt(&key_a(), &a).unwrap(), "same");
+        assert_eq!(decrypt(&key_a(), &b).unwrap(), "same");
+    }
+
+    #[test]
+    fn wrong_key_fails() {
+        let ct = encrypt(&key_a(), "secret").unwrap();
+        assert!(decrypt(&key_b(), &ct).is_err());
+    }
+
+    #[test]
+    fn tampered_ciphertext_fails() {
+        let ct = encrypt(&key_a(), "secret").unwrap();
+        let mut raw = B64.decode(ct.as_bytes()).unwrap();
+        let last = raw.len() - 1;
+        raw[last] ^= 0xFF;
+        let tampered = B64.encode(raw);
+        assert!(decrypt(&key_a(), &tampered).is_err());
+    }
+
+    #[test]
+    fn too_short_input_fails() {
+        let short = B64.encode([0u8; 8]);
+        assert!(decrypt(&key_a(), &short).is_err());
+        assert!(decrypt(&key_a(), "not-base64-!!!").is_err());
+    }
+}
