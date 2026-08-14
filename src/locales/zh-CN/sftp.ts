@@ -2,6 +2,7 @@ export default {
   title: "SFTP",
   needSession: "请先建立连接",
   dragToResize: "拖动调整宽度",
+  dropHint: "释放以上传到 {path}",
   refresh: "刷新",
   close: "关闭",
   goUp: "上一级",

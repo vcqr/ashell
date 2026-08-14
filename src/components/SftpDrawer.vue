@@ -433,17 +433,11 @@ function cancelDownload(id: string) {
 
 /* ---------- 上传 ---------- */
 
-async function customUpload(opts: UploadCustomRequestOptions) {
-  if (!props.sid) {
-    opts.onError()
-    return
-  }
+/** 上传单个文件到当前目录（含同名覆盖确认、任务进度条、取消）。
+ *  按钮上传与 OS 拖放共用此通道。返回是否实际完成上传。 */
+async function uploadOneFile(file: File): Promise<boolean> {
+  if (!props.sid) return false
   const sid = props.sid
-  const file = opts.file.file
-  if (!file) {
-    opts.onError()
-    return
-  }
   // 同名覆盖确认（与 demo 保持一致：基于当前目录已加载的文件列表判定）
   const exists = files.value.some(
     (f) => f.file_name.toLowerCase() === file.name.toLowerCase(),
@@ -461,10 +455,7 @@ async function customUpload(opts: UploadCustomRequestOptions) {
         onMaskClick: () => resolve(false),
       })
     })
-    if (!ok) {
-      opts.onError()
-      return
-    }
+    if (!ok) return false
   }
   const ctrl = new AbortController()
   const taskId = genId()
@@ -499,9 +490,9 @@ async function customUpload(opts: UploadCustomRequestOptions) {
       total: file.size,
       status: "done",
     })
-    opts.onFinish()
     message.success(t("sftp.message.uploaded", { name: file.name }))
     await load()
+    return true
   } catch (e) {
     if (isAbortError(e)) {
       store.updateUpload(sid, taskId, { status: "cancelled" })
@@ -510,6 +501,20 @@ async function customUpload(opts: UploadCustomRequestOptions) {
       store.updateUpload(sid, taskId, { status: "error", error: err.message })
       message.error(t("sftp.message.uploadFailed", { error: err.message }))
     }
+    return false
+  }
+}
+
+async function customUpload(opts: UploadCustomRequestOptions) {
+  const file = opts.file.file
+  if (!file) {
+    opts.onError()
+    return
+  }
+  const done = await uploadOneFile(file)
+  if (done) {
+    opts.onFinish()
+  } else {
     opts.onError()
   }
 }
@@ -685,6 +690,119 @@ async function uploadFolderEntries(entries: FolderEntry[]) {
   } else {
     message.warning(t("sftp.message.dirUploadPartial", { ok: okCount, fail: failCount }))
   }
+}
+
+/* ---------- OS 级拖放上传（从资源管理器 / Finder 拖入面板） ----------
+ * 窗口已关闭 dragDropEnabled（tauri.conf.json），HTML5 dnd 事件可用，
+ * drop 直接拿到 File 对象，复用与按钮上传完全相同的上传通道
+ * （uploadStream 的 XHR 进度 / 取消；文件夹复用 uploadFolderEntries）。 */
+
+const dropHover = ref(false)
+
+function onPanelDragOver(e: DragEvent) {
+  if (!props.open || !props.sid) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"
+  dropHover.value = true
+}
+
+function onPanelDragLeave() {
+  dropHover.value = false
+}
+
+async function onPanelDrop(e: DragEvent) {
+  e.preventDefault()
+  dropHover.value = false
+  if (!props.open || !props.sid) return
+  const dt = e.dataTransfer
+  if (!dt || dt.items.length === 0) return
+
+  const topFiles: File[] = []
+  const folders: { name: string; entries: FolderEntry[] }[] = []
+
+  for (let i = 0; i < dt.items.length; i++) {
+    const entry = dt.items[i]?.webkitGetAsEntry?.()
+    if (!entry) continue
+    if (entry.isFile) {
+      const file = await new Promise<File | null>((resolve) =>
+        (entry as FileSystemFileEntry).file(resolve, () => resolve(null)),
+      )
+      if (file) topFiles.push(file)
+    } else if (entry.isDirectory) {
+      const out: FolderEntry[] = []
+      await walkDropDirectory(entry as FileSystemDirectoryEntry, entry.name, out)
+      if (out.length > 0) folders.push({ name: entry.name, entries: out })
+    }
+  }
+
+  // 顶层文件：与按钮上传完全同一条通道（含覆盖确认、进度、取消）
+  for (const f of topFiles) {
+    await uploadOneFile(f)
+  }
+  // 文件夹：顶层同名确认后复用既有目录上传流程
+  for (const folder of folders) {
+    const exists = files.value.some(
+      (f) => f.file_name.toLowerCase() === folder.name.toLowerCase(),
+    )
+    if (exists) {
+      const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+          title: t("sftp.dialog.uploadOverwriteTitle"),
+          content: t("sftp.dialog.uploadOverwriteConfirm", { name: folder.name }),
+          positiveText: t("common.overwrite"),
+          negativeText: t("common.cancel"),
+          onPositiveClick: () => resolve(true),
+          onNegativeClick: () => resolve(false),
+          onClose: () => resolve(false),
+          onMaskClick: () => resolve(false),
+        })
+      })
+      if (!ok) continue
+    }
+    await uploadFolderEntries(folder.entries)
+  }
+  await load()
+}
+
+/** 遍历拖入的目录为 FolderEntry 列表（relPath 与 webkitdirectory 的 webkitRelativePath 同形） */
+async function walkDropDirectory(
+  dir: FileSystemDirectoryEntry,
+  prefix: string,
+  out: FolderEntry[],
+): Promise<void> {
+  const entries = await readAllDirectoryEntries(dir.createReader())
+  for (const ent of entries) {
+    const rel = `${prefix}/${ent.name}`
+    if (ent.isFile) {
+      const file = await new Promise<File | null>((resolve) =>
+        (ent as FileSystemFileEntry).file(resolve, () => resolve(null)),
+      )
+      if (file) out.push({ file, relPath: rel })
+    } else if (ent.isDirectory) {
+      await walkDropDirectory(ent as FileSystemDirectoryEntry, rel, out)
+    }
+  }
+}
+
+/** readEntries 单次最多返回 100 条，需循环读取直到返回空 */
+function readAllDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  return new Promise((resolve, reject) => {
+    const all: FileSystemEntry[] = []
+    const readBatch = () => {
+      reader.readEntries(
+        (batch) => {
+          if (batch.length === 0) {
+            resolve(all)
+            return
+          }
+          all.push(...batch)
+          readBatch()
+        },
+        (err) => reject(err),
+      )
+    }
+    readBatch()
+  })
 }
 
 /* ---------- 表格列 ---------- */
@@ -1134,12 +1252,25 @@ function onClose() {
       :class="{ open: props.open, resizing: resizing }"
       :style="panelStyle"
       :aria-hidden="!props.open"
+      @dragover="onPanelDragOver"
+      @dragleave="onPanelDragLeave"
+      @drop="onPanelDrop"
     >
       <div
         class="resize-handle"
         :title="t('common.dragToResize')"
         @pointerdown="onResizeStart"
       />
+
+      <!-- OS 拖放文件进入面板时的提示遮罩 -->
+      <div v-if="dropHover && props.sid" class="drop-overlay">
+        <div class="drop-overlay-inner">
+          <NIcon :size="28">
+            <CloudUploadOutline />
+          </NIcon>
+          <span>{{ t("sftp.dropHint", { path: currentPath }) }}</span>
+        </div>
+      </div>
 
       <header class="panel-header">
         <span class="drawer-title">{{ drawerTitle }}</span>
@@ -1498,6 +1629,31 @@ function onClose() {
 .resize-handle:hover,
 .sftp-panel.resizing .resize-handle {
   background: rgba(124, 92, 255, 0.45);
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(124, 92, 255, 0.08);
+  border: 2px dashed rgba(124, 92, 255, 0.7);
+  pointer-events: none;
+}
+
+.drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 24px;
+  border-radius: 8px;
+  background: var(--ashell-panel-bg);
+  color: var(--ashell-text-strong);
+  font-size: 13px;
+  box-shadow: 0 4px 16px var(--ashell-shadow);
 }
 
 .panel-header {
