@@ -62,6 +62,8 @@ export default {
   connectingCancelled: "Connection cancelled",
   sessionRestored: 'Session restored offline. Click "Reconnect" in the top-right to connect.',
   sessionClosed: 'Click "Reconnect" in the top-right to re-establish the session.',
+  autoReconnectWait: "Auto-reconnecting in {sec}s (attempt {n})…",
+  autoReconnected: "Auto-reconnected successfully.",
   sudoHint: 'Press Enter to auto-fill the saved password',
   commandSuggest: {
     learned: 'Learned',

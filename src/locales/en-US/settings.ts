@@ -71,6 +71,13 @@ export default {
       closeTab: "Auto-close tab",
       closeWindow: "Close window (only when last tab)",
     },
+    autoReconnect: "Auto-reconnect after unexpected disconnect",
+    autoReconnectHint:
+      'Retry with exponential backoff (starting at 1s, capped at 30s) after an unexpected drop — ideal for flaky networks and sleep/wake. Only meaningful with "Keep tab". Local terminals cannot reconnect.',
+    groupShortcuts: "Shortcuts",
+    tabShortcuts: "Tab shortcuts",
+    tabShortcutsHint:
+      "Ctrl/Cmd+T new terminal · Ctrl/Cmd+Shift+W close tab · Ctrl/Cmd(+Shift)+Tab switch tab · Cmd+1-9 (macOS) / Ctrl+Alt+1-9 (Windows/Linux) jump to tab",
     webgl: "WebGL rendering (smoother, lower CPU; auto-fallback when GPU unavailable)",
     webLinks: "Web link detection (open in system browser on click)",
     unicode11: "Unicode 11 character width (fixes some emoji / CJK widths)",

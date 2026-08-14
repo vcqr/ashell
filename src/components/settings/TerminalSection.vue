@@ -166,6 +166,16 @@ const disconnectOptions = computed(() => [
           :options="disconnectOptions"
         />
       </NFormItem>
+      <NFormItem :label="t('settings.terminal.autoReconnect')" style="margin-top: 12px">
+        <NSwitch v-model:value="terminalStore.autoReconnect" />
+      </NFormItem>
+      <p class="settings-hint">{{ t("settings.terminal.autoReconnectHint") }}</p>
+
+      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupShortcuts") }}</div>
+      <NFormItem :label="t('settings.terminal.tabShortcuts')" style="margin-top: 12px">
+        <NSwitch v-model:value="terminalStore.tabShortcutsEnabled" />
+      </NFormItem>
+      <p class="settings-hint">{{ t("settings.terminal.tabShortcutsHint") }}</p>
     </NForm>
     <div class="settings-section-title" style="margin-top: 16px">{{ t("settings.terminal.rendering") }}</div>
     <NForm
@@ -231,6 +241,13 @@ const disconnectOptions = computed(() => [
   font-size: 12px;
   font-weight: 500;
   color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.4));
+}
+
+.settings-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ashell-text-muted, #98a2b3);
+  line-height: 1.6;
 }
 
 .form-row {

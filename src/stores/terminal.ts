@@ -32,6 +32,8 @@ export interface TerminalConfig {
   progressEnabled: boolean
   commandSuggestEnabled: boolean
   scrollback: number
+  autoReconnect: boolean
+  tabShortcutsEnabled: boolean
 }
 
 const STORAGE_KEY = "ashell:terminal-config"
@@ -77,6 +79,8 @@ const DEFAULT_CONFIG: TerminalConfig = {
   progressEnabled: true,
   commandSuggestEnabled: true,
   scrollback: 5000,
+  autoReconnect: false,
+  tabShortcutsEnabled: true,
 }
 
 function clampFontSize(n: unknown): number {
@@ -169,6 +173,14 @@ function loadConfig(): TerminalConfig {
         parsed.scrollback >= 0
           ? Math.min(SCROLLBACK_MAX, Math.round(parsed.scrollback))
           : DEFAULT_CONFIG.scrollback,
+      autoReconnect:
+        typeof parsed.autoReconnect === "boolean"
+          ? parsed.autoReconnect
+          : DEFAULT_CONFIG.autoReconnect,
+      tabShortcutsEnabled:
+        typeof parsed.tabShortcutsEnabled === "boolean"
+          ? parsed.tabShortcutsEnabled
+          : DEFAULT_CONFIG.tabShortcutsEnabled,
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -196,6 +208,8 @@ export const useTerminalStore = defineStore("terminal", () => {
   const progressEnabled = ref<boolean>(initial.progressEnabled)
   const commandSuggestEnabled = ref<boolean>(initial.commandSuggestEnabled)
   const scrollback = ref<number>(initial.scrollback)
+  const autoReconnect = ref<boolean>(initial.autoReconnect)
+  const tabShortcutsEnabled = ref<boolean>(initial.tabShortcutsEnabled)
 
   /** 窗口透明度 (0.3 – 1.0)。1 = 完全不透明。控制 WebView 内容层 alpha。 */
   const WINDOW_OPACITY_KEY = "ashell:window-opacity"
@@ -348,6 +362,8 @@ export const useTerminalStore = defineStore("terminal", () => {
         progressEnabled: progressEnabled.value,
         commandSuggestEnabled: commandSuggestEnabled.value,
         scrollback: scrollback.value,
+        autoReconnect: autoReconnect.value,
+        tabShortcutsEnabled: tabShortcutsEnabled.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch {
@@ -372,6 +388,8 @@ export const useTerminalStore = defineStore("terminal", () => {
       progressEnabled,
       commandSuggestEnabled,
       scrollback,
+      autoReconnect,
+      tabShortcutsEnabled,
     ],
     persist,
   )
@@ -394,6 +412,8 @@ export const useTerminalStore = defineStore("terminal", () => {
     progressEnabled.value = DEFAULT_CONFIG.progressEnabled
     commandSuggestEnabled.value = DEFAULT_CONFIG.commandSuggestEnabled
     scrollback.value = DEFAULT_CONFIG.scrollback
+    autoReconnect.value = DEFAULT_CONFIG.autoReconnect
+    tabShortcutsEnabled.value = DEFAULT_CONFIG.tabShortcutsEnabled
     resetTerminalThemes()
   }
 
@@ -463,6 +483,8 @@ export const useTerminalStore = defineStore("terminal", () => {
     progressEnabled,
     commandSuggestEnabled,
     scrollback,
+    autoReconnect,
+    tabShortcutsEnabled,
     windowOpacity,
     setWindowOpacity,
     windowBlur,

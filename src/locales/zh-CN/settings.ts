@@ -71,6 +71,13 @@ export default {
       closeTab: "自动关闭标签页",
       closeWindow: "关闭窗口（仅最后一个标签页时）",
     },
+    autoReconnect: "断线后自动重连",
+    autoReconnectHint:
+      "意外断线后按指数退避自动重连（1s 起步、最长间隔 30s），适合网络抖动与睡眠唤醒场景；仅在\"保持标签页\"时有意义。本地终端不支持重连。",
+    groupShortcuts: "快捷键",
+    tabShortcuts: "标签页快捷键",
+    tabShortcutsHint:
+      "Ctrl/Cmd+T 新建终端 · Ctrl/Cmd+Shift+W 关闭标签 · Ctrl/Cmd(+Shift)+Tab 切换标签 · Cmd+1-9（macOS）/ Ctrl+Alt+1-9（Windows/Linux）跳转标签",
     webgl: "WebGL 渲染（更平滑、更省 CPU；GPU 不可用时自动回退）",
     webLinks: "网页链接识别（点击用系统浏览器打开）",
     unicode11: "Unicode 11 字符宽度（修正部分 emoji / CJK 宽度）",

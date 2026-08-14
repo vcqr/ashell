@@ -74,6 +74,8 @@ let ws: WebSocket | null = null
 let resizeObserver: ResizeObserver | null = null
 let themeObserver: MutationObserver | null = null
 let heartbeatTimer: number | null = null
+let reconnectTimer: number | null = null
+let reconnectAttempts = 0
 let disposed = false
 
 const { t, locale } = useI18n()
@@ -724,8 +726,44 @@ function onCompositionStart() {
   if (helper) queueMicrotask(() => helper.updateCompositionElements?.())
 }
 
+/** 自动重连退避上限（ms）。1s 起步指数退避：1s -> 2s -> 4s -> ... -> 30s 封顶。 */
+const AUTO_RECONNECT_MAX_DELAY = 30_000
+
+function cancelAutoReconnect() {
+  if (reconnectTimer !== null) {
+    window.clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+}
+
+/**
+ * 意外断线后安排自动重连。触发路径：
+ * - socket.onclose（网络断开 / 服务端关闭 / 连接失败后必然跟随 close）
+ * - connectWs 的建连失败分支（URL 构造失败、WebSocket 创建抛错）
+ *
+ * 不触发的路径：用户主动断开 / 关闭 tab / 手动重连（teardownWs 置空 onclose 且
+ * 取消定时器）；本地 PTY shell 正常退出（onclose 里直接关 tab）。
+ */
+function scheduleAutoReconnect() {
+  cancelAutoReconnect()
+  if (disposed) return
+  if (!termStore.autoReconnect) return
+  if (props.tab.kind === "local") return
+  reconnectAttempts += 1
+  const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), AUTO_RECONNECT_MAX_DELAY)
+  term?.writeln(
+    `\r\n\x1b[36m[ashell] ${t("terminal.autoReconnectWait", { sec: Math.round(delay / 1000), n: reconnectAttempts })}\x1b[0m`,
+  )
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null
+    if (disposed) return
+    void connectWs()
+  }, delay)
+}
+
 /** 断开当前 ws 并置空事件回调，避免被替换的旧连接再触发 onclose 副作用或写终端。 */
 function teardownWs() {
+  cancelAutoReconnect()
   if (!ws) return
   try {
     ws.onmessage = null
@@ -792,6 +830,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     term?.writeln(`\x1b[31m[ashell] failed to build ws url: ${String(e)}\x1b[0m`)
     setStatus("error")
     showReconnectBtn.value = true
+    scheduleAutoReconnect()
     return
   }
 
@@ -805,6 +844,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     term?.writeln(`\x1b[31m[ashell] failed to open ws: ${String(e)}\x1b[0m`)
     setStatus("error")
     showReconnectBtn.value = true
+    scheduleAutoReconnect()
     return
   }
   socket.binaryType = "arraybuffer"
@@ -827,6 +867,12 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         if (msg.kind === "ready" && typeof msg.sid === "string") {
           emit("sid-ready", props.tab.key, msg.sid)
           setStatus("connected")
+          // 自动重连成功：清计数并提示（首次连接不计）
+          if (reconnectAttempts > 0) {
+            term?.writeln(`\x1b[32m[ashell] ${t("terminal.autoReconnected")}\x1b[0m`)
+          }
+          reconnectAttempts = 0
+          cancelAutoReconnect()
           // 服务端可能采用了客户端建议的尺寸，确保再同步一次
           sendResize()
           startHeartbeat()
@@ -883,6 +929,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
       term.writeln(`\r\n\x1b[31m[ashell] connection closed (code=${ev.code})${reason}\x1b[0m`)
       term.writeln(`\x1b[33m[ashell] ${t("terminal.sessionClosed")}\x1b[0m`)
     }
+    scheduleAutoReconnect()
   }
 }
 
@@ -1031,6 +1078,7 @@ function cancelConnect() {
   disarmSudo()
   setStatus("closed")
   showReconnectBtn.value = true
+  reconnectAttempts = 0
   term?.writeln(`\r\n\x1b[33m[ashell] ${t("terminal.connectingCancelled")}\x1b[0m`)
 }
 
@@ -1041,6 +1089,7 @@ function disconnect() {
   disarmSudo()
   teardownWs()
   setStatus("closed")
+  reconnectAttempts = 0
   term?.writeln("\r\n\x1b[33m[ashell] disconnected by user\x1b[0m")
 }
 
@@ -1052,6 +1101,7 @@ async function reconnect() {
   resetTextProgress()
   disarmSudo()
   teardownWs()
+  reconnectAttempts = 0
   // 新会话需要再发一次 resize，重置去重状态
   lastSentCols = 0
   lastSentRows = 0
@@ -1161,6 +1211,7 @@ watch(
 onBeforeUnmount(() => {
   disposed = true
   clearHeartbeat()
+  cancelAutoReconnect()
   if (connectingOverlayTimer !== null) {
     window.clearTimeout(connectingOverlayTimer)
     connectingOverlayTimer = null

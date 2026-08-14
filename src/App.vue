@@ -47,6 +47,7 @@ import { useTheme } from "@/composables/useTheme";
 import { useTabs } from "@/composables/useTabs";
 import { usePanels } from "@/composables/usePanels";
 import { useWindowControls } from "@/composables/useWindowControls";
+import { useGlobalShortcuts } from "@/composables/useGlobalShortcuts";
 
 const apiStore = useApiStore();
 apiStore.init();
@@ -132,6 +133,8 @@ const {
   closeWindow,
   onHeaderDblClick,
 } = useWindowControls(terminalRefs, activeTabKey);
+
+useGlobalShortcuts({ isMac, tabs, activeTabKey, openLocal, closeTab });
 </script>
 
 <template>

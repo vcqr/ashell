@@ -62,6 +62,8 @@ export default {
   connectingCancelled: "连接已取消",
   sessionRestored: "会话已离线恢复，点击右上角\"重新连接\"按钮即可连接。",
   sessionClosed: "点击右上角\"重新连接\"按钮可重新建立会话。",
+  autoReconnectWait: "将在 {sec} 秒后自动重连（第 {n} 次尝试）…",
+  autoReconnected: "已自动重连成功。",
   sudoHint: "按回车键自动填充已保存的密码",
   commandSuggest: {
     learned: "已学习",
