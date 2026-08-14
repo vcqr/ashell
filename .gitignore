@@ -25,4 +25,5 @@ dist-ssr
 
 .qwen/
 .claude/
+QWEN.md
 demo/
