@@ -100,24 +100,14 @@ export function useWindowControls(
     appWindow.close();
   }
 
-  let wasMaximizedAtFirstClick = false;
-
-  function onHeaderMouseDown(e: MouseEvent) {
-    if (!isMac || e.button !== 0) return;
+  function onHeaderDblClick(e: MouseEvent) {
+    if (!isMac) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('[data-tauri-drag-region="false"]')) return;
-
-    if (e.detail === 1) {
-      wasMaximizedAtFirstClick = isMaximized.value;
-    } else if (e.detail >= 2) {
-      // 双击第二次 mousedown：阻止冒泡，防止 Tauri drag-region 脚本
-      // 再次调用 startDragging()，否则 macOS 会在窗口刚最大化后自动 un-zoom 还原
-      e.stopPropagation();
-      e.preventDefault();
-      if (!wasMaximizedAtFirstClick) {
-        void toggleMaximize();
-      }
-    }
+    // 阻止 Tauri drag-region 脚本的 dblclick 处理器（会调用 unmaximize），
+    // 由我们统一用 toggleMaximize 处理双向切换
+    e.stopPropagation();
+    void toggleMaximize();
   }
 
   return {
@@ -126,6 +116,6 @@ export function useWindowControls(
     minimizeWindow,
     toggleMaximize,
     closeWindow,
-    onHeaderMouseDown,
+    onHeaderDblClick,
   };
 }

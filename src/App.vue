@@ -130,7 +130,7 @@ const {
   minimizeWindow,
   toggleMaximize,
   closeWindow,
-  onHeaderMouseDown,
+  onHeaderDblClick,
 } = useWindowControls(terminalRefs, activeTabKey);
 </script>
 
@@ -155,7 +155,7 @@ const {
                 opacity: 'var(--ashell-wallpaper-opacity, 1)',
               }"
             />
-            <header class="app-header" data-tauri-drag-region @mousedown="onHeaderMouseDown">
+            <header class="app-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
               <div
                 v-if="isMac"
                 class="window-controls is-mac"
