@@ -17,9 +17,13 @@ pub struct AppConfig {
     pub token: String,
     /// 数据库文件路径
     pub db_path: PathBuf,
-    /// AES-GCM 加密密钥（32 字节，存放在 ~/.ashell/secret.key）
+    /// AES-GCM 加密密钥（32 字节，优先存 OS 钥匙串，降级存 ~/.ashell/secret.key）
     pub crypto_key: [u8; 32],
 }
+
+/// 钥匙串条目：service/user 定位唯一的加密密钥
+const KEYRING_SERVICE: &str = "ashell";
+const KEYRING_USER: &str = "crypto-key";
 
 static GLOBAL_CONFIG: OnceLock<AppConfig> = OnceLock::new();
 
@@ -60,14 +64,76 @@ pub fn wallpaper_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// 加载或生成本机加密密钥
+/// 钥匙串条目；平台无可用凭据存储（或初始化失败）时返回 None，走文件降级
+fn keyring_entry() -> Option<keyring::Entry> {
+    match keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+        Ok(entry) => Some(entry),
+        Err(e) => {
+            log::warn!("OS 钥匙串不可用（{e}），加密密钥将存储于文件");
+            None
+        }
+    }
+}
+
+fn key_to_keyring(entry: &keyring::Entry, key: &[u8; 32]) -> bool {
+    if let Err(e) = entry.set_password(&hex::encode(key)) {
+        log::warn!("写入 OS 钥匙串失败（{e}）");
+        return false;
+    }
+    true
+}
+
+/// 加载或生成本机加密密钥。
+///
+/// 存储优先级：OS 钥匙串（Windows 凭据管理器 / macOS Keychain / Linux Secret Service）
+/// → 旧版 ~/.ashell/secret.key（读到后自动迁入钥匙串并删除文件）
+/// → 文件降级（钥匙串不可用时新生成的密钥仍落盘）
 fn load_or_generate_crypto_key() -> Result<[u8; 32]> {
     let path = app_dir()?.join("secret.key");
+    let entry = keyring_entry();
+
+    // 1) 钥匙串已有密钥
+    if let Some(entry) = &entry {
+        match entry.get_password() {
+            Ok(hexed) => {
+                let bytes = hex::decode(hexed.trim()).ok();
+                if let Some(bytes) = bytes {
+                    if bytes.len() == 32 {
+                        let mut key = [0u8; 32];
+                        key.copy_from_slice(&bytes);
+                        return Ok(key);
+                    }
+                }
+                // 钥匙串内容损坏：重新生成并覆盖
+                log::error!("钥匙串中的加密密钥已损坏，重新生成。此前加密的凭证将无法解密");
+                let mut key = [0u8; 32];
+                rand::thread_rng().fill_bytes(&mut key);
+                if key_to_keyring(entry, &key) {
+                    return Ok(key);
+                }
+                // 覆盖写入失败则继续走文件路径
+            }
+            Err(keyring::Error::NoEntry) => {}
+            Err(e) => log::warn!("读取 OS 钥匙串失败（{e}），尝试文件密钥"),
+        }
+    }
+
+    // 2) 旧版文件密钥：迁移进钥匙串（成功后删除明文文件）
     if path.exists() {
         let raw = fs::read(&path).with_context(|| format!("读取 {:?} 失败", path))?;
         if raw.len() == 32 {
             let mut key = [0u8; 32];
             key.copy_from_slice(&raw);
+            match &entry {
+                Some(entry) if key_to_keyring(entry, &key) => {
+                    if let Err(e) = fs::remove_file(&path) {
+                        log::warn!("删除旧密钥文件 {:?} 失败（{e}），钥匙串与文件可能并存", path);
+                    } else {
+                        log::info!("加密密钥已迁移至 OS 钥匙串，旧 secret.key 已删除");
+                    }
+                }
+                _ => log::info!("钥匙串不可用，继续使用文件存储加密密钥"),
+            }
             return Ok(key);
         }
         // 密钥文件损坏：备份旧文件后重新生成，避免已有密文永久不可恢复时至少保留原始数据
@@ -79,13 +145,18 @@ fn load_or_generate_crypto_key() -> Result<[u8; 32]> {
         let bak = app_dir()?.join("secret.key.bak");
         let _ = fs::rename(&path, &bak);
     }
+
+    // 3) 全新生成：优先写钥匙串，否则落盘
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
-    fs::write(&path, key).with_context(|| format!("写入 {:?} 失败", path))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    let in_keyring = entry.as_ref().is_some_and(|e| key_to_keyring(e, &key));
+    if !in_keyring {
+        fs::write(&path, key).with_context(|| format!("写入 {:?} 失败", path))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
     }
     Ok(key)
 }

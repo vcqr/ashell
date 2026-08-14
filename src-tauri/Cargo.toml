@@ -75,6 +75,9 @@ base64 = "0.22"
 hex = "0.4"
 subtle = "2"
 
+# OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service)
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
 # System font enumeration
 font-kit = "0.14"
 
