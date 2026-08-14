@@ -110,6 +110,10 @@ export function useWindowControls(
 
     const now = performance.now();
     if (now - lastHeaderMouseDown < 350) {
+      // 双击：阻止冒泡，防止 Tauri drag-region 脚本再次调用 startDragging()，
+      // 否则 startDragging 会在窗口刚最大化后触发 macOS 自动 un-zoom 还原。
+      e.stopPropagation();
+      e.preventDefault();
       lastHeaderMouseDown = 0;
       if (!headerClickWasMaximized) {
         void toggleMaximize();
