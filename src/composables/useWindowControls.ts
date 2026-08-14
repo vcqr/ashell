@@ -100,11 +100,32 @@ export function useWindowControls(
     appWindow.close();
   }
 
+  let lastHeaderMouseDown = 0;
+  let headerClickWasMaximized = false;
+
+  function onHeaderMouseDown(e: MouseEvent) {
+    if (!isMac || e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('[data-tauri-drag-region="false"]')) return;
+
+    const now = performance.now();
+    if (now - lastHeaderMouseDown < 350) {
+      lastHeaderMouseDown = 0;
+      if (!headerClickWasMaximized) {
+        void toggleMaximize();
+      }
+    } else {
+      headerClickWasMaximized = isMaximized.value;
+      lastHeaderMouseDown = now;
+    }
+  }
+
   return {
     isMaximized,
     isMac,
     minimizeWindow,
     toggleMaximize,
     closeWindow,
+    onHeaderMouseDown,
   };
 }
