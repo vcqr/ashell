@@ -151,7 +151,12 @@ fn expand_tilde(path: &str, home: &std::path::Path) -> String {
         return home.to_string_lossy().into_owned();
     }
     if let Some(rest) = path.strip_prefix("~/") {
-        return home.join(rest).to_string_lossy().into_owned();
+        // 不用 Path::join：Windows 上 join 会插入 '\'，与 ssh config 的 '/'
+        // 混合成 "/home/user\.ssh/id_rsa" 这类路径。保持 '/' 拼接，
+        // Windows 文件 API 对混合分隔符同样接受。
+        let home_str = home.to_string_lossy();
+        let base = home_str.trim_end_matches(|c| c == '/' || c == '\\');
+        return format!("{base}/{rest}");
     }
     path.to_string()
 }
