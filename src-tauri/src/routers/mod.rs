@@ -81,6 +81,22 @@ pub fn build_router(state: AppState) -> Router {
         )
         // 本地 PTY 终端 WebSocket
         .route("/api/local/terminal", get(handlers::local::ws_handler))
+        .route(
+            "/api/local/fs/list",
+            get(handlers::local::fs_list),
+        )
+        .route(
+            "/api/local/fs/roots",
+            get(handlers::local::fs_roots),
+        )
+        .route(
+            "/api/local/fs/download_to_local",
+            post(handlers::local::fs_download_to_local),
+        )
+        .route(
+            "/api/local/fs/upload_to_remote",
+            post(handlers::local::fs_upload_to_remote),
+        )
         // Telnet 终端 WebSocket
         .route(
             "/api/telnet/terminal/{host_id}",

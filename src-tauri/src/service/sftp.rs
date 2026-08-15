@@ -61,7 +61,7 @@ fn convert_file_type(t: FileType) -> &'static str {
     }
 }
 
-fn human_size(bytes: u64) -> String {
+pub(crate) fn human_size(bytes: u64) -> String {
     let units = ["B", "K", "M", "G", "T", "P", "E"];
     if bytes == 0 {
         return "0B".to_string();

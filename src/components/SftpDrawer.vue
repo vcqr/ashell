@@ -19,6 +19,8 @@ import {
 import type { DataTableColumns, InputInst, UploadCustomRequestOptions } from "naive-ui"
 import {
   ArrowUpOutline,
+  ArrowBackOutline,
+  ArrowForwardOutline,
   CloseOutline,
   CloudUploadOutline,
   CopyOutline,
@@ -28,6 +30,7 @@ import {
   EyeOutline,
   FolderOpenOutline,
   FolderOutline,
+  LaptopOutline,
   LinkOutline,
   RefreshOutline,
   SendOutline,
@@ -58,7 +61,10 @@ import SftpUploadList from "@/components/sftp/SftpUploadList.vue"
 import SftpDownloadList from "@/components/sftp/SftpDownloadList.vue"
 import FileEditor from "@/components/sftp/FileEditor.vue"
 import FilePreview from "@/components/sftp/FilePreview.vue"
+import LocalPane from "@/components/sftp/LocalPane.vue"
 import { isPreviewable } from "@/utils/fileType"
+import { downloadToLocal, uploadLocalToRemote } from "@/api/local"
+import { useFileDrag } from "@/composables/useFileDrag"
 
 interface Props {
   open: boolean
@@ -356,6 +362,11 @@ async function onDownload(file: SftpFile) {
     message.warning(t("sftp.message.downloadOnlyFile"))
     return
   }
+  // 双栏模式：直接落盘到本地栏当前目录，不弹另存为对话框
+  if (dualPane.value && localDir.value) {
+    await downloadToLocalDir(file)
+    return
+  }
   const confirmed = await new Promise<boolean>((resolve) => {
     dialog.info({
       title: t("sftp.dialog.downloadTitle"),
@@ -421,6 +432,106 @@ async function onDownload(file: SftpFile) {
       message.error(t("sftp.message.downloadFailed", { error: err.message }))
     }
   }
+}
+
+/** 双栏模式：远端文件直落本地栏当前目录（Rust 进程内流式写盘） */
+async function downloadToLocalDir(file: SftpFile) {
+  if (!props.sid) return
+  const sid = props.sid
+  const ctrl = new AbortController()
+  const taskId = genId()
+  const task: TransferTask = {
+    id: taskId,
+    sid,
+    filename: file.full_path,
+    remoteDir: currentPath.value,
+    total: file.size_bytes ?? 0,
+    loaded: 0,
+    status: "running",
+    controller: ctrl,
+    startedAt: Date.now(),
+  }
+  store.addDownload(sid, task)
+  try {
+    const { bytes } = await downloadToLocal(sid, file.full_path, localDir.value, {
+      signal: ctrl.signal,
+    })
+    const total = bytes > 0 ? bytes : (file.size_bytes ?? 0)
+    store.updateDownload(sid, taskId, { loaded: total, total, status: "done" })
+    message.success(t("sftp.message.downloadedTo", { dir: localDir.value }))
+    localPaneRef.value?.refresh()
+  } catch (e) {
+    if (isAbortError(e)) {
+      store.updateDownload(sid, taskId, { status: "cancelled" })
+    } else {
+      const err = e as Error
+      store.updateDownload(sid, taskId, { status: "error", error: err.message })
+      message.error(t("sftp.message.downloadFailed", { error: err.message }))
+    }
+  }
+}
+
+/** 双栏模式：本地栏勾选的文件直传远程当前目录（Rust 进程内流式中转） */
+async function onLocalUpload(sel: SftpFile[]) {
+  if (!props.sid || sel.length === 0) return
+  const sid = props.sid
+
+  // 同名覆盖确认：只问一次，列出冲突名
+  const names = new Set(sel.map((f) => f.file_name.toLowerCase()))
+  const conflicts = files.value
+    .filter((f) => names.has(f.file_name.toLowerCase()))
+    .map((f) => f.file_name)
+  if (conflicts.length > 0) {
+    const preview = conflicts.slice(0, 5).join(", ")
+    const more = conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
+    const ok = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: t("sftp.dialog.overwriteTitle"),
+        content: `${preview}${more}`,
+        positiveText: t("common.overwrite"),
+        negativeText: t("common.cancel"),
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+        onClose: () => resolve(false),
+        onMaskClick: () => resolve(false),
+      })
+    })
+    if (!ok) return
+  }
+
+  for (const f of sel) {
+    if (f.file_type !== "file") continue
+    const remotePath = joinPath(currentPath.value, f.file_name)
+    const ctrl = new AbortController()
+    const taskId = genId()
+    const total = f.size_bytes ?? 0
+    const task: TransferTask = {
+      id: taskId,
+      sid,
+      filename: remotePath,
+      remoteDir: currentPath.value,
+      total,
+      loaded: 0,
+      status: "running",
+      controller: ctrl,
+      startedAt: Date.now(),
+    }
+    store.addUpload(sid, task)
+    try {
+      await uploadLocalToRemote(sid, f.full_path, remotePath, { signal: ctrl.signal })
+      // JSON 请求没有上传进度回调，完成时一次性置满
+      store.updateUpload(sid, taskId, { loaded: total, total, status: "done" })
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateUpload(sid, taskId, { status: "cancelled" })
+      } else {
+        const err = e as Error
+        store.updateUpload(sid, taskId, { status: "error", error: err.message })
+        message.error(t("sftp.message.uploadFailed", { error: err.message }))
+      }
+    }
+  }
+  await load()
 }
 
 function cancelDownload(id: string) {
@@ -931,6 +1042,13 @@ const rowKey = (row: SftpFile) => row.full_path
 function rowProps(row: SftpFile) {
   return {
     class: selectedKey.value === row.full_path ? "row-selected" : "",
+    style: {
+      // 双栏模式下文件行可拖到本地栏，提示 grab
+      cursor: dualPane.value && row.file_type === "file" ? "grab" : "default",
+    },
+    onPointerdown: (e: PointerEvent) => {
+      if (dualPane.value) remoteDrag.onRowPointerdown(row, e)
+    },
     onClick: (e: MouseEvent) => {
       e.stopPropagation()
       selectedKey.value = row.full_path
@@ -1183,30 +1301,116 @@ watch(
 /* ---------- 拖拽改变面板宽度 ---------- */
 const MIN_WIDTH = 480
 const DEFAULT_WIDTH = 800
+// 双栏（本地 + 远程）模式下的宽度约束与记忆 key 独立于单栏，
+// 切换模式时互不污染各自记忆的宽度
+const DUAL_MIN_WIDTH = 760
+const DUAL_DEFAULT_WIDTH = 1040
+const WIDTH_KEY = "ashell:sftp-width"
+const DUAL_WIDTH_KEY = "ashell:sftp-dual-width"
+const DUAL_PANE_KEY = "ashell:sftp-dualpane"
+const LOCAL_DIR_KEY = "ashell:sftp-local-dir"
+
 // 拖动上限取视口宽度的 90%，避免抽屉完全盖住主界面
 function getMaxWidth(): number {
   return Math.round(window.innerWidth * 0.9)
 }
-const WIDTH_KEY = "ashell:sftp-width"
 
-const width = ref<number>(loadWidth())
-const resizing = ref(false)
+/** 双栏开关（默认单栏）。持久化，下次打开 drawer 恢复 */
+const dualPane = ref(
+  typeof localStorage !== "undefined" && localStorage.getItem(DUAL_PANE_KEY) === "1",
+)
 
-function loadWidth(): number {
-  const raw =
-    typeof localStorage !== "undefined" ? localStorage.getItem(WIDTH_KEY) : null
-  const n = raw ? Number(raw) : NaN
-  if (!Number.isFinite(n)) return DEFAULT_WIDTH
-  return Math.min(getMaxWidth(), Math.max(MIN_WIDTH, n))
-}
+/** 本地栏当前目录，持久化 */
+const localDir = ref(
+  typeof localStorage !== "undefined" ? localStorage.getItem(LOCAL_DIR_KEY) || "" : "",
+)
 
-function saveWidth(v: number) {
+function persistLocalDir(v: string) {
+  localDir.value = v
   try {
-    localStorage.setItem(WIDTH_KEY, String(v))
+    localStorage.setItem(LOCAL_DIR_KEY, v)
   } catch {
     // ignore
   }
 }
+
+const localPaneRef = ref<InstanceType<typeof LocalPane> | null>(null)
+
+/** 本地栏勾选数（LocalPane selection-change 上报，供中间条按钮启停） */
+const localSelectedCount = ref(0)
+
+/* ---------- 远程侧拖拽：远程行 -> 本地栏（下载） ---------- */
+
+const remoteDrag = useFileDrag({
+  collectFiles(row) {
+    // 一期远程为单选列表，仅支持单文件拖拽
+    return row.file_type === "file" ? [row] : []
+  },
+  onDrop(files, zone) {
+    if (zone === "local" && localDir.value) {
+      for (const f of files) void downloadToLocalDir(f)
+    }
+  },
+})
+
+/** 中间条 -> ：把本地栏勾选的文件上传到远程当前目录 */
+function transferUp() {
+  const sel = localPaneRef.value?.getSelectedFiles() ?? []
+  if (sel.length > 0) void onLocalUpload(sel)
+}
+
+/** 中间条 <- ：把远程当前选中的文件下载到本地栏当前目录 */
+function transferDown() {
+  const f = files.value.find(
+    (x) => x.full_path === selectedKey.value && x.file_type === "file",
+  )
+  if (f && localDir.value) void downloadToLocalDir(f)
+}
+
+function activeWidthKey(): string {
+  return dualPane.value ? DUAL_WIDTH_KEY : WIDTH_KEY
+}
+
+function activeMinWidth(): number {
+  return dualPane.value ? DUAL_MIN_WIDTH : MIN_WIDTH
+}
+
+function activeDefaultWidth(): number {
+  return dualPane.value ? DUAL_DEFAULT_WIDTH : DEFAULT_WIDTH
+}
+
+function toggleDualPane() {
+  // 先把当前宽度保存到旧模式的 key，再切换并加载新模式宽度
+  saveWidth(width.value)
+  dualPane.value = !dualPane.value
+  try {
+    localStorage.setItem(DUAL_PANE_KEY, dualPane.value ? "1" : "0")
+  } catch {
+    // ignore
+  }
+  width.value = loadWidth()
+}
+
+const width = ref<number>(0)
+const resizing = ref(false)
+
+function loadWidth(): number {
+  const raw =
+    typeof localStorage !== "undefined" ? localStorage.getItem(activeWidthKey()) : null
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n)) return activeDefaultWidth()
+  return Math.min(getMaxWidth(), Math.max(activeMinWidth(), n))
+}
+
+function saveWidth(v: number) {
+  try {
+    localStorage.setItem(activeWidthKey(), String(v))
+  } catch {
+    // ignore
+  }
+}
+
+width.value = loadWidth()
 
 function onResizeStart(e: PointerEvent) {
   e.preventDefault()
@@ -1219,7 +1423,7 @@ function onResizeStart(e: PointerEvent) {
 function onResizeMove(e: PointerEvent) {
   // Panel anchored to the right edge; width = viewport width - cursor X.
   const next = Math.round(window.innerWidth - e.clientX)
-  width.value = Math.min(getMaxWidth(), Math.max(MIN_WIDTH, next))
+  width.value = Math.min(getMaxWidth(), Math.max(activeMinWidth(), next))
 }
 
 function onResizeEnd() {
@@ -1296,8 +1500,58 @@ function onClose() {
         <div
           v-else
           class="sftp-body"
+          :class="{ dual: dualPane }"
           @contextmenu="onBlankContextMenu"
         >
+          <LocalPane
+            v-if="dualPane"
+            ref="localPaneRef"
+            class="local-pane-slot"
+            :dir="localDir"
+            @update:dir="persistLocalDir"
+            @selection-change="localSelectedCount = $event"
+            @transfer-up="onLocalUpload"
+          />
+          <div v-if="dualPane" class="transfer-bar">
+            <NTooltip placement="left">
+              <template #trigger>
+                <NButton
+                  size="small"
+                  secondary
+                  :disabled="!props.sid || localSelectedCount === 0"
+                  @click="transferUp"
+                >
+                  <template #icon>
+                    <NIcon><ArrowForwardOutline /></NIcon>
+                  </template>
+                </NButton>
+              </template>
+              {{ t("sftp.transferBar.up") }}
+            </NTooltip>
+            <NTooltip placement="left">
+              <template #trigger>
+                <NButton
+                  size="small"
+                  secondary
+                  :disabled="
+                    !props.sid ||
+                    !localDir ||
+                    !files.some(
+                      (x) =>
+                        x.full_path === selectedKey && x.file_type === 'file',
+                    )
+                  "
+                  @click="transferDown"
+                >
+                  <template #icon>
+                    <NIcon><ArrowBackOutline /></NIcon>
+                  </template>
+                </NButton>
+              </template>
+              {{ t("sftp.transferBar.down") }}
+            </NTooltip>
+          </div>
+          <div class="remote-pane" data-drop-zone="remote">
           <div class="path-bar">
             <NButton
               size="small"
@@ -1398,6 +1652,18 @@ function onClose() {
                 style="display: none"
                 @change="onFolderInputChange"
               />
+              <NButton
+                size="small"
+                secondary
+                :type="dualPane ? 'primary' : 'default'"
+                :title="t('sftp.localPane.toggleTitle')"
+                @click="toggleDualPane"
+              >
+                <template #icon>
+                  <NIcon><LaptopOutline /></NIcon>
+                </template>
+                {{ t("sftp.localPane.toggleButton") }}
+              </NButton>
             </div>
             <div class="toolbar-right">
               <NBadge
@@ -1454,6 +1720,22 @@ function onClose() {
               class="file-table"
             />
           </NSpin>
+          </div>
+
+          <!-- 远程侧拖拽跟随标签。Teleport 到 body：本 aside 有 transform
+               （开合动画），fixed 的包含块会变成它导致坐标漂移 -->
+          <Teleport to="body">
+            <div
+              v-if="remoteDrag.dragging.value"
+              class="drag-ghost"
+              :style="{
+                left: `${remoteDrag.ghostX.value}px`,
+                top: `${remoteDrag.ghostY.value}px`,
+              }"
+            >
+              {{ t("sftp.transferBar.dragGhost", { count: remoteDrag.dragCount.value }) }}
+            </div>
+          </Teleport>
         </div>
 
         <NDropdown
@@ -1706,6 +1988,49 @@ function onClose() {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
+  gap: 10px;
+}
+
+/* 双栏模式：本地栏在左、远程栏在右 */
+.sftp-body.dual {
+  flex-direction: row;
+}
+
+.local-pane-slot {
+  flex: 0 0 42%;
+  min-width: 0;
+}
+
+.transfer-bar {
+  flex: 0 0 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--ashell-accent, #7c5cff);
+  color: #fff;
+  font-size: 12px;
+  transform: translate(12px, 12px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+
+.remote-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
   gap: 10px;
 }
 
