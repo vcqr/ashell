@@ -180,7 +180,7 @@ function handleReleaseNotesClick(e: MouseEvent) {
         {{ t("settings.about.releaseNotes") }}
       </div>
       <!-- eslint-disable-next-line vue/no-v-html -- DOMPurify 已对 marked 输出做消毒 -->
-      <div class="release-notes-body" v-html="renderedReleaseNotes" @click="handleReleaseNotesClick"></div>
+      <div class="release-notes-body" @click="handleReleaseNotesClick" v-html="renderedReleaseNotes"></div>
     </div>
   </section>
 </template>

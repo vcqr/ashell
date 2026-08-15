@@ -30,4 +30,13 @@ export default [
       ],
     },
   },
+  {
+    // vite-env.d.ts 等声明文件沿用 Vite 标准脚手架写法（DefineComponent<{}, {}, any>）
+    name: 'app/dts-relaxed',
+    files: ['**/*.d.ts'],
+    rules: {
+      '@typescript-eslint/no-empty-object-type': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
 ]

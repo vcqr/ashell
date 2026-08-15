@@ -21,7 +21,7 @@ import BroadcastPopover from "@/components/BroadcastPopover.vue"
 import type { TerminalTab } from "@/types"
 
 const { t } = useI18n()
-const props = defineProps<{
+defineProps<{
   tabs: TerminalTab[]
   activeKey: string
   sftpOpen: boolean

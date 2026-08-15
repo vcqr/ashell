@@ -440,12 +440,12 @@ function applyTermOptions() {
  * 拦截 shell 发出的关闭光标闪烁的转义序列。
  *
  * 本地 shell（尤其是 zsh + p10k / oh-my-zsh 主题）启动时常发
- * DECSCUSR（[2 q = steady block）或 DEC private mode（[?12l
+ * DECSCUSR（ESC[2 q = steady block）或 DEC private mode（ESC[?12l
  * = disable blink）来关闭光标闪烁，覆盖用户在设置中
  * 开启的 cursorBlink。这里在 xterm parser 层拦截这些序列：
  *
- * - [?12l（关闭闪烁）：当 cursorBlink=true 时吞掉
- * - [N q（DECSCUSR）：将 steady 变体（2/4/6）转为
+ * - ESC[?12l（关闭闪烁）：当 cursorBlink=true 时吞掉
+ * - ESC[N q（DECSCUSR）：将 steady 变体（2/4/6）转为
  *   对应的 blinking 变体（1/3/5），保留形状选择但强制闪烁
  *
  * vim 等应用在 cursorBlink=false 时仍可正常设置 steady 光标。
@@ -462,7 +462,7 @@ function installCursorBlinkGuard() {
   cursorGuardInstalled = true
   const t = term
 
-  // 拦截 [?12l（disable cursor blink）
+  // 拦截 ESC[?12l（disable cursor blink）
   t.parser.registerCsiHandler(
     { intermediates: "", prefix: "?", final: "l" },
     (params) => {
@@ -473,7 +473,7 @@ function installCursorBlinkGuard() {
     },
   )
 
-  // 拦截 DECSCUSR [{n} q：将 steady 变体转为 blinking
+  // 拦截 DECSCUSR ESC[{n} q：将 steady 变体转为 blinking
   // 必须返回 true 吞掉原序列，否则 xterm 默认 handler 会用
   // 原始参数（steady）再次关闭 blink。
   t.parser.registerCsiHandler(

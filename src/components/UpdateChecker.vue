@@ -1,4 +1,5 @@
 <script setup lang="ts">
+/* eslint-disable vue/valid-template-root -- headless component: no UI, updates are shown via naive-ui notification */
 import { onMounted, watch, h, ref } from "vue";
 import {
   useNotification,

@@ -51,6 +51,8 @@ const title = computed(() => {
       return t("hosts.form.security.changeTitle")
     case "clear":
       return t("hosts.form.security.clearTitle")
+    default:
+      return ""
   }
 })
 
@@ -167,8 +169,8 @@ async function submit() {
 <template>
   <NModal
     :show="show"
-    @update:show="(v: boolean) => emit('update:show', v)"
     :mask-closable="!loading"
+    @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NCard
       style="width: 400px; max-width: 90vw"
@@ -231,7 +233,7 @@ async function submit() {
         </NFormItem>
 
         <NSpace justify="end">
-          <NButton @click="cancel" :disabled="loading">
+          <NButton :disabled="loading" @click="cancel">
             {{ t("hosts.form.security.cancel") }}
           </NButton>
           <NButton type="primary" :loading="loading" @click="submit">

@@ -4,7 +4,7 @@ import { storeToRefs } from "pinia";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { marked } from "marked";
+import { marked, type Token, type Tokens } from "marked";
 import hljs from "highlight.js";
 import DOMPurify from "dompurify";
 import {
@@ -194,9 +194,11 @@ marked.setOptions({ breaks: true, gfm: true });
 
 const codeHighlightExtension = {
   name: "code",
-  renderer(token: any) {
-    const text = token.text || "";
-    const lang = token.lang || "";
+  // marked 类型里 renderer 接收通用 Token；名为 "code" 的扩展运行时只会收到 Tokens.Code
+  renderer(token: Token) {
+    const codeToken = token as Tokens.Code;
+    const text = codeToken.text || "";
+    const lang = codeToken.lang || "";
     const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
     const highlighted = hljs.highlight(text, { language }).value;
     const langLabel =
@@ -457,7 +459,7 @@ function handleSidecarOutput(ssid: string, line: string) {
     const msg = JSON.parse(aiMsg);
     const payload = msg.payload;
     let content = "";
-    for (const item of payload as any[]) {
+    for (const item of payload as Array<{ type: string; content: unknown }>) {
       content += `**[${item.type}]**\n<details><summary>${t("ai.toolRetDetail")}</summary>\n\n\`\`\`json\n${JSON.stringify(item.content, null, 2)}\n\`\`\`\n</details>\n\n`;
     }
     const step: ProcessStep = {
@@ -732,6 +734,7 @@ defineExpose({
 </script>
 
 <template>
+  <!-- eslint-disable vue/no-v-html -- 本模板所有 v-html 均渲染经 DOMPurify 消毒的 Markdown -->
   <Teleport to="body">
     <aside
       class="ai-panel"

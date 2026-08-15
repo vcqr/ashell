@@ -79,7 +79,7 @@ function onModalDone() {
       </div>
 
       <NSpace>
-        <NButton v-if="!isSet" size="small" type="primary" @click="onSet" :loading="loading">
+        <NButton v-if="!isSet" size="small" type="primary" :loading="loading" @click="onSet">
           {{ t("settings.security.setBtn") }}
         </NButton>
         <template v-else>
