@@ -214,7 +214,9 @@ function onDragMove(e: PointerEvent) {
     const dy = e.clientY - drag.startY
     if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return
     drag.active = true
-    document.body.style.userSelect = "none"
+    // 选中压制走 body class + 全局 !important 规则（见 main.css）：
+    // user-select 不继承，直接设 body.style 会被面板的 text 声明屏蔽
+    document.body.classList.add("ashell-dragging")
     document.body.style.cursor = "grabbing"
   }
   dragGhost.value = {
@@ -260,7 +262,7 @@ function cleanupDrag() {
   drag = null
   dragGhost.value = null
   dropTargetKey.value = null
-  document.body.style.userSelect = ""
+  document.body.classList.remove("ashell-dragging")
   document.body.style.cursor = ""
   window.removeEventListener("pointermove", onDragMove)
   window.removeEventListener("pointerup", onDragEnd)

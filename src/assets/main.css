@@ -88,6 +88,16 @@ body {
   box-sizing: border-box;
 }
 
+/* 自实现拖拽（文件行 / 主机拖动等）期间全局禁止文本选择。
+   webview 里"按住拖动"的默认语义就是文本选择；且 user-select 不继承，
+   元素默认值 auto 解析为祖先链上最近的显式声明——抽屉面板为可复制
+   普遍声明了 user-select: text，设在 body 上的 none 会被屏蔽，
+   必须用 !important 强制覆盖全部元素 */
+body.ashell-dragging,
+body.ashell-dragging * {
+  user-select: none !important;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

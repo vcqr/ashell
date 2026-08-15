@@ -38,9 +38,11 @@ export function useFileDrag(opts: UseFileDragOptions) {
       if (Math.hypot(e.clientX - startX, e.clientY - startY) < 5) return;
       active = true;
       dragging.value = true;
-      // 拖拽中全局 grabbing 光标 + 禁止文本选中，跟随指针不丢失
+      // 拖拽中全局 grabbing 光标 + 禁止文本选中，跟随指针不丢失。
+      // 选中压制走 body class + 全局 !important 规则（见 main.css）：
+      // user-select 不继承，直接设 body.style 会被面板的 text 声明屏蔽
       document.body.style.cursor = "grabbing";
-      document.body.style.userSelect = "none";
+      document.body.classList.add("ashell-dragging");
     }
     ghostX.value = e.clientX;
     ghostY.value = e.clientY;
@@ -61,7 +63,19 @@ export function useFileDrag(opts: UseFileDragOptions) {
     dragging.value = false;
     if (wasActive) {
       document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      document.body.classList.remove("ashell-dragging");
+      // pointerup 后浏览器可能仍派发一次 click（down/up 视为同一次点击），
+      // 会误触发行的选中/勾选。拖拽已发生时在捕获阶段拦截掉这一次 click；
+      // 若 down/up 不在同一元素则 click 不会派发，用 setTimeout 兜底移除
+      // 监听，避免吞掉用户的下一次正常点击。
+      const suppress = (ce: MouseEvent) => {
+        ce.preventDefault();
+        ce.stopPropagation();
+      };
+      window.addEventListener("click", suppress, { capture: true, once: true });
+      window.setTimeout(() => {
+        window.removeEventListener("click", suppress, { capture: true });
+      }, 0);
     }
     if (!wasActive || candidate.length === 0) {
       candidate = [];
