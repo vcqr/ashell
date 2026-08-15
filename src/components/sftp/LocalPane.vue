@@ -8,6 +8,7 @@ import {
   NIcon,
   NInput,
   NSpin,
+  useDialog,
   useMessage,
 } from "naive-ui"
 import type {
@@ -26,8 +27,10 @@ import {
 } from "@vicons/ionicons5"
 import { HddRegular } from "@vicons/fa"
 import { useI18n } from "vue-i18n"
-import { listLocalFs, listLocalFsRoots } from "@/api/local"
-import type { SftpFile } from "@/types"
+import { listLocalFs, listLocalFsRoots, saveLocalFile } from "@/api/local"
+import { isAbortError } from "@/api/sftp"
+import { useSftpStore } from "@/stores/sftp"
+import type { OsDropFolder, SftpFile, TransferTask } from "@/types"
 import { formatUnix } from "@/utils/time"
 import { humanSize } from "@/utils/humanSize"
 import { useFileDrag } from "@/composables/useFileDrag"
@@ -35,6 +38,8 @@ import { useFileDrag } from "@/composables/useFileDrag"
 const props = defineProps<{
   /** 双栏打开时父组件持久化的本地目录（v-model:dir） */
   dir: string
+  /** SFTP 会话 id：复制任务挂到该会话的下载列表 */
+  sid: string
 }>()
 
 const emit = defineEmits<{
@@ -43,10 +48,14 @@ const emit = defineEmits<{
   (e: "selection-change", count: number): void
   /** 本地文件拖放到远程栏（或直接上传请求） */
   (e: "transfer-up", files: SftpFile[]): void
+  /** OS 拖放复制任务开始（父组件据此自动打开下载列表弹窗显示进度） */
+  (e: "copy-started"): void
 }>()
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
+const store = useSftpStore()
 
 const files = ref<SftpFile[]>([])
 const loading = ref(false)
@@ -151,12 +160,8 @@ async function goRoots() {
   }
 }
 
-function refresh() {
-  if (viewingRoots.value) {
-    void goRoots()
-  } else {
-    void load()
-  }
+function refresh(): Promise<void> {
+  return viewingRoots.value ? goRoots() : load()
 }
 
 function goUp() {
@@ -328,26 +333,61 @@ function rowProps(row: SftpFile) {
     onPointerdown: (e: PointerEvent) => onRowPointerdown(row, e),
     onDblclick: (e: MouseEvent) => {
       e.stopPropagation()
-      enterDir(row)
+      if (row.file_type === "dir") {
+        void enterDir(row)
+      } else if (row.file_type === "file" && !viewingRoots.value) {
+        // 与远程栏双击语义对齐：双击文件 = 传到对侧（上传到远程当前目录）
+        emit("transfer-up", [row])
+      }
     },
     onContextmenu: (e: MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      ctxMenuTarget.value = row
-      ctxMenuVisible.value = false
-      ctxMenuX.value = e.clientX
-      ctxMenuY.value = e.clientY
-      void nextTick().then(() => {
-        ctxMenuVisible.value = true
-      })
+      openCtxMenu(e, row)
     },
   }
 }
 
 /* ---------- 右键菜单 ---------- */
 
+function openCtxMenu(e: MouseEvent, row: SftpFile | null) {
+  ctxMenuTarget.value = row
+  ctxMenuVisible.value = false
+  ctxMenuX.value = e.clientX
+  ctxMenuY.value = e.clientY
+  void nextTick().then(() => {
+    ctxMenuVisible.value = true
+  })
+}
+
+/** 空白处右键：弹本地栏自己的菜单，并阻止冒泡到 SftpDrawer 的
+ *  .sftp-body（否则会弹出远程"新建"菜单，且操作全部作用于远程目录） */
+function onBlankContextMenu(e: MouseEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  openCtxMenu(e, null)
+}
+
 const ctxMenuOptions = computed<DropdownOption[]>(() => {
   const row = ctxMenuTarget.value
+  if (!row) {
+    // 空白区：仅刷新 / 回此电脑（不提供新建、删除：本地文件管理交给 OS）
+    const opts: DropdownOption[] = [
+      {
+        key: "local-refresh",
+        label: t("sftp.ctxMenu.refresh"),
+        icon: () => h(NIcon, null, () => h(RefreshOutline)),
+      },
+    ]
+    if (!viewingRoots.value) {
+      opts.push({
+        key: "local-roots",
+        label: t("sftp.localPane.goRoots"),
+        icon: () => h(NIcon, null, () => h(HddRegular)),
+      })
+    }
+    return opts
+  }
   const opts: DropdownOption[] = [
     {
       key: "copy-path",
@@ -355,7 +395,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       icon: () => h(NIcon, null, () => h(CopyOutline)),
     },
   ]
-  if (row && row.file_type === "file" && !viewingRoots.value) {
+  if (row.file_type === "file" && !viewingRoots.value) {
     opts.push({
       key: "upload",
       label: t("sftp.localPane.ctxUpload"),
@@ -368,7 +408,11 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
 function onCtxMenuSelect(key: string) {
   ctxMenuVisible.value = false
   const row = ctxMenuTarget.value
-  if (!row) return
+  if (!row) {
+    if (key === "local-refresh") void refresh()
+    else if (key === "local-roots") void goRoots()
+    return
+  }
   if (key === "copy-path") {
     void navigator.clipboard
       .writeText(row.full_path)
@@ -381,9 +425,123 @@ function onCtxMenuSelect(key: string) {
   }
 }
 
+/* ---------- OS 拖放落入本地栏：复制到当前本地目录 ---------- */
+
+function genId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** 展示用路径拼接：跟随当前目录的分隔符风格（Windows 反斜杠 / Unix 正斜杠） */
+function localJoin(dir: string, rel: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/"
+  return `${dir.replace(/[\\/]+$/, "")}${sep}${rel.replace(/\//g, sep)}`
+}
+
+/** 把从资源管理器 / Finder 拖入的文件复制到本地栏当前目录。
+ *  支持顶层文件与文件夹（按原层级写入，父目录自动创建）；
+ *  顶层同名（文件或目录）只询问一次覆盖确认。
+ *  每个文件生成一条下载列表任务：XHR 进度 + 可取消，与远程下载同一套 UI。 */
+async function importOsFiles(topFiles: File[], folders: OsDropFolder[]) {
+  if (viewingRoots.value || !currentPath.value) {
+    message.warning(t("sftp.localPane.dropNeedsDir"))
+    return
+  }
+  if (topFiles.length === 0 && folders.length === 0) return
+
+  const names = new Set([
+    ...topFiles.map((f) => f.name.toLowerCase()),
+    ...folders.map((f) => f.name.toLowerCase()),
+  ])
+  const conflicts = files.value
+    .filter((f) => names.has(f.file_name.toLowerCase()))
+    .map((f) => f.file_name)
+  if (conflicts.length > 0) {
+    const preview = conflicts.slice(0, 5).join(", ")
+    const more = conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
+    const ok = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: t("sftp.dialog.overwriteTitle"),
+        content: `${preview}${more}`,
+        positiveText: t("common.overwrite"),
+        negativeText: t("common.cancel"),
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+        onClose: () => resolve(false),
+        onMaskClick: () => resolve(false),
+      })
+    })
+    if (!ok) return
+  }
+
+  const dir = currentPath.value
+  const sid = props.sid
+  if (!sid) return
+  emit("copy-started")
+  let okCount = 0
+  let failCount = 0
+  const writeOne = async (file: File, rel: string) => {
+    const ctrl = new AbortController()
+    const taskId = genId()
+    const task: TransferTask = {
+      id: taskId,
+      sid,
+      filename: localJoin(dir, rel),
+      total: file.size,
+      loaded: 0,
+      status: "running",
+      controller: ctrl,
+      startedAt: Date.now(),
+    }
+    store.addDownload(sid, task)
+    try {
+      await saveLocalFile(dir, rel, file, {
+        signal: ctrl.signal,
+        onProgress: (loaded, total) => {
+          store.updateDownload(sid, taskId, {
+            loaded,
+            total: total > 0 ? total : file.size,
+          })
+        },
+      })
+      store.updateDownload(sid, taskId, {
+        loaded: file.size,
+        total: file.size,
+        status: "done",
+      })
+      okCount++
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateDownload(sid, taskId, { status: "cancelled" })
+      } else {
+        const err = e as Error
+        store.updateDownload(sid, taskId, {
+          status: "error",
+          error: err.message,
+        })
+      }
+      failCount++
+    }
+  }
+  for (const f of topFiles) await writeOne(f, f.name)
+  for (const folder of folders) {
+    for (const ent of folder.entries) await writeOne(ent.file, ent.relPath)
+  }
+
+  await refresh()
+  if (okCount + failCount === 0) return
+  if (failCount === 0) {
+    message.success(t("sftp.localPane.importDone", { count: okCount }))
+  } else {
+    message.warning(
+      t("sftp.localPane.importPartial", { ok: okCount, fail: failCount }),
+    )
+  }
+}
+
 defineExpose({
   refresh,
   getSelectedFiles: () => selectedFiles.value,
+  importOsFiles,
 })
 
 watch(
@@ -404,7 +562,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="local-pane" data-drop-zone="local">
+  <div class="local-pane" data-drop-zone="local" @contextmenu="onBlankContextMenu">
     <div class="pane-title">{{ t("sftp.localPane.title") }}</div>
 
     <div class="path-bar">
@@ -488,10 +646,15 @@ onMounted(() => {
         :data="files"
         :row-key="rowKey"
         :row-props="rowProps"
+        :checked-row-keys="checkedKeys"
         :bordered="false"
         :single-line="false"
         flex-height
         class="file-table"
+        @update:checked-row-keys="
+          (keys: Array<string | number>) =>
+            (checkedKeys = keys.map((k) => String(k)))
+        "
       />
       <NEmpty
         v-else

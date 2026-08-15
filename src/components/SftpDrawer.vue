@@ -51,7 +51,7 @@ import {
 import { useI18n } from "vue-i18n"
 import { useSftpStore } from "@/stores/sftp"
 import { useStartupStore } from "@/stores/startup"
-import type { SftpFile, TransferTask } from "@/types"
+import type { OsDropEntry, OsDropFolder, SftpFile, TransferTask } from "@/types"
 import { humanSize } from "@/utils/humanSize"
 import { joinPath, normalizePath, parentPath } from "@/utils/pathJoin"
 import { formatUnix } from "@/utils/time"
@@ -63,7 +63,7 @@ import FileEditor from "@/components/sftp/FileEditor.vue"
 import FilePreview from "@/components/sftp/FilePreview.vue"
 import LocalPane from "@/components/sftp/LocalPane.vue"
 import { isPreviewable } from "@/utils/fileType"
-import { downloadToLocal, uploadLocalToRemote } from "@/api/local"
+import { downloadToLocal, transferProgress, uploadLocalToRemote } from "@/api/local"
 import { useFileDrag } from "@/composables/useFileDrag"
 
 interface Props {
@@ -452,9 +452,11 @@ async function downloadToLocalDir(file: SftpFile) {
     startedAt: Date.now(),
   }
   store.addDownload(sid, task)
+  const stopPolling = pollDirectTransferProgress("download", sid, taskId, task.total)
   try {
     const { bytes } = await downloadToLocal(sid, file.full_path, localDir.value, {
       signal: ctrl.signal,
+      taskId,
     })
     const total = bytes > 0 ? bytes : (file.size_bytes ?? 0)
     store.updateDownload(sid, taskId, { loaded: total, total, status: "done" })
@@ -468,6 +470,8 @@ async function downloadToLocalDir(file: SftpFile) {
       store.updateDownload(sid, taskId, { status: "error", error: err.message })
       message.error(t("sftp.message.downloadFailed", { error: err.message }))
     }
+  } finally {
+    stopPolling()
   }
 }
 
@@ -517,9 +521,12 @@ async function onLocalUpload(sel: SftpFile[]) {
       startedAt: Date.now(),
     }
     store.addUpload(sid, task)
+    const stopPolling = pollDirectTransferProgress("upload", sid, taskId, total)
     try {
-      await uploadLocalToRemote(sid, f.full_path, remotePath, { signal: ctrl.signal })
-      // JSON 请求没有上传进度回调，完成时一次性置满
+      await uploadLocalToRemote(sid, f.full_path, remotePath, {
+        signal: ctrl.signal,
+        taskId,
+      })
       store.updateUpload(sid, taskId, { loaded: total, total, status: "done" })
     } catch (e) {
       if (isAbortError(e)) {
@@ -529,9 +536,35 @@ async function onLocalUpload(sel: SftpFile[]) {
         store.updateUpload(sid, taskId, { status: "error", error: err.message })
         message.error(t("sftp.message.uploadFailed", { error: err.message }))
       }
+    } finally {
+      stopPolling()
     }
   }
   await load()
+}
+
+/** Rust 进程内直传（本地<->远端）没有浏览器字节流，进度靠轮询后端
+ *  计数器（按 task_id 记账）。返回停止函数，在传输的 finally 里调用。 */
+function pollDirectTransferProgress(
+  kind: "upload" | "download",
+  sid: string,
+  taskId: string,
+  total: number,
+): () => void {
+  const timer = window.setInterval(() => {
+    void transferProgress([taskId])
+      .then((map) => {
+        const bytes = map[taskId]
+        if (typeof bytes !== "number") return
+        const patch = { loaded: bytes, total: total > 0 ? total : bytes }
+        if (kind === "upload") store.updateUpload(sid, taskId, patch)
+        else store.updateDownload(sid, taskId, patch)
+      })
+      .catch(() => {
+        // 轮询失败不影响传输本身
+      })
+  }, 300)
+  return () => window.clearInterval(timer)
 }
 
 function cancelDownload(id: string) {
@@ -650,11 +683,8 @@ function triggerUploadFolder() {
   el.click()
 }
 
-interface FolderEntry {
-  file: File
-  /** webkitRelativePath 形如 "myfolder/sub/a.txt" */
-  relPath: string
-}
+/** webkitRelativePath 形如 "myfolder/sub/a.txt"（共享类型 OsDropEntry） */
+type FolderEntry = OsDropEntry
 
 function collectFolderEntries(fl: FileList): FolderEntry[] {
   const out: FolderEntry[] = []
@@ -806,30 +836,48 @@ async function uploadFolderEntries(entries: FolderEntry[]) {
 /* ---------- OS 级拖放上传（从资源管理器 / Finder 拖入面板） ----------
  * 窗口已关闭 dragDropEnabled（tauri.conf.json），HTML5 dnd 事件可用，
  * drop 直接拿到 File 对象，复用与按钮上传完全相同的上传通道
- * （uploadStream 的 XHR 进度 / 取消；文件夹复用 uploadFolderEntries）。 */
+ * （uploadStream 的 XHR 进度 / 取消；文件夹复用 uploadFolderEntries）。
+ * 双栏下按落区路由：拖到本地栏 = 复制到本地目录（LocalPane.importOsFiles），
+ * 拖到其余区域 = 上传远程当前目录。 */
 
 const dropHover = ref(false)
+/** 拖拽悬停的落区：决定遮罩文案与 drop 行为 */
+const dropHoverZone = ref<"" | "local" | "remote">("")
+
+function dropZoneOf(e: DragEvent): string | undefined {
+  const el = (e.target as HTMLElement | null)?.closest?.(
+    "[data-drop-zone]",
+  ) as HTMLElement | null
+  return el?.dataset.dropZone
+}
 
 function onPanelDragOver(e: DragEvent) {
   if (!props.open || !props.sid) return
   e.preventDefault()
   if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"
   dropHover.value = true
+  dropHoverZone.value =
+    dualPane.value && dropZoneOf(e) === "local" ? "local" : "remote"
 }
 
 function onPanelDragLeave() {
   dropHover.value = false
+  dropHoverZone.value = ""
 }
 
 async function onPanelDrop(e: DragEvent) {
   e.preventDefault()
   dropHover.value = false
+  dropHoverZone.value = ""
   if (!props.open || !props.sid) return
   const dt = e.dataTransfer
   if (!dt || dt.items.length === 0) return
 
+  // 双栏下拖进本地栏：复制到本地目录，而不是上传远程
+  const dropToLocal = dualPane.value && dropZoneOf(e) === "local"
+
   const topFiles: File[] = []
-  const folders: { name: string; entries: FolderEntry[] }[] = []
+  const folders: OsDropFolder[] = []
 
   for (let i = 0; i < dt.items.length; i++) {
     const entry = dt.items[i]?.webkitGetAsEntry?.()
@@ -844,6 +892,11 @@ async function onPanelDrop(e: DragEvent) {
       await walkDropDirectory(entry as FileSystemDirectoryEntry, entry.name, out)
       if (out.length > 0) folders.push({ name: entry.name, entries: out })
     }
+  }
+
+  if (dropToLocal) {
+    await localPaneRef.value?.importOsFiles(topFiles, folders)
+    return
   }
 
   // 顶层文件：与按钮上传完全同一条通道（含覆盖确认、进度、取消）
@@ -1466,13 +1519,20 @@ function onClose() {
         @pointerdown="onResizeStart"
       />
 
-      <!-- OS 拖放文件进入面板时的提示遮罩 -->
+      <!-- OS 拖放文件进入面板时的提示遮罩（按落区区分：本地栏复制 / 远程上传） -->
       <div v-if="dropHover && props.sid" class="drop-overlay">
         <div class="drop-overlay-inner">
           <NIcon :size="28">
-            <CloudUploadOutline />
+            <DownloadOutline v-if="dropHoverZone === 'local'" />
+            <CloudUploadOutline v-else />
           </NIcon>
-          <span>{{ t("sftp.dropHint", { path: currentPath }) }}</span>
+          <span>
+            {{
+              dropHoverZone === "local"
+                ? t("sftp.localPane.dropHint", { dir: localDir })
+                : t("sftp.dropHint", { path: currentPath })
+            }}
+          </span>
         </div>
       </div>
 
@@ -1508,9 +1568,11 @@ function onClose() {
             ref="localPaneRef"
             class="local-pane-slot"
             :dir="localDir"
+            :sid="props.sid ?? ''"
             @update:dir="persistLocalDir"
             @selection-change="localSelectedCount = $event"
             @transfer-up="onLocalUpload"
+            @copy-started="downloadModalOpen = true"
           />
           <div v-if="dualPane" class="transfer-bar">
             <NTooltip placement="left">

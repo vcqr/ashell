@@ -97,6 +97,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/local/fs/upload_to_remote",
             post(handlers::local::fs_upload_to_remote),
         )
+        .route(
+            "/api/local/fs/save_file",
+            post(handlers::local::fs_save_file),
+        )
+        .route(
+            "/api/local/fs/progress",
+            post(handlers::local::fs_progress),
+        )
         // Telnet 终端 WebSocket
         .route(
             "/api/telnet/terminal/{host_id}",

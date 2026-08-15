@@ -2,10 +2,15 @@
 //!
 //! 提供"列目录"与两个直传能力："远端 -> 本地落盘"、"本地文件 -> 远端"，
 //! 传输在 Rust 进程内流式完成，大文件不经过 webview 内存。
+//! 另提供"OS 拖放文件落盘"：双栏下把文件拖进本地栏时，webview 只能拿到
+//! File 对象，字节流经本地 HTTP（multipart）回传写入本地目录——这是唯一
+//! 必须过 webview 的传输路径。
 //! 不提供本地文件的删除/改名：本地文件管理交给操作系统，AShell 的
 //! 本地侧只作为传输的源与目的地，避免出现两套语义不同的删除/回收站行为。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use futures_util::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,6 +20,28 @@ use crate::service::sftp::{self, SftpFileAttr, SftpListResp};
 
 fn io_err(context: &str, e: std::io::Error) -> AppError {
     AppError::BadRequest(format!("{context}: {e}"))
+}
+
+/* ---------- 直传任务进度 ----------
+ * Rust 进程内直传（本地<->远端）不经过 webview，前端拿不到字节流，
+ * 进度改由这里按 task_id 记账，前端轮询 /api/local/fs/progress 取回。
+ * 计数器随 256KiB 块更新，Mutex 只是极短的整数读写，无争用压力。 */
+
+fn progress_map() -> &'static Mutex<HashMap<String, u64>> {
+    static MAP: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn progress_set(id: &str, bytes: u64) {
+    progress_map().lock().unwrap().insert(id.to_string(), bytes);
+}
+
+pub fn progress_get(id: &str) -> Option<u64> {
+    progress_map().lock().unwrap().get(id).copied()
+}
+
+pub fn progress_remove(id: &str) {
+    progress_map().lock().unwrap().remove(id);
 }
 
 /// 只接受绝对路径。本地浏览端点等于给 webview 开了列本机目录的能力，
@@ -181,10 +208,12 @@ pub async fn roots() -> AppResult<SftpListResp> {
 /// 把远端文件流式写到本地目录（跳过前端 blob，GB 级文件不占内存）。
 /// 目标文件名为远端 basename；local_dir 不存在时自动创建。
 /// 已存在的同名本地文件会被覆盖（与"另存为"直接确认覆盖的行为一致）。
+/// `task_id` 提供时在进度表中记账，供前端轮询。
 pub async fn download_to_local(
     sid: &str,
     remote_path: &str,
     local_dir: &str,
+    task_id: Option<&str>,
 ) -> AppResult<u64> {
     let dir = validate_absolute(local_dir)?;
     let basename = Path::new(remote_path)
@@ -193,6 +222,9 @@ pub async fn download_to_local(
         .ok_or_else(|| AppError::BadRequest("invalid remote filename".into()))?
         .to_string();
 
+    if let Some(id) = task_id {
+        progress_set(id, 0);
+    }
     let (_meta, mut stream) = sftp::open_for_read(sid, remote_path).await?;
 
     tokio::fs::create_dir_all(&dir)
@@ -212,6 +244,9 @@ pub async fn download_to_local(
             .await
             .map_err(|e| io_err("write", e))?;
         written += chunk.len() as u64;
+        if let Some(id) = task_id {
+            progress_set(id, written);
+        }
     }
     writer.flush().await.map_err(|e| io_err("flush", e))?;
 
@@ -221,10 +256,12 @@ pub async fn download_to_local(
 /// 把本地文件流式上传到远端（"上传 ->"按钮；webview 无法从路径构造 File
 /// 对象，浏览器中转会把大文件读进内存，所以在 Rust 进程内直传）。
 /// 远端已存在的同名文件会被覆盖（与 sftp upload 的行为一致）。
+/// `task_id` 提供时在进度表中记账，供前端轮询。
 pub async fn upload_to_remote(
     sid: &str,
     local_path: &str,
     remote_path: &str,
+    task_id: Option<&str>,
 ) -> AppResult<u64> {
     let src = validate_absolute(local_path)?;
     let md = tokio::fs::metadata(&src)
@@ -242,6 +279,10 @@ pub async fn upload_to_remote(
         .map_err(|e| io_err(&format!("open {}", src.to_string_lossy()), e))?;
     let mut writer = sftp::open_for_write(sid, remote_path).await?;
 
+    if let Some(id) = task_id {
+        progress_set(id, 0);
+    }
+
     // 256KiB 块直传：不经过 Vec 增长，也不把整个文件读入内存
     let mut buf = vec![0u8; 256 * 1024];
     let mut written: u64 = 0;
@@ -258,6 +299,9 @@ pub async fn upload_to_remote(
             .await
             .map_err(|e| sftp::sftp_err("write", e))?;
         written += n as u64;
+        if let Some(id) = task_id {
+            progress_set(id, written);
+        }
     }
     writer
         .flush()
@@ -269,4 +313,32 @@ pub async fn upload_to_remote(
         .map_err(|e| sftp::sftp_err("close", e))?;
 
     Ok(written)
+}
+
+/// 解析"OS 拖放文件落盘"的目标路径，并按需创建父目录。
+///
+/// `rel_name` 为前端给的相对路径（可含子目录，如 `sub/a.txt`）；
+/// 统一把 `\` 归一为 `/` 后逐段校验，拒绝空段、`.`、`..` 与绝对路径，
+/// 防止拖放数据逃逸出目标目录。同名文件由调用方直接覆盖（File::create 语义）。
+pub async fn prepare_save_path(local_dir: &str, rel_name: &str) -> AppResult<PathBuf> {
+    let mut target = validate_absolute(local_dir)?;
+    let rel = rel_name.replace('\\', "/");
+    let rel = rel.trim_matches('/');
+    if rel.is_empty() {
+        return Err(AppError::BadRequest("empty save name".into()));
+    }
+    for seg in rel.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return Err(AppError::BadRequest(format!(
+                "invalid segment in save name: {rel_name}"
+            )));
+        }
+        target.push(seg);
+    }
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| io_err("create_dir_all", e))?;
+    }
+    Ok(target)
 }

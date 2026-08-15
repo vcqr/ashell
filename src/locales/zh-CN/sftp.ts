@@ -28,6 +28,10 @@ export default {
     selectionCount: "已勾选 {count} 个文件",
     dragGhost: "{count} 个文件 → 远程",
     ctxUpload: "上传此文件",
+    dropHint: "释放以复制到 {dir}",
+    dropNeedsDir: "本地栏处于\"此电脑\"页，请先进入具体目录",
+    importDone: "已复制 {count} 个文件到本地目录",
+    importPartial: "复制完成：成功 {ok}，失败 {fail}",
     loadFailed: "本地目录读取失败：{error}",
   },
   transferBar: {

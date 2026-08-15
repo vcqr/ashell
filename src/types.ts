@@ -154,6 +154,19 @@ export interface SftpListResp {
   files: SftpFile[]
 }
 
+/** OS 拖放 / webkitdirectory 收集到的单个文件条目
+ *  relPath 形如 "myfolder/sub/a.txt"（顶层文件为纯文件名） */
+export interface OsDropEntry {
+  file: File
+  relPath: string
+}
+
+/** OS 拖放收集到的顶层文件夹（含递归展开后的条目） */
+export interface OsDropFolder {
+  name: string
+  entries: OsDropEntry[]
+}
+
 /** 上传 / 下载任务的 UI 状态 */
 export type TransferStatus = 'pending' | 'running' | 'done' | 'error' | 'cancelled'
 

@@ -28,6 +28,10 @@ export default {
     selectionCount: "{count} file(s) checked",
     dragGhost: "{count} file(s) → remote",
     ctxUpload: "Upload this file",
+    dropHint: "Drop to copy to {dir}",
+    dropNeedsDir: "The local pane is on the This PC page; open a directory first",
+    importDone: "Copied {count} file(s) to the local directory",
+    importPartial: "Copy finished: {ok} succeeded, {fail} failed",
     loadFailed: "Failed to read local directory: {error}",
   },
   transferBar: {

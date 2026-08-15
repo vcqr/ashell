@@ -105,6 +105,8 @@ interface RequestOptions {
   body?: unknown
   /** 取消信号 */
   signal?: GenericAbortSignal
+  /** 请求超时（毫秒）；0 = 不超时，缺省走实例默认 30s（大文件传输需显式传 0） */
+  timeout?: number
   /** 自定义 headers */
   headers?: Record<string, string>
   /** 仅在 raw 模式下使用：响应类型 */
@@ -140,6 +142,7 @@ function buildAxiosConfig(
     data,
     headers: opts.headers,
     signal: opts.signal,
+    timeout: opts.timeout,
     onUploadProgress: opts.onUploadProgress,
     onDownloadProgress: opts.onDownloadProgress,
     ...override,
