@@ -44,3 +44,46 @@ export async function openTabInNewWindow(tab: TerminalTab): Promise<void> {
     console.error("[ashell] failed to create new window:", e)
   })
 }
+
+export interface OpenSftpWindowOptions {
+  sid: string
+  title: string
+  addr?: string
+}
+
+/**
+ * 把 SFTP 面板弹出到独立窗口。
+ *
+ * 与终端新窗口（重新建连）不同，SFTP 窗口直接复用当前 SSH 会话：会话
+ * 存活在后端 axum 进程里，新窗口凭相同 token 用同一个 sid 调 SFTP 接口
+ * 即可。因此独立窗口的生命周期跟随原终端 tab--tab 断开/关闭后，独立
+ * 窗口内的 SFTP 操作会失败。
+ */
+export async function openSftpInNewWindow(opts: OpenSftpWindowOptions): Promise<void> {
+  seq += 1
+  const label = `ashell-sftp-${Date.now()}-${seq}`
+
+  const base = window.location.href.split("?")[0]
+  const params = new URLSearchParams()
+  params.set("newwin", "1")
+  params.set("kind", "sftp")
+  params.set("sid", opts.sid)
+  if (opts.addr) params.set("addr", opts.addr)
+  params.set("title", opts.title)
+  const url = `${base}?${params.toString()}`
+
+  const webview = new WebviewWindow(label, {
+    url,
+    title: opts.title ? `SFTP - ${opts.title}` : "SFTP",
+    width: 1100,
+    height: 720,
+    minWidth: 860,
+    minHeight: 480,
+    decorations: false,
+    center: true,
+  })
+
+  webview.once("tauri://error", (e) => {
+    console.error("[ashell] failed to create sftp window:", e)
+  })
+}

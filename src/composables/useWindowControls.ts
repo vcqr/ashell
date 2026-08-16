@@ -2,18 +2,8 @@ import { nextTick, onBeforeUnmount, ref, type Ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useBroadcastStore } from "@/stores/broadcast";
 import { useTerminalStore } from "@/stores/terminal";
+import { detectMac } from "@/utils/platform";
 import type { TerminalViewExposed } from "./useTabs";
-
-function detectMac(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  const platform =
-    (navigator as Navigator & { userAgentData?: { platform?: string } })
-      .userAgentData?.platform ||
-    navigator.platform ||
-    "";
-  return /Mac|iPhone|iPad|iPod/i.test(`${ua} ${platform}`);
-}
 
 /**
  * 窗口控制与窗口级生命周期：最大化/最小化/关闭、平台检测、跨窗口广播初始化、

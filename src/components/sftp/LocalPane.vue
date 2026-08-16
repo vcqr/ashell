@@ -12,8 +12,9 @@ import {
   useMessage,
 } from "naive-ui"
 import type {
-  DropdownOption,
   DataTableColumns,
+  DataTableSortState,
+  DropdownOption,
   InputInst,
 } from "naive-ui"
 import {
@@ -34,6 +35,7 @@ import type { OsDropFolder, SftpFile, TransferTask } from "@/types"
 import { formatUnix } from "@/utils/time"
 import { humanSize } from "@/utils/humanSize"
 import { useFileDrag } from "@/composables/useFileDrag"
+import { useMultiSelect } from "@/composables/useMultiSelect"
 
 const props = defineProps<{
   /** 双栏打开时父组件持久化的本地目录（v-model:dir） */
@@ -44,10 +46,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:dir", dir: string): void
-  /** 本地勾选数变化（中间条上传按钮据此启停） */
-  (e: "selection-change", count: number): void
+  /** 选中集变化（支持 Ctrl/Shift 多选，中间条上传按钮据此启停） */
+  (e: "select", files: SftpFile[]): void
   /** 本地文件拖放到远程栏（或直接上传请求） */
   (e: "transfer-up", files: SftpFile[]): void
+  /** 右键目录"上传此目录"：由父组件递归收集并整体上传到远程当前目录 */
+  (e: "transfer-dir-up", dir: SftpFile): void
+  /** 右键"上传选中项"（多选）：复用父组件 -> 按钮的分流逻辑 */
+  (e: "upload-selection"): void
   /** OS 拖放复制任务开始（父组件据此自动打开下载列表弹窗显示进度） */
   (e: "copy-started"): void
 }>()
@@ -62,7 +68,6 @@ const loading = ref(false)
 const currentPath = ref(props.dir || "")
 /** "此电脑"页：展示盘符（Windows）/ 根（Unix），非真实目录 */
 const viewingRoots = ref(false)
-const checkedKeys = ref<string[]>([])
 const pathEditing = ref(false)
 const pathDraft = ref("")
 const pathInputRef = ref<InputInst | null>(null)
@@ -72,23 +77,24 @@ const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuTarget = ref<SftpFile | null>(null)
 
-const selectedFiles = computed(() =>
-  files.value.filter(
-    (f) => f.file_type === "file" && checkedKeys.value.includes(f.full_path),
-  ),
-)
+/* ---------- 多选（与远程栏共用 useMultiSelect 语义） ---------- */
+
+const {
+  selectedFiles,
+  isSelected,
+  selectExclusive,
+  onRowClick: onRowSelect,
+  collectForTransfer,
+  clearSelection,
+} = useMultiSelect(files)
 
 /* ---------- 拖拽：本地 -> 远程（上传） ---------- */
 
 const { dragging, ghostX, ghostY, dragCount, onRowPointerdown } = useFileDrag({
   collectFiles(row) {
     if (viewingRoots.value) return []
-    // 有勾选且按在勾选行上：拖全部勾选；否则拖当前单行（WinSCP 语义）
-    const sel = selectedFiles.value
-    if (sel.length > 0 && sel.some((f) => f.full_path === row.full_path)) {
-      return sel
-    }
-    return row.file_type === "file" ? [row] : []
+    // 行在选择集内则拖整个选择集（文件行），否则拖当前行（WinSCP 语义）
+    return collectForTransfer(row)
   },
   onDrop(files, zone) {
     if (zone === "remote") {
@@ -96,12 +102,6 @@ const { dragging, ghostX, ghostY, dragCount, onRowPointerdown } = useFileDrag({
     }
   },
 })
-
-watch(
-  checkedKeys,
-  () => emit("selection-change", selectedFiles.value.length),
-  { deep: true },
-)
 
 /** 盘符根（D:\ / C:/）判定：可继续上溯到"此电脑"页 */
 function isDriveRoot(p: string): boolean {
@@ -132,10 +132,11 @@ async function load(path?: string) {
   loading.value = true
   try {
     const resp = await listLocalFs(path ?? currentPath.value)
-    files.value = resp.files
+    files.value = applySort(resp.files)
     currentPath.value = resp.path
     viewingRoots.value = false
-    checkedKeys.value = []
+    clearSelection()
+    emit("select", [])
     emit("update:dir", resp.path)
   } catch (e) {
     message.error(t("sftp.localPane.loadFailed", { error: (e as Error).message }))
@@ -150,9 +151,10 @@ async function goRoots() {
   loading.value = true
   try {
     const resp = await listLocalFsRoots()
-    files.value = resp.files
+    files.value = applySort(resp.files)
     viewingRoots.value = true
-    checkedKeys.value = []
+    clearSelection()
+    emit("select", [])
   } catch (e) {
     message.error(t("sftp.localPane.loadFailed", { error: (e as Error).message }))
   } finally {
@@ -233,6 +235,68 @@ function dirFirst(a: SftpFile, b: SftpFile): number {
   return da - db
 }
 
+/* 列排序必须受控（同远程栏）：sorter 交给 NDataTable 内部做会导致显示
+   顺序与 files.value 错位，Shift 区间选择按 files.value 索引取区间会跳选 */
+function cmpDefault(a: SftpFile, b: SftpFile): number {
+  const d = dirFirst(a, b)
+  if (d !== 0) return d
+  return a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
+}
+
+function cmpSize(a: SftpFile, b: SftpFile): number {
+  const d = dirFirst(a, b)
+  if (d !== 0) return d
+  const sa = typeof a.size_bytes === "number" ? a.size_bytes : -1
+  const sb = typeof b.size_bytes === "number" ? b.size_bytes : -1
+  return sa - sb
+}
+
+function cmpMtime(a: SftpFile, b: SftpFile): number {
+  const d = dirFirst(a, b)
+  if (d !== 0) return d
+  const ma = typeof a.mtime === "number" ? a.mtime : null
+  const mb = typeof b.mtime === "number" ? b.mtime : null
+  if (ma === null && mb === null) return 0
+  if (ma === null) return 1
+  if (mb === null) return -1
+  return ma - mb
+}
+
+const sortState = ref<{
+  columnKey: string | null
+  order: false | "ascend" | "descend"
+}>({ columnKey: null, order: false })
+
+/** 按当前排序状态重排列表（descend 反转；无排序时回到默认目录优先+名字） */
+function applySort(list: SftpFile[]): SftpFile[] {
+  const cmp =
+    sortState.value.columnKey === "size"
+      ? cmpSize
+      : sortState.value.columnKey === "mtime"
+        ? cmpMtime
+        : cmpDefault
+  const sorted = [...list].sort(cmp)
+  return sortState.value.order === "descend" ? sorted.reverse() : sorted
+}
+
+function onLocalSort(s: DataTableSortState | DataTableSortState[]) {
+  const st = Array.isArray(s) ? s[s.length - 1] : s
+  if (!st) return
+  sortState.value = {
+    columnKey: st.columnKey != null ? String(st.columnKey) : null,
+    order: st.order,
+  }
+  files.value = applySort(files.value)
+}
+
+/** 点击表格空白区清空选择集；点表头（排序/调列宽）不清空，避免丢选择 */
+function onTableAreaClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (target?.closest(".n-data-table-th, .n-data-table-tr")) return
+  clearSelection()
+  emit("select", [])
+}
+
 function fileIcon(row: SftpFile) {
   return h(
     NIcon,
@@ -257,23 +321,13 @@ function fileIcon(row: SftpFile) {
 
 const columns = computed<DataTableColumns<SftpFile>>(() => [
   {
-    type: "selection",
-    disabled(row) {
-      // 目录暂不支持递归上传；"此电脑"页不可勾选
-      return viewingRoots.value || row.file_type !== "file"
-    },
-  },
-  {
     title: t("sftp.columns.name"),
     key: "file_name",
     minWidth: 150,
     resizable: true,
     ellipsis: { tooltip: true },
-    sorter: (a, b) => {
-      const d = dirFirst(a, b)
-      if (d !== 0) return d
-      return a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
-    },
+    sorter: cmpDefault,
+    sortOrder: sortState.value.columnKey === "file_name" ? sortState.value.order : false,
     render(row) {
       return h("div", { class: "name-cell" }, [
         fileIcon(row),
@@ -289,13 +343,8 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
     key: "size",
     width: 84,
     resizable: true,
-    sorter: (a, b) => {
-      const d = dirFirst(a, b)
-      if (d !== 0) return d
-      const sa = typeof a.size_bytes === "number" ? a.size_bytes : -1
-      const sb = typeof b.size_bytes === "number" ? b.size_bytes : -1
-      return sa - sb
-    },
+    sorter: cmpSize,
+    sortOrder: sortState.value.columnKey === "size" ? sortState.value.order : false,
     render(row) {
       if (row.file_type === "dir") return "-"
       return typeof row.size_bytes === "number" ? humanSize(row.size_bytes) : row.size || "-"
@@ -304,18 +353,11 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
   {
     title: t("sftp.columns.modifyTime"),
     key: "mtime",
-    width: 140,
+    // 与远程栏的 170 对齐：140 会放不下完整时间导致换行
+    width: 170,
     resizable: true,
-    sorter: (a, b) => {
-      const d = dirFirst(a, b)
-      if (d !== 0) return d
-      const ma = typeof a.mtime === "number" ? a.mtime : null
-      const mb = typeof b.mtime === "number" ? b.mtime : null
-      if (ma === null && mb === null) return 0
-      if (ma === null) return 1
-      if (mb === null) return -1
-      return ma - mb
-    },
+    sorter: cmpMtime,
+    sortOrder: sortState.value.columnKey === "mtime" ? sortState.value.order : false,
     render(row) {
       return formatUnix(row.mtime ?? null)
     },
@@ -326,11 +368,23 @@ const rowKey = (row: SftpFile) => row.full_path
 
 function rowProps(row: SftpFile) {
   return {
+    class: isSelected(row) ? "row-selected" : "",
     style: {
       // 可拖拽的文件行提示 grab；目录/盘符双击进入，保持箭头
       cursor: !viewingRoots.value && row.file_type === "file" ? "grab" : "default",
     },
-    onPointerdown: (e: PointerEvent) => onRowPointerdown(row, e),
+    onPointerdown: (e: PointerEvent) => {
+      // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
+      // （click 阶段已经选完了）
+      if (e.shiftKey) e.preventDefault()
+      onRowPointerdown(row, e)
+    },
+    onClick: (e: MouseEvent) => {
+      e.stopPropagation()
+      onRowSelect(row, e)
+      ctxMenuVisible.value = false
+      emit("select", selectedFiles.value)
+    },
     onDblclick: (e: MouseEvent) => {
       e.stopPropagation()
       if (row.file_type === "dir") {
@@ -343,6 +397,8 @@ function rowProps(row: SftpFile) {
     onContextmenu: (e: MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
+      // 资源管理器语义：右键未选中的行时独占选中，已选中则保持集合
+      if (!isSelected(row)) selectExclusive(row)
       openCtxMenu(e, row)
     },
   }
@@ -395,10 +451,23 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       icon: () => h(NIcon, null, () => h(CopyOutline)),
     },
   ]
-  if (row.file_type === "file" && !viewingRoots.value) {
+  // 多选（右键行必然在选择集内）：合并为批量上传项；单选按行类型单项
+  if (selectedFiles.value.length > 1) {
+    opts.push({
+      key: "upload-selection",
+      label: t("sftp.localPane.ctxUploadMulti", { count: selectedFiles.value.length }),
+      icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
+    })
+  } else if (row.file_type === "file" && !viewingRoots.value) {
     opts.push({
       key: "upload",
       label: t("sftp.localPane.ctxUpload"),
+      icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
+    })
+  } else if (row.file_type === "dir" && !viewingRoots.value) {
+    opts.push({
+      key: "upload-dir",
+      label: t("sftp.localPane.ctxUploadDir"),
       icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
     })
   }
@@ -422,6 +491,12 @@ function onCtxMenuSelect(key: string) {
     if (row.file_type === "file") {
       emit("transfer-up", [row])
     }
+  } else if (key === "upload-dir") {
+    if (row.file_type === "dir") {
+      emit("transfer-dir-up", row)
+    }
+  } else if (key === "upload-selection") {
+    emit("upload-selection")
   }
 }
 
@@ -540,7 +615,6 @@ async function importOsFiles(topFiles: File[], folders: OsDropFolder[]) {
 
 defineExpose({
   refresh,
-  getSelectedFiles: () => selectedFiles.value,
   importOsFiles,
 })
 
@@ -555,17 +629,14 @@ watch(
 )
 
 onMounted(() => {
-  // 初始（及重新挂载后）向父组件通报一次选中数，避免中间条按钮状态残留
-  emit("selection-change", 0)
   void load(props.dir || undefined)
 })
 </script>
 
 <template>
   <div class="local-pane" data-drop-zone="local" @contextmenu="onBlankContextMenu">
-    <div class="pane-title">{{ t("sftp.localPane.title") }}</div>
-
     <div class="path-bar">
+      <span class="pane-label">{{ t("sftp.localPane.title") }}</span>
       <NButton
         size="small"
         quaternary
@@ -638,7 +709,7 @@ onMounted(() => {
       </NButton>
     </div>
 
-    <NSpin :show="loading" class="table-wrap">
+    <NSpin :show="loading" class="table-wrap" @click="onTableAreaClick">
       <NDataTable
         v-if="files.length > 0"
         size="small"
@@ -646,15 +717,11 @@ onMounted(() => {
         :data="files"
         :row-key="rowKey"
         :row-props="rowProps"
-        :checked-row-keys="checkedKeys"
         :bordered="false"
         :single-line="false"
         flex-height
         class="file-table"
-        @update:checked-row-keys="
-          (keys: Array<string | number>) =>
-            (checkedKeys = keys.map((k) => String(k)))
-        "
+        @update:sorter="onLocalSort"
       />
       <NEmpty
         v-else
@@ -662,12 +729,6 @@ onMounted(() => {
         style="margin-top: 40px"
       />
     </NSpin>
-
-    <div class="pane-actions">
-      <span class="selection-info">
-        {{ t("sftp.localPane.selectionCount", { count: selectedFiles.length }) }}
-      </span>
-    </div>
 
     <NDropdown
       trigger="manual"
@@ -703,12 +764,13 @@ onMounted(() => {
   gap: 6px;
 }
 
-.pane-title {
+.pane-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--ashell-text-muted);
   letter-spacing: 0.5px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .path-bar {
@@ -779,6 +841,11 @@ onMounted(() => {
   height: 100%;
 }
 
+/* 点选行高亮（与远程栏 .row-selected 同款） */
+.file-table :deep(.n-data-table-tr.row-selected .n-data-table-td) {
+  background-color: var(--ashell-row-selected, rgba(99, 153, 255, 0.16));
+}
+
 .name-cell {
   display: flex;
   align-items: center;
@@ -790,20 +857,6 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.pane-actions {
-  display: flex;
-  align-items: center;
-  padding-top: 6px;
-  border-top: 1px solid var(--ashell-border-soft);
-  flex-shrink: 0;
-  min-height: 30px;
-}
-
-.selection-info {
-  font-size: 12px;
-  color: var(--ashell-text-muted);
 }
 
 .drag-ghost {

@@ -16,7 +16,12 @@ import {
   useDialog,
   useMessage,
 } from "naive-ui"
-import type { DataTableColumns, InputInst, UploadCustomRequestOptions } from "naive-ui"
+import type {
+  DataTableColumns,
+  DataTableSortState,
+  InputInst,
+  UploadCustomRequestOptions,
+} from "naive-ui"
 import {
   ArrowUpOutline,
   ArrowBackOutline,
@@ -32,6 +37,7 @@ import {
   FolderOutline,
   LaptopOutline,
   LinkOutline,
+  OpenOutline,
   RefreshOutline,
   SendOutline,
   SparklesOutline,
@@ -63,14 +69,23 @@ import FileEditor from "@/components/sftp/FileEditor.vue"
 import FilePreview from "@/components/sftp/FilePreview.vue"
 import LocalPane from "@/components/sftp/LocalPane.vue"
 import { isPreviewable } from "@/utils/fileType"
-import { downloadToLocal, transferProgress, uploadLocalToRemote } from "@/api/local"
+import {
+  downloadToLocal,
+  listLocalFs,
+  transferProgress,
+  uploadLocalToRemote,
+} from "@/api/local"
+import { openSftpInNewWindow } from "@/utils/newWindow"
 import { useFileDrag } from "@/composables/useFileDrag"
+import { useMultiSelect } from "@/composables/useMultiSelect"
 
 interface Props {
   open: boolean
   sid: string | null
   hostName?: string
   hostAddr?: string
+  /** 独立窗口模式：面板铺满窗口、无宽度拖拽，关闭按钮直接关窗口 */
+  standalone?: boolean
 }
 
 const props = defineProps<Props>()
@@ -88,7 +103,17 @@ const startupStore = useStartupStore()
 const loading = ref(false)
 const files = ref<SftpFile[]>([])
 const currentPath = ref<string>("/")
-const selectedKey = ref<string | null>(null)
+
+/* ---------- 远程栏多选（与本地栏共用 useMultiSelect 语义） ---------- */
+
+const {
+  selectedFiles: remoteSelectedFiles,
+  isSelected: isRemoteSelected,
+  selectExclusive: selectRemoteExclusive,
+  onRowClick: onRemoteRowClick,
+  collectForTransfer: collectRemoteForTransfer,
+  clearSelection: clearRemoteSelection,
+} = useMultiSelect(files)
 
 const mkdirOpen = ref(false)
 const mkdirMode = ref<"mkdir" | "touch">("mkdir")
@@ -222,16 +247,10 @@ async function load(path?: string) {
   try {
     const target = path !== undefined ? normalizePath(path) : currentPath.value
     const resp = await listSftp(sid, target)
-    const sorted = [...resp.files].sort((a, b) => {
-      // 目录优先；同类按名字
-      const da = a.file_type === "dir" ? 0 : 1
-      const db = b.file_type === "dir" ? 0 : 1
-      if (da !== db) return da - db
-      return a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
-    })
-    files.value = sorted
+    // 排序状态跨目录保留（与受控前 NDataTable 内部排序行为一致）
+    files.value = applySort(resp.files)
     currentPath.value = resp.path || target
-    selectedKey.value = null
+    clearRemoteSelection()
     store.setPath(sid, currentPath.value)
   } catch (e) {
     message.error(t("sftp.message.loadFailed", { error: (e as Error).message }))
@@ -304,32 +323,57 @@ async function onRenameSubmit(newName: string) {
   }
 }
 
-async function onRemove(file: SftpFile) {
-  if (!props.sid) return
-  try {
-    if (file.file_type === "dir") {
-      await removeDir(props.sid, file.full_path)
-    } else {
-      await removeFile(props.sid, file.full_path)
+/** 逐条删除（目录 removeDir / 文件 removeFile），汇总成功/失败后刷新。
+ *  单条失败沿用具体错误文案；多条时部分成功给 warning 汇总。 */
+async function removeEntries(targets: SftpFile[]) {
+  if (!props.sid || targets.length === 0) return
+  const sid = props.sid
+  let ok = 0
+  let fail = 0
+  let firstError = ""
+  for (const f of targets) {
+    try {
+      if (f.file_type === "dir") {
+        await removeDir(sid, f.full_path)
+      } else {
+        await removeFile(sid, f.full_path)
+      }
+      ok++
+    } catch (e) {
+      fail++
+      if (!firstError) firstError = (e as Error).message
     }
-    message.success(t("sftp.message.deleted"))
-    await load()
-  } catch (e) {
-    message.error(t("sftp.message.deleteFailed", { error: (e as Error).message }))
   }
+  if (fail === 0) {
+    message.success(t("sftp.message.deleted"))
+  } else if (targets.length === 1) {
+    message.error(t("sftp.message.deleteFailed", { error: firstError }))
+  } else {
+    message.warning(t("sftp.message.deletePartial", { ok, fail }))
+  }
+  await load()
 }
 
 function confirmRemove(file: SftpFile) {
+  // 右键行在选择集内：作用于整个选择集（批量）；否则删除右键的单个条目
+  const targets = isRemoteSelected(file) ? remoteSelectedFiles.value : [file]
+  const content =
+    targets.length > 1
+      ? t("sftp.dialog.deleteConfirmMulti", { count: targets.length })
+      : t("sftp.dialog.deleteConfirm", {
+          type:
+            file.file_type === "dir"
+              ? t("sftp.dialog.typeFolder")
+              : t("sftp.dialog.typeFile"),
+          name: file.file_name,
+        })
   dialog.warning({
     title: t("sftp.dialog.deleteTitle"),
-    content: t("sftp.dialog.deleteConfirm", {
-      type: file.file_type === "dir" ? t("sftp.dialog.typeFolder") : t("sftp.dialog.typeFile"),
-      name: file.file_name,
-    }),
+    content,
     positiveText: t("common.delete"),
     negativeText: t("common.cancel"),
     onPositiveClick: () => {
-      void onRemove(file)
+      void removeEntries(targets)
     },
   })
 }
@@ -356,30 +400,9 @@ function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-async function onDownload(file: SftpFile) {
+/** 经 webview 下载单个文件到本机（下载任务 + 进度 + 取消） */
+async function downloadViaBrowser(file: SftpFile) {
   if (!props.sid) return
-  if (file.file_type !== "file") {
-    message.warning(t("sftp.message.downloadOnlyFile"))
-    return
-  }
-  // 双栏模式：直接落盘到本地栏当前目录，不弹另存为对话框
-  if (dualPane.value && localDir.value) {
-    await downloadToLocalDir(file)
-    return
-  }
-  const confirmed = await new Promise<boolean>((resolve) => {
-    dialog.info({
-      title: t("sftp.dialog.downloadTitle"),
-      content: t("sftp.dialog.downloadConfirm", { name: file.file_name }),
-      positiveText: t("common.download"),
-      negativeText: t("common.cancel"),
-      onPositiveClick: () => resolve(true),
-      onNegativeClick: () => resolve(false),
-      onClose: () => resolve(false),
-      onMaskClick: () => resolve(false),
-    })
-  })
-  if (!confirmed) return
   const sid = props.sid
   const ctrl = new AbortController()
   const taskId = genId()
@@ -431,6 +454,57 @@ async function onDownload(file: SftpFile) {
       store.updateDownload(sid, taskId, { status: "error", error: err.message })
       message.error(t("sftp.message.downloadFailed", { error: err.message }))
     }
+  }
+}
+
+function confirmDownload(content: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    dialog.info({
+      title: t("sftp.dialog.downloadTitle"),
+      content,
+      positiveText: t("common.download"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => resolve(true),
+      onNegativeClick: () => resolve(false),
+      onClose: () => resolve(false),
+      onMaskClick: () => resolve(false),
+    })
+  })
+}
+
+async function onDownload(file: SftpFile) {
+  if (!props.sid) return
+  if (file.file_type !== "file") {
+    message.warning(t("sftp.message.downloadOnlyFile"))
+    return
+  }
+  // 双栏模式：直接落盘到本地栏当前目录，不弹另存为对话框
+  if (dualPane.value && localDir.value) {
+    await downloadToLocalDir(file)
+    return
+  }
+  const confirmed = await confirmDownload(
+    t("sftp.dialog.downloadConfirm", { name: file.file_name }),
+  )
+  if (!confirmed) return
+  await downloadViaBrowser(file)
+}
+
+/** 批量下载（右键作用于多选集）：双栏直落本地栏目录；单栏一次确认后逐个下载 */
+async function onDownloadMulti(files: SftpFile[]) {
+  if (!props.sid || files.length === 0) return
+  if (dualPane.value && localDir.value) {
+    for (const f of files) {
+      await downloadToLocalDir(f)
+    }
+    return
+  }
+  const confirmed = await confirmDownload(
+    t("sftp.dialog.downloadConfirmMulti", { count: files.length }),
+  )
+  if (!confirmed) return
+  for (const f of files) {
+    await downloadViaBrowser(f)
   }
 }
 
@@ -539,6 +613,135 @@ async function onLocalUpload(sel: SftpFile[]) {
     } finally {
       stopPolling()
     }
+  }
+  await load()
+}
+
+/** 递归收集本地目录树：dirs 为相对路径目录集，list 为文件清单
+ *  （rel 相对顶层目录）。不跟随符号链接，深度上限防御自引用环。 */
+async function walkLocalDir(
+  localDir: string,
+  prefix: string,
+  dirs: Set<string>,
+  list: Array<{ rel: string; path: string; size: number }>,
+  depth = 0,
+): Promise<void> {
+  if (depth > 32) return
+  const resp = await listLocalFs(localDir)
+  for (const f of resp.files) {
+    if (f.file_type === "symlink") continue
+    const rel = prefix ? `${prefix}/${f.file_name}` : f.file_name
+    if (f.file_type === "dir") {
+      dirs.add(rel)
+      await walkLocalDir(f.full_path, rel, dirs, list, depth + 1)
+    } else {
+      list.push({ rel, path: f.full_path, size: f.size_bytes ?? 0 })
+    }
+  }
+}
+
+/** 本地栏右键"上传此目录"：把本地目录树整体上传到远程当前目录
+ *  （复用 Rust 进程内直传、上传任务列表与进度轮询） */
+async function onLocalDirUpload(dirRow: SftpFile) {
+  if (!props.sid || dirRow.file_type !== "dir") return
+  const sid = props.sid
+  const topName = dirRow.file_name
+  const baseDir = currentPath.value
+
+  // 顶层同名确认（与"上传文件夹"按钮一致）
+  const exists = files.value.some(
+    (f) => f.file_name.toLowerCase() === topName.toLowerCase(),
+  )
+  if (exists) {
+    const ok = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: t("sftp.dialog.uploadOverwriteTitle"),
+        content: t("sftp.dialog.uploadOverwriteConfirm", { name: topName }),
+        positiveText: t("common.overwrite"),
+        negativeText: t("common.cancel"),
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+        onClose: () => resolve(false),
+        onMaskClick: () => resolve(false),
+      })
+    })
+    if (!ok) return
+  }
+
+  // 收集目录树（loopback 本地盘遍历）
+  const dirs = new Set<string>()
+  const list: Array<{ rel: string; path: string; size: number }> = []
+  try {
+    await walkLocalDir(dirRow.full_path, "", dirs, list)
+  } catch (e) {
+    message.error(t("sftp.localPane.loadFailed", { error: (e as Error).message }))
+    return
+  }
+
+  // 预建目录：顶层 + 子目录按层级排序；已存在导致的失败忽略（覆盖场景下属预期）
+  const allDirs = [topName, ...dirs].sort((a, b) => {
+    const da = a.split("/").length
+    const db = b.split("/").length
+    if (da !== db) return da - db
+    return a.localeCompare(b)
+  })
+  for (const rel of allDirs) {
+    try {
+      await mkdirApi(sid, joinPath(baseDir, rel))
+    } catch {
+      // ignore：目录已存在等，继续传文件
+    }
+  }
+
+  // 串行直传 + 任务/进度
+  let okCount = 0
+  let failCount = 0
+  for (const ent of list) {
+    const remotePath = joinPath(baseDir, `${topName}/${ent.rel}`)
+    const ctrl = new AbortController()
+    const taskId = genId()
+    const task: TransferTask = {
+      id: taskId,
+      sid,
+      filename: remotePath,
+      remoteDir: parentPath(remotePath),
+      total: ent.size,
+      loaded: 0,
+      status: "running",
+      controller: ctrl,
+      startedAt: Date.now(),
+    }
+    store.addUpload(sid, task)
+    const stopPolling = pollDirectTransferProgress("upload", sid, taskId, ent.size)
+    try {
+      await uploadLocalToRemote(sid, ent.path, remotePath, {
+        signal: ctrl.signal,
+        taskId,
+      })
+      store.updateUpload(sid, taskId, {
+        loaded: ent.size,
+        total: ent.size,
+        status: "done",
+      })
+      okCount++
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateUpload(sid, taskId, { status: "cancelled" })
+      } else {
+        store.updateUpload(sid, taskId, {
+          status: "error",
+          error: (e as Error).message,
+        })
+      }
+      failCount++
+    } finally {
+      stopPolling()
+    }
+  }
+  if (failCount === 0) {
+    message.success(t("sftp.message.dirUploadDone", { count: okCount }))
+  } else {
+    message.warning(t("sftp.message.dirUploadPartial", { ok: okCount, fail: failCount }))
   }
   await load()
 }
@@ -994,6 +1197,68 @@ function dirFirst(a: SftpFile, b: SftpFile): number {
   return da - db
 }
 
+/* 列排序必须受控：sorter 若交给 NDataTable 内部做，点列头后显示顺序
+   与 files.value 会错位，而 Shift 区间选择按 files.value 索引取区间，
+   错位就跳选。这里持有排序状态并在点列头时重排 files.value。 */
+function cmpDefault(a: SftpFile, b: SftpFile): number {
+  const d = dirFirst(a, b)
+  if (d !== 0) return d
+  return a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
+}
+
+function cmpSize(a: SftpFile, b: SftpFile): number {
+  const d = dirFirst(a, b)
+  if (d !== 0) return d
+  const sa = typeof a.size_bytes === "number" ? a.size_bytes : -1
+  const sb = typeof b.size_bytes === "number" ? b.size_bytes : -1
+  return sa - sb
+}
+
+function cmpMtime(a: SftpFile, b: SftpFile): number {
+  const d = dirFirst(a, b)
+  if (d !== 0) return d
+  const ma = typeof a.mtime === "number" ? a.mtime : null
+  const mb = typeof b.mtime === "number" ? b.mtime : null
+  if (ma === null && mb === null) return 0
+  if (ma === null) return 1
+  if (mb === null) return -1
+  return ma - mb
+}
+
+const sortState = ref<{
+  columnKey: string | null
+  order: false | "ascend" | "descend"
+}>({ columnKey: null, order: false })
+
+/** 按当前排序状态重排列表（descend 反转；无排序时回到默认目录优先+名字） */
+function applySort(list: SftpFile[]): SftpFile[] {
+  const cmp =
+    sortState.value.columnKey === "size"
+      ? cmpSize
+      : sortState.value.columnKey === "mtime"
+        ? cmpMtime
+        : cmpDefault
+  const sorted = [...list].sort(cmp)
+  return sortState.value.order === "descend" ? sorted.reverse() : sorted
+}
+
+function onRemoteSort(s: DataTableSortState | DataTableSortState[]) {
+  const st = Array.isArray(s) ? s[s.length - 1] : s
+  if (!st) return
+  sortState.value = {
+    columnKey: st.columnKey != null ? String(st.columnKey) : null,
+    order: st.order,
+  }
+  files.value = applySort(files.value)
+}
+
+/** 点击表格空白区清空选择集；点表头（排序/调列宽）不清空，避免丢选择 */
+function onRemoteTableClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (target?.closest(".n-data-table-th, .n-data-table-tr")) return
+  clearRemoteSelection()
+}
+
 /** 权限单段着色（perm 为 9 位符号串，start 为段起始下标 0/3/6）：
  *  rwx 绿、rw- 蓝、其余默认。 */
 function triadColor(perm: string, start: number): string | null {
@@ -1010,11 +1275,8 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
     title: t("sftp.columns.name"),
     key: "file_name",
     minWidth: 220,
-    sorter: (a, b) => {
-      const d = dirFirst(a, b)
-      if (d !== 0) return d
-      return a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
-    },
+    sorter: cmpDefault,
+    sortOrder: sortState.value.columnKey === "file_name" ? sortState.value.order : false,
     render(row) {
       return h("div", { class: "name-cell" }, [
         fileIcon(row),
@@ -1032,13 +1294,8 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
     key: "size",
     width: 96,
     resizable: true,
-    sorter: (a, b) => {
-      const d = dirFirst(a, b)
-      if (d !== 0) return d
-      const sa = typeof a.size_bytes === "number" ? a.size_bytes : -1
-      const sb = typeof b.size_bytes === "number" ? b.size_bytes : -1
-      return sa - sb
-    },
+    sorter: cmpSize,
+    sortOrder: sortState.value.columnKey === "size" ? sortState.value.order : false,
     render(row) {
       if (row.file_type === "dir") return "-"
       if (typeof row.size_bytes === "number") return humanSize(row.size_bytes)
@@ -1074,16 +1331,8 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
     key: "mtime",
     width: 170,
     resizable: true,
-    sorter: (a, b) => {
-      const d = dirFirst(a, b)
-      if (d !== 0) return d
-      const ma = typeof a.mtime === "number" ? a.mtime : null
-      const mb = typeof b.mtime === "number" ? b.mtime : null
-      if (ma === null && mb === null) return 0
-      if (ma === null) return 1
-      if (mb === null) return -1
-      return ma - mb
-    },
+    sorter: cmpMtime,
+    sortOrder: sortState.value.columnKey === "mtime" ? sortState.value.order : false,
     render(row) {
       return formatUnix(row.mtime ?? null)
     },
@@ -1094,17 +1343,20 @@ const rowKey = (row: SftpFile) => row.full_path
 
 function rowProps(row: SftpFile) {
   return {
-    class: selectedKey.value === row.full_path ? "row-selected" : "",
+    class: isRemoteSelected(row) ? "row-selected" : "",
     style: {
       // 双栏模式下文件行可拖到本地栏，提示 grab
       cursor: dualPane.value && row.file_type === "file" ? "grab" : "default",
     },
     onPointerdown: (e: PointerEvent) => {
+      // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
+      // （click 阶段已经选完了）
+      if (e.shiftKey) e.preventDefault()
       if (dualPane.value) remoteDrag.onRowPointerdown(row, e)
     },
     onClick: (e: MouseEvent) => {
       e.stopPropagation()
-      selectedKey.value = row.full_path
+      onRemoteRowClick(row, e)
       ctxMenuVisible.value = false
     },
     onDblclick: (e: MouseEvent) => {
@@ -1122,7 +1374,8 @@ function rowProps(row: SftpFile) {
     onContextmenu: (e: MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      selectedKey.value = row.full_path
+      // 资源管理器语义：右键未选中的行时独占选中，已选中则保持集合
+      if (!isRemoteSelected(row)) selectRemoteExclusive(row)
       openCtxMenu(e, row)
     },
   }
@@ -1169,6 +1422,10 @@ const ctxMenuOptions = computed(() => {
     ]
   }
   const opts: Array<Record<string, unknown>> = []
+  // 多选集内的文件数 >1 时下载项升级为批量（右键行必然在选择集内）
+  const multiFileCount = remoteSelectedFiles.value.filter(
+    (f) => f.file_type === "file",
+  ).length
   if (target.file_type === "file") {
     if (isPreviewable(target.file_name)) {
       opts.push({
@@ -1183,7 +1440,10 @@ const ctxMenuOptions = computed(() => {
       icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
     })
     opts.push({
-      label: t("sftp.ctxMenu.download"),
+      label:
+        multiFileCount > 1
+          ? t("sftp.ctxMenu.downloadMulti", { count: multiFileCount })
+          : t("sftp.ctxMenu.download"),
       key: "download",
       icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
     })
@@ -1204,7 +1464,7 @@ const ctxMenuOptions = computed(() => {
     key: "copy-path",
     icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
   })
-  if (startupStore.aiAssistantEnabled) {
+  if (startupStore.aiAssistantEnabled && !props.standalone) {
     opts.push({
       label: t("sftp.ctxMenu.sendToAi"),
       key: "send-to-ai",
@@ -1257,8 +1517,11 @@ function onCtxMenuSelect(key: string | number) {
     return
   }
   if (key === "preview") openPreview(target)
-  else if (key === "download") void onDownload(target)
-  else if (key === "edit") openEditor(target)
+  else if (key === "download") {
+    const multi = remoteSelectedFiles.value.filter((f) => f.file_type === "file")
+    if (multi.length > 1) void onDownloadMulti(multi)
+    else void onDownload(target)
+  } else if (key === "edit") openEditor(target)
   else if (key === "rename") openRename(target)
   else if (key === "remove") confirmRemove(target)
   else if (key === "copy-path") void copyPath(target)
@@ -1389,15 +1652,15 @@ function persistLocalDir(v: string) {
 
 const localPaneRef = ref<InstanceType<typeof LocalPane> | null>(null)
 
-/** 本地栏勾选数（LocalPane selection-change 上报，供中间条按钮启停） */
-const localSelectedCount = ref(0)
+/** 本地栏选中集（LocalPane select 上报，支持多选；中间条按钮据此启停） */
+const localSelectedFiles = ref<SftpFile[]>([])
 
 /* ---------- 远程侧拖拽：远程行 -> 本地栏（下载） ---------- */
 
 const remoteDrag = useFileDrag({
   collectFiles(row) {
-    // 一期远程为单选列表，仅支持单文件拖拽
-    return row.file_type === "file" ? [row] : []
+    // 行在选择集内则拖整个选择集（文件行），否则拖当前行（WinSCP 语义）
+    return collectRemoteForTransfer(row)
   },
   onDrop(files, zone) {
     if (zone === "local" && localDir.value) {
@@ -1406,18 +1669,25 @@ const remoteDrag = useFileDrag({
   },
 })
 
-/** 中间条 -> ：把本地栏勾选的文件上传到远程当前目录 */
-function transferUp() {
-  const sel = localPaneRef.value?.getSelectedFiles() ?? []
-  if (sel.length > 0) void onLocalUpload(sel)
+/** 中间条 -> ：把本地栏选中的条目（支持多选，含目录）上传到远程当前目录。
+ *  文件走直传，目录逐个递归上传（各自的同名确认独立弹窗） */
+async function transferUp() {
+  const sel = localSelectedFiles.value
+  const files = sel.filter((f) => f.file_type === "file")
+  const dirs = sel.filter((f) => f.file_type === "dir")
+  if (files.length > 0) await onLocalUpload(files)
+  for (const d of dirs) {
+    await onLocalDirUpload(d)
+  }
 }
 
-/** 中间条 <- ：把远程当前选中的文件下载到本地栏当前目录 */
-function transferDown() {
-  const f = files.value.find(
-    (x) => x.full_path === selectedKey.value && x.file_type === "file",
-  )
-  if (f && localDir.value) void downloadToLocalDir(f)
+/** 中间条 <- ：把远程选中的文件（支持多选）串行下载到本地栏当前目录 */
+async function transferDown() {
+  if (!localDir.value) return
+  const sel = remoteSelectedFiles.value.filter((f) => f.file_type === "file")
+  for (const f of sel) {
+    await downloadToLocalDir(f)
+  }
 }
 
 function activeWidthKey(): string {
@@ -1490,13 +1760,36 @@ function onResizeEnd() {
 
 onBeforeUnmount(onResizeEnd)
 
-const panelStyle = computed(() => ({
-  width: `${width.value}px`,
-  transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
-  transform: props.open ? "translateX(0)" : "translateX(100%)",
-}))
+const panelStyle = computed(() => {
+  // 独立窗口模式：铺满窗口，由 .standalone 类接管布局
+  if (props.standalone) return {}
+  return {
+    width: `${width.value}px`,
+    transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
+    transform: props.open ? "translateX(0)" : "translateX(100%)",
+  }
+})
 
 function onClose() {
+  // 独立窗口模式下"关闭"语义是关掉整个窗口
+  if (props.standalone) {
+    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+      getCurrentWindow().close(),
+    )
+    return
+  }
+  emit("update:open", false)
+}
+
+/** 弹出到独立窗口（复用当前 SSH 会话）。
+ *  "移动"语义：同一会话同一视图，弹出后收起本抽屉，避免挡住终端 */
+function openInStandaloneWindow() {
+  if (!props.sid) return
+  void openSftpInNewWindow({
+    sid: props.sid,
+    title: props.hostName ?? "SFTP",
+    addr: props.hostAddr,
+  })
   emit("update:open", false)
 }
 </script>
@@ -1506,7 +1799,7 @@ function onClose() {
     <aside
       ref="panelRef"
       class="sftp-panel"
-      :class="{ open: props.open, resizing: resizing }"
+      :class="{ open: props.open, resizing: resizing, standalone: props.standalone }"
       :style="panelStyle"
       :aria-hidden="!props.open"
       @dragover="onPanelDragOver"
@@ -1514,6 +1807,7 @@ function onClose() {
       @drop="onPanelDrop"
     >
       <div
+        v-if="!props.standalone"
         class="resize-handle"
         :title="t('common.dragToResize')"
         @pointerdown="onResizeStart"
@@ -1536,12 +1830,21 @@ function onClose() {
         </div>
       </div>
 
-      <header class="panel-header">
+      <!-- 独立窗口模式下不渲染面板头：标题由 SftpWindow 标题栏承担，避免双标题 -->
+      <header v-if="!props.standalone" class="panel-header">
         <span class="drawer-title">{{ drawerTitle }}</span>
         <NSpace :size="6" align="center" :wrap="false">
-          <NButton size="small" quaternary circle :title="t('sftp.refresh')" @click="refresh">
+          <NButton
+            v-if="!props.standalone"
+            size="small"
+            quaternary
+            circle
+            :disabled="!props.sid"
+            :title="t('sftp.openInNewWindow')"
+            @click="openInStandaloneWindow"
+          >
             <template #icon>
-              <NIcon><RefreshOutline /></NIcon>
+              <NIcon><OpenOutline /></NIcon>
             </template>
           </NButton>
           <NButton size="small" quaternary circle :title="t('sftp.close')" @click="onClose">
@@ -1570,8 +1873,10 @@ function onClose() {
             :dir="localDir"
             :sid="props.sid ?? ''"
             @update:dir="persistLocalDir"
-            @selection-change="localSelectedCount = $event"
+            @select="localSelectedFiles = $event"
             @transfer-up="onLocalUpload"
+            @transfer-dir-up="onLocalDirUpload"
+            @upload-selection="transferUp"
             @copy-started="downloadModalOpen = true"
           />
           <div v-if="dualPane" class="transfer-bar">
@@ -1580,7 +1885,7 @@ function onClose() {
                 <NButton
                   size="small"
                   secondary
-                  :disabled="!props.sid || localSelectedCount === 0"
+                  :disabled="!props.sid || localSelectedFiles.length === 0"
                   @click="transferUp"
                 >
                   <template #icon>
@@ -1598,10 +1903,7 @@ function onClose() {
                   :disabled="
                     !props.sid ||
                     !localDir ||
-                    !files.some(
-                      (x) =>
-                        x.full_path === selectedKey && x.file_type === 'file',
-                    )
+                    !remoteSelectedFiles.some((f) => f.file_type === 'file')
                   "
                   @click="transferDown"
                 >
@@ -1615,6 +1917,7 @@ function onClose() {
           </div>
           <div class="remote-pane" data-drop-zone="remote">
           <div class="path-bar">
+            <span v-if="dualPane" class="pane-label">{{ t("sftp.remotePaneTitle") }}</span>
             <NButton
               size="small"
               quaternary
@@ -1661,6 +1964,17 @@ function onClose() {
             >
               <template #icon>
                 <NIcon><CopyOutline /></NIcon>
+              </template>
+            </NButton>
+            <NButton
+              size="small"
+              quaternary
+              circle
+              :title="t('sftp.refresh')"
+              @click="refresh"
+            >
+              <template #icon>
+                <NIcon><RefreshOutline /></NIcon>
               </template>
             </NButton>
           </div>
@@ -1769,7 +2083,7 @@ function onClose() {
             </div>
           </div>
 
-          <NSpin :show="loading" class="table-wrap">
+          <NSpin :show="loading" class="table-wrap" @click="onRemoteTableClick">
             <NDataTable
               size="small"
               :columns="columns"
@@ -1780,6 +2094,7 @@ function onClose() {
               :single-line="false"
               flex-height
               class="file-table"
+              @update:sorter="onRemoteSort"
             />
           </NSpin>
           </div>
@@ -1954,6 +2269,18 @@ function onClose() {
   box-shadow: -8px 0 24px var(--ashell-shadow);
 }
 
+/* 独立窗口模式：面板铺满窗口（顶部让位给窗口标题栏），无侧边阴影 */
+.sftp-panel.standalone {
+  left: 0;
+  right: 0;
+  width: auto;
+  border-left: none;
+}
+
+.sftp-panel.standalone.open {
+  box-shadow: none;
+}
+
 .sftp-panel.resizing {
   user-select: none;
 }
@@ -2103,6 +2430,16 @@ function onClose() {
   gap: 8px;
   padding: 4px 0;
   min-width: 0;
+}
+
+/* 与 LocalPane 的 pane-label 同款式（双栏时两栏对称标识） */
+.pane-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ashell-text-muted);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .path-bar > .n-button {

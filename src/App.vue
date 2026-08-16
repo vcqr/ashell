@@ -21,11 +21,6 @@ import {
   MenuOutline,
   SettingsOutline,
   GridOutline,
-  CloseOutline,
-  RemoveOutline,
-  SquareOutline,
-  CopyOutline,
-  AddOutline,
   CubeOutline,
 } from "@vicons/ionicons5";
 import TabBar from "@/components/TabBar.vue";
@@ -34,6 +29,8 @@ import TerminalView from "@/components/TerminalView.vue";
 import AiAssistant from "@/components/AiAssistant.vue";
 import ActivityBar from "@/components/ActivityBar.vue";
 import SftpDrawer from "@/components/SftpDrawer.vue";
+import SftpWindow from "@/components/SftpWindow.vue";
+import WindowControls from "@/components/WindowControls.vue";
 import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
 import TemplateDrawer from "@/components/TemplateDrawer.vue";
@@ -125,12 +122,14 @@ const {
   onSftpSendToAi,
 } = usePanels(activeSftpTab, activeAiTab, activeTerminalTab, aiAssistantRef);
 
+// SFTP 独立窗口：由 openSftpInNewWindow 创建，URL 带 newwin=1&kind=sftp。
+// 走完整 App 实例（providers/api init/theme），但只渲染 SftpWindow 布局。
+const launchParams = new URLSearchParams(window.location.search);
+const soloSftp =
+  launchParams.get("newwin") === "1" && launchParams.get("kind") === "sftp";
+
 const {
-  isMaximized,
   isMac,
-  minimizeWindow,
-  toggleMaximize,
-  closeWindow,
   onHeaderDblClick,
 } = useWindowControls(terminalRefs, activeTabKey);
 
@@ -142,8 +141,10 @@ useGlobalShortcuts({ isMac, tabs, activeTabKey, openLocal, closeTab });
     <NMessageProvider>
       <NDialogProvider>
         <NNotificationProvider>
-          <UpdateChecker />
+          <UpdateChecker v-if="!soloSftp" />
+          <SftpWindow v-if="soloSftp" />
           <div
+            v-else
             class="app-root"
             :style="{
               '--ashell-activity-w':
@@ -159,39 +160,7 @@ useGlobalShortcuts({ isMac, tabs, activeTabKey, openLocal, closeTab });
               }"
             />
             <header class="app-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
-              <div
-                v-if="isMac"
-                class="window-controls is-mac"
-                data-tauri-drag-region="false"
-              >
-                <button
-                  class="window-control mac-close"
-                  type="button"
-                  :title="t('app.closeWindow')"
-                  @click="closeWindow"
-                >
-                  <NIcon :size="10"><CloseOutline /></NIcon>
-                </button>
-                <button
-                  class="window-control mac-min"
-                  type="button"
-                  :title="t('app.minimize')"
-                  @click="minimizeWindow"
-                >
-                  <NIcon :size="10"><RemoveOutline /></NIcon>
-                </button>
-                <button
-                  class="window-control mac-max"
-                  type="button"
-                  :title="isMaximized ? t('app.restore') : t('app.maximize')"
-                  @click="toggleMaximize"
-                >
-                  <NIcon :size="10">
-                    <CopyOutline v-if="isMaximized" />
-                    <AddOutline v-else />
-                  </NIcon>
-                </button>
-              </div>
+              <WindowControls v-if="isMac" />
               <div v-if="!isMac" class="brand" data-tauri-drag-region>
                 <div class="brand-logo">
                   <img src="/icon.png" alt="AShell" />
@@ -273,39 +242,7 @@ useGlobalShortcuts({ isMac, tabs, activeTabKey, openLocal, closeTab });
                   {{ t("app.settings") }}
                 </NTooltip>
               </NSpace>
-              <div
-                v-if="!isMac"
-                class="window-controls"
-                data-tauri-drag-region="false"
-              >
-                <button
-                  class="window-control"
-                  type="button"
-                  :title="t('app.minimize')"
-                  @click="minimizeWindow"
-                >
-                  <NIcon :size="14"><RemoveOutline /></NIcon>
-                </button>
-                <button
-                  class="window-control"
-                  type="button"
-                  :title="isMaximized ? t('app.restore') : t('app.maximize')"
-                  @click="toggleMaximize"
-                >
-                  <NIcon :size="13">
-                    <CopyOutline v-if="isMaximized" />
-                    <SquareOutline v-else />
-                  </NIcon>
-                </button>
-                <button
-                  class="window-control window-control-close"
-                  type="button"
-                  :title="t('app.closeWindow')"
-                  @click="closeWindow"
-                >
-                  <NIcon :size="14"><CloseOutline /></NIcon>
-                </button>
-              </div>
+              <WindowControls v-if="!isMac" />
             </header>
 
             <div
@@ -507,102 +444,6 @@ useGlobalShortcuts({ isMac, tabs, activeTabKey, openLocal, closeTab });
 
 .header-actions {
   flex-shrink: 0;
-}
-
-.window-controls {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-left: 8px;
-  height: 100%;
-  -webkit-app-region: no-drag;
-}
-
-.window-control {
-  width: 40px;
-  height: var(--ashell-header-h);
-  border: 0;
-  background: transparent;
-  color: var(--ashell-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 0;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
-}
-
-.window-control:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--ashell-text-strong);
-}
-
-.window-control:active {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.window-control-close:hover {
-  background: #e81123;
-  color: #fff;
-}
-
-/* macOS traffic light style */
-.window-controls.is-mac {
-  margin-left: 4px;
-  margin-right: 8px;
-  gap: 8px;
-  padding: 0 4px;
-}
-
-.window-controls.is-mac .window-control {
-  width: 12px;
-  height: 12px;
-  min-width: 12px;
-  border-radius: 50%;
-  padding: 0;
-  background: var(--ashell-mac-dot-idle, rgba(255, 255, 255, 0.16));
-  color: rgba(0, 0, 0, 0.55);
-  border: 0.5px solid rgba(0, 0, 0, 0.18);
-  transition:
-    background 0.15s ease,
-    color 0.15s ease,
-    transform 0.1s ease;
-}
-
-.window-controls.is-mac .window-control :deep(.n-icon) {
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.window-controls.is-mac:hover .window-control :deep(.n-icon) {
-  opacity: 1;
-}
-
-.window-controls.is-mac .mac-close {
-  background: #ff5f57;
-}
-.window-controls.is-mac .mac-min {
-  background: #febc2e;
-}
-.window-controls.is-mac .mac-max {
-  background: #28c840;
-}
-
-.window-controls.is-mac .window-control:hover {
-  filter: brightness(1.05);
-}
-
-.window-controls.is-mac .window-control:active {
-  filter: brightness(0.9);
-  background: var(--ashell-mac-dot-active, currentColor);
-}
-
-.window-controls.is-mac .window-control-close:hover {
-  background: #ff5f57;
-  color: rgba(0, 0, 0, 0.6);
 }
 
 .app-content {
