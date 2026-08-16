@@ -27,7 +27,7 @@ export default {
     empty: "Directory is empty",
     toggleButton: "Local",
     toggleTitle: "Show/hide local pane (dual-pane mode)",
-    dragGhost: "{count} file(s) → remote",
+    dragGhost: "{count} item(s) → remote",
     ctxUpload: "Upload this file",
     ctxUploadDir: "Upload this folder",
     ctxUploadMulti: "Upload selected ({count})",
@@ -39,8 +39,8 @@ export default {
   },
   transferBar: {
     up: "Upload the selected local file(s)/folder(s) to the current remote directory",
-    down: "Download the selected remote file to the current local directory",
-    dragGhost: "{count} file(s) → local",
+    down: "Download the selected remote file(s)/folder(s) to the current local directory",
+    dragGhost: "{count} item(s) → local",
   },
   columns: {
     name: "Name",
@@ -56,6 +56,7 @@ export default {
     preview: "Preview",
     download: "Download",
     downloadMulti: "Download selected ({count})",
+    downloadDir: "Download this folder",
     edit: "Edit",
     rename: "Rename",
     delete: "Delete",
@@ -98,8 +99,9 @@ export default {
     uploadFailed: "Upload failed: {error}",
     noFileSelected: "No file selected",
     cannotParseUploadDir: "Cannot parse upload directory",
-    dirUploadFailed: "Failed to create directory {path}: {error}",
     dirUploadDone: "Folder upload complete: {count} files",
+    dirDownloadDone: "Folder download complete: {count} files",
+    dirDownloadPartial: "Folder download complete: {ok} succeeded, {fail} failed",
     dirUploadPartial: "Folder upload complete: {ok} succeeded, {fail} failed",
   },
   dialog: {

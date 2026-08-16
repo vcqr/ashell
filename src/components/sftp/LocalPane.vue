@@ -93,7 +93,7 @@ const {
 const { dragging, ghostX, ghostY, dragCount, onRowPointerdown } = useFileDrag({
   collectFiles(row) {
     if (viewingRoots.value) return []
-    // 行在选择集内则拖整个选择集（文件行），否则拖当前行（WinSCP 语义）
+    // 集合含目录行，文件/目录分流由父组件 onLocalUpload 处理（WinSCP 语义）
     return collectForTransfer(row)
   },
   onDrop(files, zone) {
@@ -370,8 +370,12 @@ function rowProps(row: SftpFile) {
   return {
     class: isSelected(row) ? "row-selected" : "",
     style: {
-      // 可拖拽的文件行提示 grab；目录/盘符双击进入，保持箭头
-      cursor: !viewingRoots.value && row.file_type === "file" ? "grab" : "default",
+      // 文件/目录行都可拖到远程栏（目录为递归上传），提示 grab
+      cursor:
+        !viewingRoots.value &&
+        (row.file_type === "file" || row.file_type === "dir")
+          ? "grab"
+          : "default",
     },
     onPointerdown: (e: PointerEvent) => {
       // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
@@ -616,6 +620,8 @@ async function importOsFiles(topFiles: File[], folders: OsDropFolder[]) {
 defineExpose({
   refresh,
   importOsFiles,
+  /** 当前已加载的本地目录条目快照（父组件下载同名检查用） */
+  getLocalFiles: () => files.value,
 })
 
 watch(

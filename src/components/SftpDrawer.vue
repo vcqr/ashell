@@ -472,15 +472,47 @@ function confirmDownload(content: string): Promise<boolean> {
   })
 }
 
+/** 双栏直落本地目录前检查同名：基于本地栏已加载列表（与上传侧同一模式），
+ *  有冲突弹一次覆盖确认（批量只问一次，列出冲突名） */
+async function confirmDownloadOverwrite(items: SftpFile[]): Promise<boolean> {
+  if (items.length === 0) return true
+  const localFiles = localPaneRef.value?.getLocalFiles() ?? []
+  const names = new Set(items.map((f) => f.file_name.toLowerCase()))
+  const conflicts = localFiles
+    .filter((f) => names.has(f.file_name.toLowerCase()))
+    .map((f) => f.file_name)
+  if (conflicts.length === 0) return true
+  const content =
+    conflicts.length === 1 && items.length === 1
+      ? t("sftp.dialog.overwriteConfirm", { name: conflicts[0]! })
+      : `${conflicts.slice(0, 5).join(", ")}${
+          conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
+        }`
+  return await new Promise<boolean>((resolve) => {
+    dialog.warning({
+      title: t("sftp.dialog.overwriteTitle"),
+      content,
+      positiveText: t("common.overwrite"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => resolve(true),
+      onNegativeClick: () => resolve(false),
+      onClose: () => resolve(false),
+      onMaskClick: () => resolve(false),
+    })
+  })
+}
+
 async function onDownload(file: SftpFile) {
   if (!props.sid) return
   if (file.file_type !== "file") {
     message.warning(t("sftp.message.downloadOnlyFile"))
     return
   }
-  // 双栏模式：直接落盘到本地栏当前目录，不弹另存为对话框
+  // 双栏模式：直接落盘到本地栏当前目录，不弹另存为对话框（同名先确认）
   if (dualPane.value && localDir.value) {
-    await downloadToLocalDir(file)
+    if (await confirmDownloadOverwrite([file])) {
+      await downloadToLocalDir(file)
+    }
     return
   }
   const confirmed = await confirmDownload(
@@ -490,15 +522,10 @@ async function onDownload(file: SftpFile) {
   await downloadViaBrowser(file)
 }
 
-/** 批量下载（右键作用于多选集）：双栏直落本地栏目录；单栏一次确认后逐个下载 */
+/** 批量下载（单栏：一次确认后逐个经浏览器下载）。
+ *  双栏批量（含目录）走 downloadEntries。 */
 async function onDownloadMulti(files: SftpFile[]) {
   if (!props.sid || files.length === 0) return
-  if (dualPane.value && localDir.value) {
-    for (const f of files) {
-      await downloadToLocalDir(f)
-    }
-    return
-  }
   const confirmed = await confirmDownload(
     t("sftp.dialog.downloadConfirmMulti", { count: files.length }),
   )
@@ -549,36 +576,145 @@ async function downloadToLocalDir(file: SftpFile) {
   }
 }
 
-/** 双栏模式：本地栏勾选的文件直传远程当前目录（Rust 进程内流式中转） */
+/** 递归收集远程目录树为文件清单（rel 相对顶层目录）。
+ *  不跟随符号链接，深度上限防御异常深/自引用结构。 */
+async function walkRemoteDir(
+  remoteDir: string,
+  prefix: string,
+  list: Array<{ rel: string; file: SftpFile }>,
+  depth = 0,
+): Promise<void> {
+  if (!props.sid) return
+  if (depth > 32) return
+  const resp = await listSftp(props.sid, remoteDir)
+  for (const f of resp.files) {
+    if (f.file_type === "symlink") continue
+    const rel = prefix ? `${prefix}/${f.file_name}` : f.file_name
+    if (f.file_type === "dir") {
+      await walkRemoteDir(f.full_path, rel, list, depth + 1)
+    } else {
+      list.push({ rel, file: f })
+    }
+  }
+}
+
+/** 远程目录整树下载到本地栏当前目录（Rust 直传，逐文件落
+ *  <本地当前目录>/<顶层目录名>/<相对路径>；目标子目录链由后端
+ *  download_to_local 的 create_dir_all 自动创建，空目录不会被创建）。
+ *  顶层同名确认由调用方 downloadEntries 统一处理。 */
+async function downloadRemoteDirTree(dirRow: SftpFile) {
+  if (!props.sid || dirRow.file_type !== "dir" || !localDir.value) return
+  const sid = props.sid
+  const topName = dirRow.file_name
+  const list: Array<{ rel: string; file: SftpFile }> = []
+  try {
+    await walkRemoteDir(dirRow.full_path, "", list)
+  } catch (e) {
+    message.error(t("sftp.message.loadFailed", { error: (e as Error).message }))
+    return
+  }
+  let okCount = 0
+  let failCount = 0
+  for (const ent of list) {
+    const relDir = ent.rel.includes("/")
+      ? ent.rel.slice(0, ent.rel.lastIndexOf("/"))
+      : ""
+    const targetDir = `${localDir.value}/${topName}${relDir ? `/${relDir}` : ""}`
+    const ctrl = new AbortController()
+    const taskId = genId()
+    const total = ent.file.size_bytes ?? 0
+    const task: TransferTask = {
+      id: taskId,
+      sid,
+      filename: ent.file.full_path,
+      remoteDir: dirRow.full_path,
+      total,
+      loaded: 0,
+      status: "running",
+      controller: ctrl,
+      startedAt: Date.now(),
+    }
+    store.addDownload(sid, task)
+    const stopPolling = pollDirectTransferProgress("download", sid, taskId, total)
+    try {
+      const { bytes } = await downloadToLocal(sid, ent.file.full_path, targetDir, {
+        signal: ctrl.signal,
+        taskId,
+      })
+      const done = bytes > 0 ? bytes : total
+      store.updateDownload(sid, taskId, { loaded: done, total, status: "done" })
+      okCount++
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateDownload(sid, taskId, { status: "cancelled" })
+      } else {
+        store.updateDownload(sid, taskId, {
+          status: "error",
+          error: (e as Error).message,
+        })
+      }
+      failCount++
+    } finally {
+      stopPolling()
+    }
+  }
+  if (failCount === 0) {
+    message.success(t("sftp.message.dirDownloadDone", { count: okCount }))
+  } else {
+    message.warning(t("sftp.message.dirDownloadPartial", { ok: okCount, fail: failCount }))
+  }
+  localPaneRef.value?.refresh()
+}
+
+/** 双栏下载分流：文件直落本地栏目录 + 目录整树递归（同名一次确认，
+ *  文件名与目录顶层名一起列出） */
+async function downloadEntries(items: SftpFile[]) {
+  if (!props.sid || items.length === 0 || !localDir.value) return
+  if (!(await confirmDownloadOverwrite(items))) return
+  const files = items.filter((f) => f.file_type === "file")
+  const dirs = items.filter((f) => f.file_type === "dir")
+  for (const f of files) {
+    await downloadToLocalDir(f)
+  }
+  for (const d of dirs) {
+    await downloadRemoteDirTree(d)
+  }
+}
+
+/** 双栏模式：本地栏条目上传远程当前目录--文件批量直传（Rust 进程内
+ *  流式中转），目录递归上传（onLocalDirUpload，顶层同名确认各自弹窗） */
 async function onLocalUpload(sel: SftpFile[]) {
   if (!props.sid || sel.length === 0) return
   const sid = props.sid
+  const upFiles = sel.filter((f) => f.file_type === "file")
+  const upDirs = sel.filter((f) => f.file_type === "dir")
 
-  // 同名覆盖确认：只问一次，列出冲突名
-  const names = new Set(sel.map((f) => f.file_name.toLowerCase()))
-  const conflicts = files.value
-    .filter((f) => names.has(f.file_name.toLowerCase()))
-    .map((f) => f.file_name)
-  if (conflicts.length > 0) {
-    const preview = conflicts.slice(0, 5).join(", ")
-    const more = conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
-    const ok = await new Promise<boolean>((resolve) => {
-      dialog.warning({
-        title: t("sftp.dialog.overwriteTitle"),
-        content: `${preview}${more}`,
-        positiveText: t("common.overwrite"),
-        negativeText: t("common.cancel"),
-        onPositiveClick: () => resolve(true),
-        onNegativeClick: () => resolve(false),
-        onClose: () => resolve(false),
-        onMaskClick: () => resolve(false),
+  // 文件同名覆盖确认：只问一次，列出冲突名
+  if (upFiles.length > 0) {
+    const names = new Set(upFiles.map((f) => f.file_name.toLowerCase()))
+    const conflicts = files.value
+      .filter((f) => names.has(f.file_name.toLowerCase()))
+      .map((f) => f.file_name)
+    if (conflicts.length > 0) {
+      const preview = conflicts.slice(0, 5).join(", ")
+      const more = conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
+      const ok = await new Promise<boolean>((resolve) => {
+        dialog.warning({
+          title: t("sftp.dialog.overwriteTitle"),
+          content: `${preview}${more}`,
+          positiveText: t("common.overwrite"),
+          negativeText: t("common.cancel"),
+          onPositiveClick: () => resolve(true),
+          onNegativeClick: () => resolve(false),
+          onClose: () => resolve(false),
+          onMaskClick: () => resolve(false),
+        })
       })
-    })
-    if (!ok) return
+      if (!ok) return
+    }
   }
 
-  for (const f of sel) {
-    if (f.file_type !== "file") continue
+  for (const f of upFiles) {
     const remotePath = joinPath(currentPath.value, f.file_name)
     const ctrl = new AbortController()
     const taskId = genId()
@@ -613,6 +749,9 @@ async function onLocalUpload(sel: SftpFile[]) {
     } finally {
       stopPolling()
     }
+  }
+  for (const d of upDirs) {
+    await onLocalDirUpload(d)
   }
   await load()
 }
@@ -974,9 +1113,8 @@ async function uploadFolderEntries(entries: FolderEntry[]) {
   for (const rel of dirs) {
     try {
       await mkdirApi(sid, joinPath(baseDir, rel))
-    } catch (e) {
-      message.error(t("sftp.message.dirUploadFailed", { path: rel, error: (e as Error).message }))
-      return
+    } catch {
+      // 目录已存在等：忽略并继续写文件（顶层同名已做过覆盖确认）
     }
   }
 
@@ -1345,8 +1483,12 @@ function rowProps(row: SftpFile) {
   return {
     class: isRemoteSelected(row) ? "row-selected" : "",
     style: {
-      // 双栏模式下文件行可拖到本地栏，提示 grab
-      cursor: dualPane.value && row.file_type === "file" ? "grab" : "default",
+      // 双栏模式下文件/目录行可拖到本地栏（目录为整树下载），提示 grab
+      cursor:
+        dualPane.value &&
+        (row.file_type === "file" || row.file_type === "dir")
+          ? "grab"
+          : "default",
     },
     onPointerdown: (e: PointerEvent) => {
       // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
@@ -1422,28 +1564,31 @@ const ctxMenuOptions = computed(() => {
     ]
   }
   const opts: Array<Record<string, unknown>> = []
-  // 多选集内的文件数 >1 时下载项升级为批量（右键行必然在选择集内）
-  const multiFileCount = remoteSelectedFiles.value.filter(
-    (f) => f.file_type === "file",
-  ).length
-  if (target.file_type === "file") {
-    if (isPreviewable(target.file_name)) {
+  // 多选集 >1 时下载项升级为批量（右键行必然在选择集内）
+  const selCount = remoteSelectedFiles.value.length
+  // 下载项：文件行恒有；目录行仅双栏有（单栏无本地目标目录）
+  if (target.file_type === "file" || (target.file_type === "dir" && dualPane.value)) {
+    if (target.file_type === "file") {
+      if (isPreviewable(target.file_name)) {
+        opts.push({
+          label: t("sftp.ctxMenu.preview"),
+          key: "preview",
+          icon: () => h(NIcon, null, { default: () => h(EyeOutline) }),
+        })
+      }
       opts.push({
-        label: t("sftp.ctxMenu.preview"),
-        key: "preview",
-        icon: () => h(NIcon, null, { default: () => h(EyeOutline) }),
+        label: t("sftp.ctxMenu.edit"),
+        key: "edit",
+        icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
       })
     }
     opts.push({
-      label: t("sftp.ctxMenu.edit"),
-      key: "edit",
-      icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
-    })
-    opts.push({
       label:
-        multiFileCount > 1
-          ? t("sftp.ctxMenu.downloadMulti", { count: multiFileCount })
-          : t("sftp.ctxMenu.download"),
+        selCount > 1
+          ? t("sftp.ctxMenu.downloadMulti", { count: selCount })
+          : target.file_type === "dir"
+            ? t("sftp.ctxMenu.downloadDir")
+            : t("sftp.ctxMenu.download"),
       key: "download",
       icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
     })
@@ -1518,9 +1663,17 @@ function onCtxMenuSelect(key: string | number) {
   }
   if (key === "preview") openPreview(target)
   else if (key === "download") {
-    const multi = remoteSelectedFiles.value.filter((f) => f.file_type === "file")
-    if (multi.length > 1) void onDownloadMulti(multi)
-    else void onDownload(target)
+    if (dualPane.value && localDir.value) {
+      // 双栏：作用于整个选择集（文件直落 + 目录整树，downloadEntries 分流）
+      const items =
+        remoteSelectedFiles.value.length > 1 ? remoteSelectedFiles.value : [target]
+      void downloadEntries(items)
+    } else {
+      // 单栏：浏览器逐个下载（目录行在单栏不显示下载项）
+      const multi = remoteSelectedFiles.value.filter((f) => f.file_type === "file")
+      if (multi.length > 1) void onDownloadMulti(multi)
+      else void onDownload(target)
+    }
   } else if (key === "edit") openEditor(target)
   else if (key === "rename") openRename(target)
   else if (key === "remove") confirmRemove(target)
@@ -1659,35 +1812,28 @@ const localSelectedFiles = ref<SftpFile[]>([])
 
 const remoteDrag = useFileDrag({
   collectFiles(row) {
-    // 行在选择集内则拖整个选择集（文件行），否则拖当前行（WinSCP 语义）
+    // 行在选择集内则拖整个选择集（含目录行），否则拖当前行；
+    // 文件/目录分流由 downloadEntries 处理（WinSCP 语义）
     return collectRemoteForTransfer(row)
   },
   onDrop(files, zone) {
     if (zone === "local" && localDir.value) {
-      for (const f of files) void downloadToLocalDir(f)
+      void downloadEntries(files)
     }
   },
 })
 
-/** 中间条 -> ：把本地栏选中的条目（支持多选，含目录）上传到远程当前目录。
- *  文件走直传，目录逐个递归上传（各自的同名确认独立弹窗） */
-async function transferUp() {
-  const sel = localSelectedFiles.value
-  const files = sel.filter((f) => f.file_type === "file")
-  const dirs = sel.filter((f) => f.file_type === "dir")
-  if (files.length > 0) await onLocalUpload(files)
-  for (const d of dirs) {
-    await onLocalDirUpload(d)
-  }
+/** 中间条 -> ：上传本地栏选中条目（文件直传/目录递归由 onLocalUpload 分流） */
+function transferUp() {
+  if (localSelectedFiles.value.length === 0) return
+  void onLocalUpload(localSelectedFiles.value)
 }
 
-/** 中间条 <- ：把远程选中的文件（支持多选）串行下载到本地栏当前目录 */
-async function transferDown() {
-  if (!localDir.value) return
-  const sel = remoteSelectedFiles.value.filter((f) => f.file_type === "file")
-  for (const f of sel) {
-    await downloadToLocalDir(f)
-  }
+/** 中间条 <- ：下载远程选中条目到本地栏当前目录（文件直落/目录整树，
+ *  分流与同名确认由 downloadEntries 处理） */
+function transferDown() {
+  if (remoteSelectedFiles.value.length === 0) return
+  void downloadEntries(remoteSelectedFiles.value)
 }
 
 function activeWidthKey(): string {
@@ -1901,9 +2047,7 @@ function openInStandaloneWindow() {
                   size="small"
                   secondary
                   :disabled="
-                    !props.sid ||
-                    !localDir ||
-                    !remoteSelectedFiles.some((f) => f.file_type === 'file')
+                    !props.sid || !localDir || remoteSelectedFiles.length === 0
                   "
                   @click="transferDown"
                 >

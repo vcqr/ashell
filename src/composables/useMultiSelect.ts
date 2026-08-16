@@ -60,12 +60,13 @@ export function useMultiSelect(files: Ref<SftpFile[]>) {
     selectExclusive(row)
   }
 
-  /** 拖拽/传输取数：行在选择集内则取集合内全部文件行，否则取该行（WinSCP 语义） */
+  /** 拖拽取数：行在选择集内则取整个选择集（含目录行），否则取当前行。
+   *  文件/目录的传输分流（直传 vs 递归整树）由调用方处理（WinSCP 语义） */
   function collectForTransfer(row: SftpFile): SftpFile[] {
     if (selectedKeys.value.has(row.full_path)) {
-      return selectedFiles.value.filter((f) => f.file_type === "file")
+      return [...selectedFiles.value]
     }
-    return row.file_type === "file" ? [row] : []
+    return [row]
   }
 
   function clearSelection() {
