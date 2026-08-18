@@ -21,12 +21,10 @@ import {
   ArrowUpOutline,
   CloudUploadOutline,
   CopyOutline,
-  DocumentOutline,
-  FolderOutline,
   HomeOutline,
   RefreshOutline,
 } from "@vicons/ionicons5"
-import { HddRegular } from "@vicons/fa"
+import { FileRegular, Folder, HddRegular } from "@vicons/fa"
 import { useI18n } from "vue-i18n"
 import { listLocalFs, listLocalFsRoots, saveLocalFile } from "@/api/local"
 import { isAbortError } from "@/api/sftp"
@@ -314,8 +312,8 @@ function fileIcon(row: SftpFile) {
       viewingRoots.value
         ? h(HddRegular)
         : row.file_type === "dir"
-          ? h(FolderOutline)
-          : h(DocumentOutline),
+          ? h(Folder)
+          : h(FileRegular),
   )
 }
 

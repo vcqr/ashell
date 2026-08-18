@@ -34,15 +34,14 @@ import {
   DownloadOutline,
   EyeOutline,
   FolderOpenOutline,
-  FolderOutline,
   LaptopOutline,
-  LinkOutline,
   OpenOutline,
   RefreshOutline,
   SendOutline,
   SparklesOutline,
   TrashOutline,
 } from "@vicons/ionicons5"
+import { FileRegular, Folder, Link } from "@vicons/fa"
 import {
   downloadStream,
   isAbortError,
@@ -1321,12 +1320,12 @@ const FILE_TYPE_COLORS = {
 
 function fileIcon(file: SftpFile) {
   if (file.file_type === "dir") {
-    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.dir }, { default: () => h(FolderOutline) })
+    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.dir }, { default: () => h(Folder) })
   }
   if (file.file_type === "symlink") {
-    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.symlink }, { default: () => h(LinkOutline) })
+    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.symlink }, { default: () => h(Link) })
   }
-  return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.file }, { default: () => h(DocumentOutline) })
+  return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.file }, { default: () => h(FileRegular) })
 }
 
 function dirFirst(a: SftpFile, b: SftpFile): number {

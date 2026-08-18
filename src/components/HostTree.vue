@@ -22,8 +22,6 @@ import {
   type DropdownOption,
 } from "naive-ui"
 import {
-  FolderOutline,
-  FolderOpenOutline,
   TerminalOutline,
   AddOutline,
   RefreshOutline,
@@ -35,6 +33,7 @@ import {
   ServerOutline,
   DownloadOutline,
 } from "@vicons/ionicons5"
+import { Folder, FolderOpen } from "@vicons/fa"
 import { FolderAddOutlined } from "@vicons/antd"
 import { useI18n } from "vue-i18n"
 import { useHostStore } from "@/stores/hosts"
@@ -88,10 +87,11 @@ const folderSelectOptions = computed<TreeSelectOption[]>(() => [
 function renderPrefix({ option }: { option: TreeOption }) {
   const node = option as unknown as HostNode
   if (node.type === "folder") {
+    const expanded = expandedKeys.value.includes(node.key)
     return h(
       NIcon,
       { color: "#f1c27d", size: 16 },
-      { default: () => h(option.expanded ? FolderOpenOutline : FolderOutline) },
+      { default: () => h(expanded ? FolderOpen : Folder) },
     )
   }
   const iconUrl = node.icon ? iconStore.urlOf(node.icon) : null
@@ -710,6 +710,7 @@ async function onRefresh() {
           :data="treeData"
           :pattern="filter"
           block-line
+          show-line
           expand-on-click
           :selected-keys="selectedKeys"
           :expanded-keys="expandedKeys"

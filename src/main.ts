@@ -10,6 +10,12 @@ import i18n from './locales'
 
 // 全局未捕获异常兜底，避免静默白屏
 window.addEventListener('error', (e) => {
+  // 浏览器 ResizeObserver 固有告警：一帧内连续布局变化所致，
+  // naive-ui 组件常态触发，无功能影响，过滤以免刷屏
+  if (e.message?.includes('ResizeObserver loop')) {
+    e.preventDefault() // 抑制 webview 对该 error 事件的原生控制台输出
+    return
+  }
   console.error('[AShell] global error:', e.error ?? e.message)
 })
 window.addEventListener('unhandledrejection', (e) => {
