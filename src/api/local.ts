@@ -70,6 +70,83 @@ export function uploadLocalToRemote(
   })
 }
 
+/** 批量把本地文件/目录移入系统回收站（macOS 废纸篓 / Windows 回收站，
+ *  可恢复）。仅接受绝对路径，返回移入条目数。 */
+export function trashLocalFs(paths: string[]): Promise<{ trashed: number }> {
+  return request<{ trashed: number }>("/api/local/fs/trash", {
+    method: "POST",
+    json: { paths },
+  })
+}
+
+/** 新建本地目录（已存在报错）。 */
+export function mkdirLocalFs(path: string): Promise<void> {
+  return request<void>("/api/local/fs/mkdir", {
+    method: "POST",
+    json: { path },
+  })
+}
+
+/** 新建本地空文件（已存在报错，不截断已有内容）。 */
+export function createLocalFile(path: string): Promise<void> {
+  return request<void>("/api/local/fs/create_file", {
+    method: "POST",
+    json: { path },
+  })
+}
+
+/** 本地重命名 / 同盘移动。 */
+export function renameLocalFs(from: string, to: string): Promise<void> {
+  return request<void>("/api/local/fs/rename", {
+    method: "POST",
+    json: { from, to },
+  })
+}
+
+/** 本地复制到目标目录（保持原名；目录递归，文件覆盖、目录合并）。
+ *  大目录耗时随体积增长，关闭 axios 默认 30s 超时。 */
+export function copyLocalFs(src: string, dstDir: string): Promise<void> {
+  return request<void>("/api/local/fs/copy", {
+    method: "POST",
+    json: { src, dst_dir: dstDir },
+    timeout: 0,
+  })
+}
+
+/** 本地移动到目标目录（保持原名；同盘 rename 瞬时，跨盘回退复制+删除）。 */
+export function moveLocalFs(src: string, dstDir: string): Promise<void> {
+  return request<void>("/api/local/fs/move", {
+    method: "POST",
+    json: { src, dst_dir: dstDir },
+    timeout: 0,
+  })
+}
+
+/** 在系统文件管理器中定位显示（Finder / 资源管理器）。 */
+export function revealLocalFs(path: string): Promise<void> {
+  return request<void>("/api/local/fs/reveal", {
+    method: "POST",
+    json: { path },
+  })
+}
+
+/** 用系统默认程序打开本地文件/目录。 */
+export function openLocalFs(path: string): Promise<void> {
+  return request<void>("/api/local/fs/open", {
+    method: "POST",
+    json: { path },
+  })
+}
+
+/** 批量删除本地文件/目录（目录递归，不经回收站；调用方负责确认）。
+ *  仅接受绝对路径，返回成功删除的条目数。 */
+export function removeLocalFs(paths: string[]): Promise<{ removed: number }> {
+  return request<{ removed: number }>("/api/local/fs/remove", {
+    method: "POST",
+    json: { paths },
+  })
+}
+
 /** 轮询 Rust 进程内直传任务的已传字节数（task_id -> bytes）。
  *  未知 id（未开始 / 已结束）不出现在结果里。 */
 export function transferProgress(

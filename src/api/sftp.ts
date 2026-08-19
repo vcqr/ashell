@@ -101,6 +101,25 @@ export function rename(sid: string, oldPath: string, newPath: string): Promise<v
   })
 }
 
+/** 移动（跨目录 rename，同文件系统内瞬时完成；跨文件系统由服务器报错） */
+export function move(sid: string, oldPath: string, newPath: string): Promise<void> {
+  return request<void>("/api/ssh/sftp/move", {
+    method: "POST",
+    json: { sid, old_path: oldPath, new_path: newPath },
+  })
+}
+
+/** 远程内部复制到目标目录（保持原名；目录递归，Rust 进程内流式中转，
+ *  文件同名覆盖、目录同名合并） */
+export function duplicate(sid: string, srcPath: string, dstDir: string): Promise<void> {
+  return request<void>("/api/ssh/sftp/duplicate", {
+    method: "POST",
+    json: { sid, src_path: srcPath, dst_dir: dstDir },
+    // 大目录递归复制耗时随体积增长，关闭 axios 默认 30s 超时
+    timeout: 0,
+  })
+}
+
 export function closeSftp(sid: string): Promise<void> {
   return request<void>("/api/ssh/sftp/close", {
     method: "POST",

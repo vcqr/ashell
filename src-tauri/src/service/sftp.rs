@@ -7,7 +7,7 @@ use russh_sftp::client::fs::File;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileAttributes, FileType, OpenFlags};
 use serde::Serialize;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 use crate::errors::{AppError, AppResult};
@@ -245,6 +245,83 @@ pub async fn rename(sid: &str, old_path: &str, new_path: &str) -> AppResult<()> 
     sftp.rename(old_path, new_path)
         .await
         .map_err(|e| sftp_err("rename", e))?;
+    Ok(())
+}
+
+/// 移动（跨目录 rename）。SFTP 协议原生支持同文件系统内瞬时移动；
+/// 跨文件系统由服务器报错，前端引导用户改用复制+删除。
+pub async fn move_path(sid: &str, old_path: &str, new_path: &str) -> AppResult<()> {
+    if old_path == "/" || old_path.is_empty() {
+        return Err(AppError::BadRequest("不允许移动根路径".into()));
+    }
+    let sftp = ssh_svc::get_sftp(sid).await?;
+    sftp.rename(old_path, new_path)
+        .await
+        .map_err(|e| sftp_err("rename(move)", e))?;
+    Ok(())
+}
+
+/// 远程内部复制：src 复制到 dst_dir 下（保持原名，文件同名覆盖、
+/// 目录同名合并，整体递归）。SFTP 协议无服务器端 copy，走进程内
+/// 流式中转（chunk 级读写，不落盘、不进 webview 内存）。
+pub async fn duplicate(sid: &str, src_path: &str, dst_dir: &str) -> AppResult<()> {
+    let sftp = ssh_svc::get_sftp(sid).await?;
+    let name = Path::new(src_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| AppError::BadRequest("invalid src_path".into()))?
+        .to_string();
+    let dst_path = join_path(dst_dir, &name);
+    duplicate_inner(&sftp, src_path, &dst_path).await
+}
+
+async fn duplicate_inner(sftp: &SftpSession, src: &str, dst: &str) -> AppResult<()> {
+    let attrs = sftp
+        .metadata(src)
+        .await
+        .map_err(|e| sftp_err("metadata", e))?;
+    if attrs.is_dir() {
+        // 目标目录已存在时按合并语义继续（Windows 资源管理器对齐）
+        if !sftp
+            .try_exists(dst)
+            .await
+            .map_err(|e| sftp_err("try_exists", e))?
+        {
+            sftp.create_dir(dst)
+                .await
+                .map_err(|e| sftp_err("create_dir", e))?;
+        }
+        let entries = sftp
+            .read_dir(src)
+            .await
+            .map_err(|e| sftp_err("read_dir", e))?;
+        for entry in entries {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child_src = join_path(src, &name);
+            let child_dst = join_path(dst, &name);
+            Box::pin(duplicate_inner(sftp, &child_src, &child_dst)).await?;
+        }
+        return Ok(());
+    }
+    // 文件：读 chunk -> 写 chunk 流式中转
+    let mut reader = sftp
+        .open_with_flags(src, OpenFlags::READ)
+        .await
+        .map_err(|e| sftp_err("open", e))?;
+    let mut writer = sftp
+        .create(dst)
+        .await
+        .map_err(|e| sftp_err("create", e))?;
+    tokio::io::copy(&mut reader, &mut writer)
+        .await
+        .map_err(|e| sftp_err("io::copy", e))?;
+    writer
+        .shutdown()
+        .await
+        .map_err(|e| sftp_err("shutdown", e))?;
     Ok(())
 }
 

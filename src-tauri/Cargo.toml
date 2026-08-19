@@ -68,6 +68,9 @@ dirs = "5"
 once_cell = "1"
 bytes = "1"
 
+# Move to system trash (macOS Finder / Windows Recycle Bin / Linux XDG trash)
+trash = "5"
+
 # Crypto - AES-GCM for credential encryption
 aes-gcm = "0.10"
 rand = "0.8"

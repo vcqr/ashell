@@ -119,6 +119,29 @@ pub async fn rename(
     Ok(ok_msg("ok"))
 }
 
+/// 移动（跨目录 rename；同文件系统内瞬时完成）
+pub async fn move_path(
+    Json(req): Json<RenameReq>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    sftp_svc::move_path(&req.sid, &req.old_path, &req.new_path).await?;
+    Ok(ok_msg("ok"))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DuplicateReq {
+    pub sid: String,
+    pub src_path: String,
+    pub dst_dir: String,
+}
+
+/// 远程内部复制（目录递归，Rust 进程内流式中转）
+pub async fn duplicate(
+    Json(req): Json<DuplicateReq>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    sftp_svc::duplicate(&req.sid, &req.src_path, &req.dst_dir).await?;
+    Ok(ok_msg("ok"))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DownloadQuery {
     pub sid: String,

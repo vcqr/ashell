@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, ref, watch } from "vue"
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NBadge,
   NButton,
@@ -30,8 +30,11 @@ import {
   CloudUploadOutline,
   CopyOutline,
   CreateOutline,
+  CutOutline,
+  CheckmarkDoneOutline,
   DocumentOutline,
   DownloadOutline,
+  EyeOffOutline,
   EyeOutline,
   FolderOpenOutline,
   LaptopOutline,
@@ -44,9 +47,11 @@ import {
 import { FileRegular, Folder, Link } from "@vicons/fa"
 import {
   downloadStream,
+  duplicate as duplicateApi,
   isAbortError,
   listSftp,
   mkdir as mkdirApi,
+  move as moveApi,
   removeDir,
   removeFile,
   rename as renameApi,
@@ -103,6 +108,13 @@ const loading = ref(false)
 const files = ref<SftpFile[]>([])
 const currentPath = ref<string>("/")
 
+/** 隐藏文件（dotfile）显示开关：默认隐藏，与 Finder/资源管理器一致 */
+const showHidden = ref(false)
+/** 表格实际渲染的列表（隐藏文件关闭时过滤 dotfile；多选基于该列表） */
+const displayFiles = computed(() =>
+  showHidden.value ? files.value : files.value.filter((f) => !f.file_name.startsWith(".")),
+)
+
 /* ---------- 远程栏多选（与本地栏共用 useMultiSelect 语义） ---------- */
 
 const {
@@ -112,7 +124,14 @@ const {
   onRowClick: onRemoteRowClick,
   collectForTransfer: collectRemoteForTransfer,
   clearSelection: clearRemoteSelection,
-} = useMultiSelect(files)
+  selectAll: selectRemoteAll,
+} = useMultiSelect(displayFiles)
+
+/** 远程栏剪贴板（内部复制/剪切 -> 粘贴；cut 粘贴 = 跨目录 move） */
+const remoteClipboard = ref<{ op: "copy" | "cut"; files: SftpFile[] } | null>(null)
+
+/** 双栏下最近交互的面板：Ctrl+A 全选的目标 */
+const activePane = ref<"remote" | "local">("remote")
 
 const mkdirOpen = ref(false)
 const mkdirMode = ref<"mkdir" | "touch">("mkdir")
@@ -376,6 +395,135 @@ function confirmRemove(file: SftpFile) {
     },
   })
 }
+
+/* ---------- 远程内部复制 / 剪切（移动）/ 粘贴 ---------- */
+
+/** 复制/剪切到内部剪贴板：作用于右键行所在的选择集（批量） */
+function setRemoteClipboard(op: "copy" | "cut") {
+  const target = ctxMenuTarget.value
+  if (!target) return
+  const items = isRemoteSelected(target) ? remoteSelectedFiles.value : [target]
+  remoteClipboard.value = { op, files: [...items] }
+  message.info(
+    op === "copy"
+      ? t("sftp.message.copiedToClipboard", { count: items.length })
+      : t("sftp.message.cutToClipboard", { count: items.length }),
+  )
+}
+
+function isCutRow(row: SftpFile): boolean {
+  const clip = remoteClipboard.value
+  return (
+    clip?.op === "cut" && clip.files.some((f) => f.full_path === row.full_path)
+  )
+}
+
+/** 粘贴到当前目录：copy = 递归复制；cut = 跨目录 move（同文件系统瞬时）。
+ *  目标存在同名时弹一次覆盖确认；逐条执行、部分失败给汇总。 */
+async function pasteRemote() {
+  const clip = remoteClipboard.value
+  const sid = props.sid
+  if (!clip || !sid || clip.files.length === 0) return
+  const dstDir = currentPath.value
+
+  const run = async () => {
+    let ok = 0
+    let fail = 0
+    let firstError = ""
+    for (const f of clip.files) {
+      try {
+        if (clip.op === "copy") {
+          await duplicateApi(sid, f.full_path, dstDir)
+        } else {
+          await moveApi(sid, f.full_path, joinPath(dstDir, f.file_name))
+        }
+        ok++
+      } catch (e) {
+        fail++
+        if (!firstError) firstError = (e as Error).message
+      }
+    }
+    if (fail === 0) {
+      message.success(t("sftp.message.pasted"))
+    } else if (clip.files.length === 1) {
+      message.error(t("sftp.message.pasteFailed", { error: firstError }))
+    } else {
+      message.warning(t("sftp.message.pastePartial", { ok, fail }))
+    }
+    if (clip.op === "cut") remoteClipboard.value = null
+    clearRemoteSelection()
+    await load()
+  }
+
+  // 同名冲突：一次确认（cut 覆盖文件 OK；目标为非空目录会由服务器报错并入汇总）
+  const names = new Set(clip.files.map((f) => f.file_name))
+  const conflicts = displayFiles.value.filter((f) => names.has(f.file_name))
+  if (conflicts.length > 0) {
+    dialog.warning({
+      title: t("sftp.dialog.pasteOverwriteTitle"),
+      content:
+        conflicts.length === 1
+          ? t("sftp.dialog.pasteOverwrite", { name: conflicts[0]!.file_name })
+          : t("sftp.dialog.pasteOverwriteMulti", { count: conflicts.length }),
+      positiveText: t("common.confirm"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => {
+        void run()
+      },
+    })
+  } else {
+    void run()
+  }
+}
+
+/* ---------- Ctrl/Cmd + A 全选 / Esc 清空选择（最近交互面板） ---------- */
+
+/** 有弹窗 / 菜单 / 路径编辑等浮层打开：Esc 留给它们原生处理（关闭） */
+function overlayOpen(): boolean {
+  return (
+    ctxMenuVisible.value ||
+    mkdirOpen.value ||
+    renameOpen.value ||
+    editorOpen.value ||
+    previewOpen.value ||
+    uploadModalOpen.value ||
+    downloadModalOpen.value ||
+    aiPromptVisible.value ||
+    pathEditing.value ||
+    (localPaneRef.value?.hasOverlay?.() ?? false)
+  )
+}
+
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (!props.open || !props.sid) return
+  if (e.key === "Escape") {
+    if (overlayOpen()) return
+    if (activePane.value === "remote") clearRemoteSelection()
+    else localPaneRef.value?.clearSelection()
+    return
+  }
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "a") return
+  const el = e.target as HTMLElement | null
+  // 输入框 / 终端（xterm 焦点是 textarea）/ CodeMirror 保留原生行为
+  if (
+    el &&
+    (el.tagName === "INPUT" ||
+      el.tagName === "TEXTAREA" ||
+      el.isContentEditable)
+  ) {
+    return
+  }
+  e.preventDefault()
+  if (activePane.value === "remote") selectRemoteAll()
+  else localPaneRef.value?.selectAll()
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", onGlobalKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onGlobalKeydown)
+})
 
 /* ---------- 在线编辑 ---------- */
 
@@ -1480,7 +1628,12 @@ const rowKey = (row: SftpFile) => row.full_path
 
 function rowProps(row: SftpFile) {
   return {
-    class: isRemoteSelected(row) ? "row-selected" : "",
+    class: [
+      isRemoteSelected(row) ? "row-selected" : "",
+      isCutRow(row) ? "row-cut" : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
     style: {
       // 双栏模式下文件/目录行可拖到本地栏（目录为整树下载），提示 grab
       cursor:
@@ -1543,7 +1696,7 @@ function onBlankContextMenu(e: MouseEvent) {
 const ctxMenuOptions = computed(() => {
   const target = ctxMenuTarget.value
   if (!target) {
-    return [
+    const opts: Array<Record<string, unknown>> = [
       {
         label: t("sftp.ctxMenu.newFolder"),
         key: "new-mkdir",
@@ -1554,13 +1707,33 @@ const ctxMenuOptions = computed(() => {
         key: "new-touch",
         icon: () => h(NIcon, null, { default: () => h(DocumentOutline) }),
       },
+    ]
+    if (remoteClipboard.value) {
+      const clip = remoteClipboard.value
+      opts.push({
+        label:
+          clip.files.length > 1
+            ? t("sftp.ctxMenu.pasteMulti", { count: clip.files.length })
+            : t("sftp.ctxMenu.paste"),
+        key: "paste",
+        icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
+      })
+    }
+    opts.push(
+      { type: "divider", key: "d0" },
+      {
+        label: t("sftp.ctxMenu.selectAll"),
+        key: "select-all",
+        icon: () => h(NIcon, null, { default: () => h(CheckmarkDoneOutline) }),
+      },
       { type: "divider", key: "d1" },
       {
         label: t("sftp.ctxMenu.refresh"),
         key: "refresh",
         icon: () => h(NIcon, null, { default: () => h(RefreshOutline) }),
       },
-    ]
+    )
+    return opts
   }
   const opts: Array<Record<string, unknown>> = []
   // 多选集 >1 时下载项升级为批量（右键行必然在选择集内）
@@ -1592,6 +1765,22 @@ const ctxMenuOptions = computed(() => {
       icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
     })
   }
+  opts.push({
+    label:
+      selCount > 1
+        ? t("sftp.ctxMenu.copyMulti", { count: selCount })
+        : t("sftp.ctxMenu.copy"),
+    key: "clipboard-copy",
+    icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
+  })
+  opts.push({
+    label:
+      selCount > 1
+        ? t("sftp.ctxMenu.cutMulti", { count: selCount })
+        : t("sftp.ctxMenu.cut"),
+    key: "clipboard-cut",
+    icon: () => h(NIcon, null, { default: () => h(CutOutline) }),
+  })
   opts.push({
     label: t("sftp.ctxMenu.rename"),
     key: "rename",
@@ -1657,6 +1846,8 @@ function onCtxMenuSelect(key: string | number) {
   if (!target) {
     if (key === "new-mkdir") openMkdir()
     else if (key === "new-touch") openTouch()
+    else if (key === "paste") void pasteRemote()
+    else if (key === "select-all") selectRemoteAll()
     else if (key === "refresh") refresh()
     return
   }
@@ -1674,6 +1865,8 @@ function onCtxMenuSelect(key: string | number) {
       else void onDownload(target)
     }
   } else if (key === "edit") openEditor(target)
+  else if (key === "clipboard-copy") setRemoteClipboard("copy")
+  else if (key === "clipboard-cut") setRemoteClipboard("cut")
   else if (key === "rename") openRename(target)
   else if (key === "remove") confirmRemove(target)
   else if (key === "copy-path") void copyPath(target)
@@ -2010,6 +2203,7 @@ function openInStandaloneWindow() {
           class="sftp-body"
           :class="{ dual: dualPane }"
           @contextmenu="onBlankContextMenu"
+          @mousedown.capture="activePane = 'remote'"
         >
           <LocalPane
             v-if="dualPane"
@@ -2017,6 +2211,7 @@ function openInStandaloneWindow() {
             class="local-pane-slot"
             :dir="localDir"
             :sid="props.sid ?? ''"
+            @mousedown="activePane = 'local'"
             @update:dir="persistLocalDir"
             @select="localSelectedFiles = $event"
             @transfer-up="onLocalUpload"
@@ -2097,6 +2292,21 @@ function openInStandaloneWindow() {
                 {{ currentPath }}
               </div>
             </div>
+            <NButton
+              size="small"
+              quaternary
+              circle
+              :title="showHidden ? t('sftp.hideHidden') : t('sftp.showHidden')"
+              :disabled="pathEditing"
+              @click="showHidden = !showHidden"
+            >
+              <template #icon>
+                <NIcon>
+                  <EyeOffOutline v-if="showHidden" />
+                  <EyeOutline v-else />
+                </NIcon>
+              </template>
+            </NButton>
             <NButton
               size="small"
               quaternary
@@ -2230,7 +2440,7 @@ function openInStandaloneWindow() {
             <NDataTable
               size="small"
               :columns="columns"
-              :data="files"
+              :data="displayFiles"
               :row-key="rowKey"
               :row-props="rowProps"
               :bordered="false"
@@ -2709,6 +2919,11 @@ function openInStandaloneWindow() {
 
 .file-table :deep(.n-data-table-tr.row-selected .n-data-table-td) {
   background-color: var(--ashell-row-selected, rgba(99, 153, 255, 0.16));
+}
+
+/* 剪切（待粘贴移动）的行：半透明提示“待移动” */
+.file-table :deep(.n-data-table-tr.row-cut .n-data-table-td) {
+  opacity: 0.45;
 }
 
 :deep(.name-cell) {

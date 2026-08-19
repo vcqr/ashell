@@ -74,6 +74,12 @@ export function useMultiSelect(files: Ref<SftpFile[]>) {
     anchorKey.value = null
   }
 
+  /** 全选当前列表（Ctrl/Cmd+A） */
+  function selectAll() {
+    selectedKeys.value = new Set(files.value.map((f) => f.full_path))
+    anchorKey.value = null
+  }
+
   return {
     selectedKeys,
     selectedFiles,
@@ -82,5 +88,6 @@ export function useMultiSelect(files: Ref<SftpFile[]>) {
     onRowClick,
     collectForTransfer,
     clearSelection,
+    selectAll,
   }
 }

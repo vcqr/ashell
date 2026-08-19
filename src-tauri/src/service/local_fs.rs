@@ -3,10 +3,11 @@
 //! 提供"列目录"与两个直传能力："远端 -> 本地落盘"、"本地文件 -> 远端"，
 //! 传输在 Rust 进程内流式完成，大文件不经过 webview 内存。
 //! 另提供"OS 拖放文件落盘"：双栏下把文件拖进本地栏时，webview 只能拿到
-//! File 对象，字节流经本地 HTTP（multipart）回传写入本地目录——这是唯一
+//! File 对象，字节流经本地 HTTP（multipart）回传写入本地目录--这是唯一
 //! 必须过 webview 的传输路径。
-//! 不提供本地文件的删除/改名：本地文件管理交给操作系统，AShell 的
-//! 本地侧只作为传输的源与目的地，避免出现两套语义不同的删除/回收站行为。
+//! 文件管理操作（回收站/永久删除、新建、重命名、复制、移动、在文件
+//! 管理器中显示、默认程序打开）：回收站走系统语义可恢复，永久删除
+//! 由前端强警示确认后才调用。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -341,4 +342,158 @@ pub async fn prepare_save_path(local_dir: &str, rel_name: &str) -> AppResult<Pat
             .map_err(|e| io_err("create_dir_all", e))?;
     }
     Ok(target)
+}
+
+/// 移入系统回收站（macOS Finder 废纸篓 / Windows 回收站 / Linux XDG trash），
+/// 可从系统回收站恢复。trash::delete 是同步系统调用，包在 spawn_blocking
+/// 里避免阻塞 tokio worker。
+pub async fn trash(path: &str) -> AppResult<()> {
+    let p = validate_absolute(path)?;
+    let display = p.to_string_lossy().into_owned();
+    tokio::task::spawn_blocking(move || {
+        trash::delete(&p).map_err(|e| AppError::BadRequest(format!("trash {display}: {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("join trash task: {e}")))?
+}
+
+/// 删除本地文件 / 目录（目录递归）。不经回收站，调用方负责确认。
+/// symlink_metadata 不跟随符号链接：链接本身按文件删除，不会误删目标内容。
+pub async fn remove(path: &str) -> AppResult<()> {
+    let p = validate_absolute(path)?;
+    let display = p.to_string_lossy().into_owned();
+    let md = tokio::fs::symlink_metadata(&p)
+        .await
+        .map_err(|e| io_err(&format!("stat {}", display), e))?;
+    if md.is_dir() {
+        tokio::fs::remove_dir_all(&p)
+            .await
+            .map_err(|e| io_err(&format!("remove_dir_all {}", display), e))?;
+    } else {
+        tokio::fs::remove_file(&p)
+            .await
+            .map_err(|e| io_err(&format!("remove_file {}", display), e))?;
+    }
+    Ok(())
+}
+
+/// 新建本地目录（已存在时报错）
+pub async fn mkdir(path: &str) -> AppResult<()> {
+    let p = validate_absolute(path)?;
+    tokio::fs::create_dir(&p)
+        .await
+        .map_err(|e| io_err(&format!("create_dir {}", p.to_string_lossy()), e))
+}
+
+/// 新建本地空文件（已存在时报错，避免截断已有内容）
+pub async fn create_file(path: &str) -> AppResult<()> {
+    let p = validate_absolute(path)?;
+    if tokio::fs::try_exists(&p).await.unwrap_or(false) {
+        return Err(AppError::BadRequest(format!(
+            "文件已存在：{}",
+            p.to_string_lossy()
+        )));
+    }
+    tokio::fs::File::create(&p)
+        .await
+        .map_err(|e| io_err(&format!("create {}", p.to_string_lossy()), e))?;
+    Ok(())
+}
+
+/// 重命名 / 同盘移动（tokio rename；跨盘移动请用 move_to）
+pub async fn rename(from: &str, to: &str) -> AppResult<()> {
+    let src = validate_absolute(from)?;
+    let dst = validate_absolute(to)?;
+    tokio::fs::rename(&src, &dst).await.map_err(|e| {
+        io_err(
+            &format!(
+                "rename {} -> {}",
+                src.to_string_lossy(),
+                dst.to_string_lossy()
+            ),
+            e,
+        )
+    })
+}
+
+/// 复制文件/目录到 dst_dir 下（保持原名；文件同名覆盖、目录同名合并，递归）。
+/// 类型判定用 metadata（跟随符号链接），与远程 duplicate 的 stat 语义一致。
+pub async fn copy(src_path: &str, dst_dir: &str) -> AppResult<()> {
+    let src = validate_absolute(src_path)?;
+    let dir = validate_absolute(dst_dir)?;
+    let name = src
+        .file_name()
+        .ok_or_else(|| AppError::BadRequest("invalid src_path".into()))?;
+    let dst = dir.join(name);
+    copy_inner(&src, &dst).await
+}
+
+async fn copy_inner(src: &Path, dst: &Path) -> AppResult<()> {
+    let display = src.to_string_lossy().into_owned();
+    let md = tokio::fs::metadata(src)
+        .await
+        .map_err(|e| io_err(&format!("stat {}", display), e))?;
+    if md.is_dir() {
+        tokio::fs::create_dir_all(dst)
+            .await
+            .map_err(|e| io_err(&format!("create_dir_all {}", dst.to_string_lossy()), e))?;
+        let mut rd = tokio::fs::read_dir(src)
+            .await
+            .map_err(|e| io_err(&format!("read_dir {}", display), e))?;
+        while let Some(entry) = rd
+            .next_entry()
+            .await
+            .map_err(|e| io_err("next_entry", e))?
+        {
+            Box::pin(copy_inner(&entry.path(), &dst.join(entry.file_name()))).await?;
+        }
+        return Ok(());
+    }
+    tokio::fs::copy(src, dst)
+        .await
+        .map_err(|e| io_err(&format!("copy {}", display), e))?;
+    Ok(())
+}
+
+/// 移动到 dst_dir 下（保持原名）。同盘 = rename 瞬时完成；
+/// 跨盘（EXDEV）自动回退为递归复制 + 删除源。
+pub async fn move_to(src_path: &str, dst_dir: &str) -> AppResult<()> {
+    let src = validate_absolute(src_path)?;
+    let dir = validate_absolute(dst_dir)?;
+    let name = src
+        .file_name()
+        .ok_or_else(|| AppError::BadRequest("invalid src_path".into()))?;
+    let dst = dir.join(name);
+    let display = src.to_string_lossy().into_owned();
+    match tokio::fs::rename(&src, &dst).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            copy_inner(&src, &dst).await?;
+            remove(src.to_str().unwrap_or_default()).await
+        }
+        Err(e) => Err(io_err(&format!("rename {}", display), e)),
+    }
+}
+
+/// 在系统文件管理器中定位显示（Finder / 资源管理器）。
+/// opener 会等待子进程启动，包在 spawn_blocking 里避免阻塞 worker。
+pub async fn reveal(path: &str) -> AppResult<()> {
+    let p = validate_absolute(path)?;
+    tokio::task::spawn_blocking(move || {
+        tauri_plugin_opener::reveal_item_in_dir(&p)
+            .map_err(|e| AppError::Internal(format!("reveal: {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("join reveal task: {e}")))?
+}
+
+/// 用系统默认程序打开本地文件/目录
+pub async fn open(path: &str) -> AppResult<()> {
+    let p = validate_absolute(path)?;
+    tokio::task::spawn_blocking(move || {
+        tauri_plugin_opener::open_path(&p, None::<&str>)
+            .map_err(|e| AppError::Internal(format!("open: {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("join open task: {e}")))?
 }

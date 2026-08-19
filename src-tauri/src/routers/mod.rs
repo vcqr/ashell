@@ -102,6 +102,24 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::local::fs_save_file),
         )
         .route(
+            "/api/local/fs/trash",
+            post(handlers::local::fs_trash),
+        )
+        .route(
+            "/api/local/fs/remove",
+            post(handlers::local::fs_remove),
+        )
+        .route("/api/local/fs/mkdir", post(handlers::local::fs_mkdir))
+        .route(
+            "/api/local/fs/create_file",
+            post(handlers::local::fs_create_file),
+        )
+        .route("/api/local/fs/rename", post(handlers::local::fs_rename))
+        .route("/api/local/fs/copy", post(handlers::local::fs_copy))
+        .route("/api/local/fs/move", post(handlers::local::fs_move))
+        .route("/api/local/fs/reveal", post(handlers::local::fs_reveal))
+        .route("/api/local/fs/open", post(handlers::local::fs_open))
+        .route(
             "/api/local/fs/progress",
             post(handlers::local::fs_progress),
         )
@@ -131,6 +149,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/ssh/sftp/remove_dir", post(handlers::sftp::remove_dir))
         .route("/api/ssh/sftp/rename", post(handlers::sftp::rename))
+        .route("/api/ssh/sftp/move", post(handlers::sftp::move_path))
+        .route("/api/ssh/sftp/duplicate", post(handlers::sftp::duplicate))
         .route("/api/ssh/sftp/download", get(handlers::sftp::download))
         .route("/api/ssh/sftp/upload", post(handlers::sftp::upload))
         .route("/api/ssh/sftp/close", post(handlers::sftp::close))

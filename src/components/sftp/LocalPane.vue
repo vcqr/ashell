@@ -19,14 +19,38 @@ import type {
 } from "naive-ui"
 import {
   ArrowUpOutline,
+  CheckmarkDoneOutline,
   CloudUploadOutline,
   CopyOutline,
+  CreateOutline,
+  CutOutline,
+  EyeOffOutline,
+  EyeOutline,
+  FolderOpenOutline,
   HomeOutline,
+  OpenOutline,
   RefreshOutline,
+  TrashOutline,
+  TrashSharp,
 } from "@vicons/ionicons5"
 import { FileRegular, Folder, HddRegular } from "@vicons/fa"
 import { useI18n } from "vue-i18n"
-import { listLocalFs, listLocalFsRoots, saveLocalFile } from "@/api/local"
+import {
+  copyLocalFs,
+  createLocalFile,
+  listLocalFs,
+  listLocalFsRoots,
+  mkdirLocalFs,
+  moveLocalFs,
+  openLocalFs,
+  removeLocalFs,
+  renameLocalFs,
+  revealLocalFs,
+  saveLocalFile,
+  trashLocalFs,
+} from "@/api/local"
+import MkdirDialog from "@/components/sftp/MkdirDialog.vue"
+import RenameDialog from "@/components/sftp/RenameDialog.vue"
 import { isAbortError } from "@/api/sftp"
 import { useSftpStore } from "@/stores/sftp"
 import type { OsDropFolder, SftpFile, TransferTask } from "@/types"
@@ -66,6 +90,13 @@ const loading = ref(false)
 const currentPath = ref(props.dir || "")
 /** "此电脑"页：展示盘符（Windows）/ 根（Unix），非真实目录 */
 const viewingRoots = ref(false)
+
+/** 隐藏文件（dotfile）显示开关：默认隐藏，与 Finder/资源管理器一致 */
+const showHidden = ref(false)
+/** 表格实际渲染的列表（多选基于该列表） */
+const displayFiles = computed(() =>
+  showHidden.value ? files.value : files.value.filter((f) => !f.file_name.startsWith(".")),
+)
 const pathEditing = ref(false)
 const pathDraft = ref("")
 const pathInputRef = ref<InputInst | null>(null)
@@ -84,7 +115,17 @@ const {
   onRowClick: onRowSelect,
   collectForTransfer,
   clearSelection,
-} = useMultiSelect(files)
+  selectAll,
+} = useMultiSelect(displayFiles)
+
+/** 本地栏剪贴板（内部复制/剪切 -> 粘贴；cut 粘贴 = 移动，跨盘自动回退复制+删除） */
+const localClipboard = ref<{ op: "copy" | "cut"; files: SftpFile[] } | null>(null)
+
+/** 新建文件夹 / 新建文件弹窗（复用远程栏同款组件） */
+const mkdirOpen = ref(false)
+const mkdirMode = ref<"mkdir" | "touch">("mkdir")
+const renameOpen = ref(false)
+const renameTarget = ref<SftpFile | null>(null)
 
 /* ---------- 拖拽：本地 -> 远程（上传） ---------- */
 
@@ -366,7 +407,12 @@ const rowKey = (row: SftpFile) => row.full_path
 
 function rowProps(row: SftpFile) {
   return {
-    class: isSelected(row) ? "row-selected" : "",
+    class: [
+      isSelected(row) ? "row-selected" : "",
+      isCutRowLocal(row) ? "row-cut" : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
     style: {
       // 文件/目录行都可拖到远程栏（目录为递归上传），提示 grab
       cursor:
@@ -429,14 +475,47 @@ function onBlankContextMenu(e: MouseEvent) {
 const ctxMenuOptions = computed<DropdownOption[]>(() => {
   const row = ctxMenuTarget.value
   if (!row) {
-    // 空白区：仅刷新 / 回此电脑（不提供新建、删除：本地文件管理交给 OS）
-    const opts: DropdownOption[] = [
-      {
-        key: "local-refresh",
-        label: t("sftp.ctxMenu.refresh"),
-        icon: () => h(NIcon, null, () => h(RefreshOutline)),
-      },
-    ]
+    // 空白区：新建/粘贴/全选（非"此电脑"页）+ 刷新 / 回此电脑
+    const opts: DropdownOption[] = []
+    if (!viewingRoots.value) {
+      opts.push(
+        {
+          key: "local-mkdir",
+          label: t("sftp.ctxMenu.newFolder"),
+          icon: () => h(NIcon, null, () => h(Folder)),
+        },
+        {
+          key: "local-touch",
+          label: t("sftp.ctxMenu.newFile"),
+          icon: () => h(NIcon, null, () => h(FileRegular)),
+        },
+      )
+      if (localClipboard.value) {
+        const clip = localClipboard.value
+        opts.push({
+          key: "local-paste",
+          label:
+            clip.files.length > 1
+              ? t("sftp.ctxMenu.pasteMulti", { count: clip.files.length })
+              : t("sftp.ctxMenu.paste"),
+          icon: () => h(NIcon, null, () => h(CopyOutline)),
+        })
+      }
+      opts.push(
+        { type: "divider", key: "d-local-blank-1" },
+        {
+          key: "local-select-all",
+          label: t("sftp.ctxMenu.selectAll"),
+          icon: () => h(NIcon, null, () => h(CheckmarkDoneOutline)),
+        },
+        { type: "divider", key: "d-local-blank-2" },
+      )
+    }
+    opts.push({
+      key: "local-refresh",
+      label: t("sftp.ctxMenu.refresh"),
+      icon: () => h(NIcon, null, () => h(RefreshOutline)),
+    })
     if (!viewingRoots.value) {
       opts.push({
         key: "local-roots",
@@ -446,6 +525,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
     }
     return opts
   }
+  const selCount = selectedFiles.value.length
   const opts: DropdownOption[] = [
     {
       key: "copy-path",
@@ -454,10 +534,10 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
     },
   ]
   // 多选（右键行必然在选择集内）：合并为批量上传项；单选按行类型单项
-  if (selectedFiles.value.length > 1) {
+  if (selCount > 1) {
     opts.push({
       key: "upload-selection",
-      label: t("sftp.localPane.ctxUploadMulti", { count: selectedFiles.value.length }),
+      label: t("sftp.localPane.ctxUploadMulti", { count: selCount }),
       icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
     })
   } else if (row.file_type === "file" && !viewingRoots.value) {
@@ -473,6 +553,58 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
     })
   }
+  if (!viewingRoots.value) {
+    opts.push(
+      { type: "divider", key: "d-local-clip" },
+      {
+        key: "clipboard-copy",
+        label:
+          selCount > 1
+            ? t("sftp.ctxMenu.copyMulti", { count: selCount })
+            : t("sftp.ctxMenu.copy"),
+        icon: () => h(NIcon, null, () => h(CopyOutline)),
+      },
+      {
+        key: "clipboard-cut",
+        label:
+          selCount > 1
+            ? t("sftp.ctxMenu.cutMulti", { count: selCount })
+            : t("sftp.ctxMenu.cut"),
+        icon: () => h(NIcon, null, () => h(CutOutline)),
+      },
+      {
+        key: "local-rename",
+        label: t("sftp.ctxMenu.rename"),
+        icon: () => h(NIcon, null, () => h(CreateOutline)),
+      },
+    )
+    opts.push(
+      { type: "divider", key: "d-local-trash" },
+      {
+        key: "trash",
+        label: t("sftp.localPane.ctxTrash"),
+        icon: () => h(NIcon, null, () => h(TrashOutline)),
+      },
+      {
+        key: "delete",
+        label: t("sftp.ctxMenu.delete"),
+        icon: () => h(NIcon, null, () => h(TrashSharp)),
+      },
+    )
+    opts.push(
+      { type: "divider", key: "d-local-os" },
+      {
+        key: "local-reveal",
+        label: t("sftp.localPane.ctxReveal"),
+        icon: () => h(NIcon, null, () => h(FolderOpenOutline)),
+      },
+      {
+        key: "local-open",
+        label: t("sftp.localPane.ctxOpen"),
+        icon: () => h(NIcon, null, () => h(OpenOutline)),
+      },
+    )
+  }
   return opts
 })
 
@@ -482,6 +614,10 @@ function onCtxMenuSelect(key: string) {
   if (!row) {
     if (key === "local-refresh") void refresh()
     else if (key === "local-roots") void goRoots()
+    else if (key === "local-mkdir") openLocalMkdir()
+    else if (key === "local-touch") openLocalTouch()
+    else if (key === "local-paste") void pasteLocal()
+    else if (key === "local-select-all") selectAll()
     return
   }
   if (key === "copy-path") {
@@ -499,6 +635,259 @@ function onCtxMenuSelect(key: string) {
     }
   } else if (key === "upload-selection") {
     emit("upload-selection")
+  } else if (key === "clipboard-copy") {
+    setLocalClipboard("copy")
+  } else if (key === "clipboard-cut") {
+    setLocalClipboard("cut")
+  } else if (key === "local-rename") {
+    openLocalRename(row)
+  } else if (key === "local-reveal") {
+    void revealInFileManager(row)
+  } else if (key === "local-open") {
+    void openWithDefaultApp(row)
+  } else if (key === "trash") {
+    confirmTrashLocal(row)
+  } else if (key === "delete") {
+    confirmRemoveLocal(row)
+  }
+}
+
+/* ---------- 删除本地文件（回收站 / 永久，与远程栏汇总语义一致） ---------- */
+
+function fileTypeName(f: SftpFile): string {
+  return f.file_type === "dir"
+    ? t("sftp.dialog.typeFolder")
+    : t("sftp.dialog.typeFile")
+}
+
+/** 逐条执行删除类操作（回收站/永久），汇总成功/失败后清空选择并刷新。 */
+async function deleteLocalEntries(
+  targets: SftpFile[],
+  op: (path: string) => Promise<unknown>,
+  successMsg: string,
+) {
+  if (targets.length === 0) return
+  let ok = 0
+  let fail = 0
+  let firstError = ""
+  for (const f of targets) {
+    try {
+      await op(f.full_path)
+      ok++
+    } catch (e) {
+      fail++
+      if (!firstError) firstError = (e as Error).message
+    }
+  }
+  if (fail === 0) {
+    message.success(successMsg)
+  } else if (targets.length === 1) {
+    message.error(t("sftp.message.deleteFailed", { error: firstError }))
+  } else {
+    message.warning(t("sftp.message.deletePartial", { ok, fail }))
+  }
+  clearSelection()
+  await load()
+}
+
+/** 选择目标集合：右键行必在选择集内（openCtxMenu 前已补选） */
+function removeTargets(file: SftpFile): SftpFile[] {
+  return isSelected(file) ? selectedFiles.value : [file]
+}
+
+function confirmTrashLocal(file: SftpFile) {
+  const targets = removeTargets(file)
+  const content =
+    targets.length > 1
+      ? t("sftp.localPane.trashConfirmMulti", { count: targets.length })
+      : t("sftp.localPane.trashConfirm", {
+          type: fileTypeName(file),
+          name: file.file_name,
+        })
+  dialog.info({
+    title: t("sftp.localPane.ctxTrash"),
+    content,
+    positiveText: t("sftp.localPane.ctxTrash"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: () => {
+      void deleteLocalEntries(
+        targets,
+        (p) => trashLocalFs([p]),
+        t("sftp.localPane.trashed"),
+      )
+    },
+  })
+}
+
+function confirmRemoveLocal(file: SftpFile) {
+  // 本地永久删除不经回收站：强警示文案
+  const targets = removeTargets(file)
+  const content =
+    targets.length > 1
+      ? t("sftp.localPane.deleteConfirmMulti", { count: targets.length })
+      : t("sftp.localPane.deleteConfirm", {
+          type: fileTypeName(file),
+          name: file.file_name,
+        })
+  dialog.warning({
+    title: t("sftp.dialog.deleteTitle"),
+    content,
+    positiveText: t("common.delete"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: () => {
+      void deleteLocalEntries(
+        targets,
+        (p) => removeLocalFs([p]),
+        t("sftp.message.deleted"),
+      )
+    },
+  })
+}
+
+/* ---------- 复制 / 剪切（移动）/ 粘贴、新建、重命名、系统打开 ---------- */
+
+/** 复制/剪切到内部剪贴板：作用于右键行所在的选择集（批量） */
+function setLocalClipboard(op: "copy" | "cut") {
+  const target = ctxMenuTarget.value
+  if (!target) return
+  const items = isSelected(target) ? selectedFiles.value : [target]
+  localClipboard.value = { op, files: [...items] }
+  message.info(
+    op === "copy"
+      ? t("sftp.message.copiedToClipboard", { count: items.length })
+      : t("sftp.message.cutToClipboard", { count: items.length }),
+  )
+}
+
+function isCutRowLocal(row: SftpFile): boolean {
+  const clip = localClipboard.value
+  return (
+    clip?.op === "cut" && clip.files.some((f) => f.full_path === row.full_path)
+  )
+}
+
+/** 粘贴到当前本地目录：copy = 递归复制；cut = 移动（跨盘自动回退复制+删除）。
+ *  目标存在同名时弹一次覆盖确认；逐条执行、部分失败给汇总。 */
+async function pasteLocal() {
+  const clip = localClipboard.value
+  if (!clip || clip.files.length === 0 || viewingRoots.value || !currentPath.value) {
+    return
+  }
+  const dstDir = currentPath.value
+
+  const run = async () => {
+    let ok = 0
+    let fail = 0
+    let firstError = ""
+    for (const f of clip.files) {
+      try {
+        if (clip.op === "copy") {
+          await copyLocalFs(f.full_path, dstDir)
+        } else {
+          await moveLocalFs(f.full_path, dstDir)
+        }
+        ok++
+      } catch (e) {
+        fail++
+        if (!firstError) firstError = (e as Error).message
+      }
+    }
+    if (fail === 0) {
+      message.success(t("sftp.message.pasted"))
+    } else if (clip.files.length === 1) {
+      message.error(t("sftp.message.pasteFailed", { error: firstError }))
+    } else {
+      message.warning(t("sftp.message.pastePartial", { ok, fail }))
+    }
+    if (clip.op === "cut") localClipboard.value = null
+    clearSelection()
+    await load()
+  }
+
+  const names = new Set(clip.files.map((f) => f.file_name))
+  const conflicts = displayFiles.value.filter((f) => names.has(f.file_name))
+  if (conflicts.length > 0) {
+    dialog.warning({
+      title: t("sftp.dialog.pasteOverwriteTitle"),
+      content:
+        conflicts.length === 1
+          ? t("sftp.dialog.pasteOverwrite", { name: conflicts[0]!.file_name })
+          : t("sftp.dialog.pasteOverwriteMulti", { count: conflicts.length }),
+      positiveText: t("common.confirm"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => {
+        void run()
+      },
+    })
+  } else {
+    void run()
+  }
+}
+
+/* ---------- 新建 / 重命名（复用远程栏弹窗组件，对接本地 API） ---------- */
+
+function openLocalMkdir() {
+  mkdirMode.value = "mkdir"
+  mkdirOpen.value = true
+}
+
+function openLocalTouch() {
+  mkdirMode.value = "touch"
+  mkdirOpen.value = true
+}
+
+async function onLocalMkdirSubmit(name: string) {
+  if (viewingRoots.value || !currentPath.value) return
+  const target = localJoin(currentPath.value, name)
+  try {
+    if (mkdirMode.value === "mkdir") {
+      await mkdirLocalFs(target)
+      message.success(t("sftp.message.folderCreated"))
+    } else {
+      await createLocalFile(target)
+      message.success(t("sftp.message.fileCreated"))
+    }
+    mkdirOpen.value = false
+    await load()
+  } catch (e) {
+    message.error(t("sftp.message.createFailed", { error: (e as Error).message }))
+  }
+}
+
+function openLocalRename(row: SftpFile) {
+  renameTarget.value = row
+  renameOpen.value = true
+}
+
+async function onLocalRenameSubmit(newName: string) {
+  const target = renameTarget.value
+  if (!target) return
+  const to = localJoin(localParentPath(target.full_path), newName)
+  try {
+    await renameLocalFs(target.full_path, to)
+    renameOpen.value = false
+    message.success(t("sftp.message.renameSuccess"))
+    await load()
+  } catch (e) {
+    message.error(t("sftp.message.renameFailed", { error: (e as Error).message }))
+  }
+}
+
+/* ---------- 系统集成：文件管理器定位 / 默认程序打开 ---------- */
+
+async function revealInFileManager(row: SftpFile) {
+  try {
+    await revealLocalFs(row.full_path)
+  } catch (e) {
+    message.error(t("sftp.localPane.revealFailed", { error: (e as Error).message }))
+  }
+}
+
+async function openWithDefaultApp(row: SftpFile) {
+  try {
+    await openLocalFs(row.full_path)
+  } catch (e) {
+    message.error(t("sftp.localPane.openFailed", { error: (e as Error).message }))
   }
 }
 
@@ -620,6 +1009,13 @@ defineExpose({
   importOsFiles,
   /** 当前已加载的本地目录条目快照（父组件下载同名检查用） */
   getLocalFiles: () => files.value,
+  /** 全选当前列表（SftpDrawer 的 Ctrl/Cmd+A 分发） */
+  selectAll,
+  /** 清空选择（SftpDrawer 的 Esc 分发） */
+  clearSelection,
+  /** 本地栏有弹窗/菜单/路径编辑打开：Esc 留给浮层原生处理 */
+  hasOverlay: () =>
+    ctxMenuVisible.value || mkdirOpen.value || renameOpen.value || pathEditing.value,
 })
 
 watch(
@@ -711,6 +1107,20 @@ onMounted(() => {
           <NIcon><RefreshOutline /></NIcon>
         </template>
       </NButton>
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="showHidden ? t('sftp.hideHidden') : t('sftp.showHidden')"
+        @click="showHidden = !showHidden"
+      >
+        <template #icon>
+          <NIcon>
+            <EyeOffOutline v-if="showHidden" />
+            <EyeOutline v-else />
+          </NIcon>
+        </template>
+      </NButton>
     </div>
 
     <NSpin :show="loading" class="table-wrap" @click="onTableAreaClick">
@@ -718,7 +1128,7 @@ onMounted(() => {
         v-if="files.length > 0"
         size="small"
         :columns="columns"
-        :data="files"
+        :data="displayFiles"
         :row-key="rowKey"
         :row-props="rowProps"
         :bordered="false"
@@ -756,6 +1166,19 @@ onMounted(() => {
         {{ t("sftp.localPane.dragGhost", { count: dragCount }) }}
       </div>
     </Teleport>
+
+    <!-- 新建 / 重命名：复用远程栏同款弹窗，对接本地 API -->
+    <MkdirDialog
+      v-model:open="mkdirOpen"
+      :mode="mkdirMode"
+      :current-path="currentPath"
+      @submit="onLocalMkdirSubmit"
+    />
+    <RenameDialog
+      v-model:open="renameOpen"
+      :old-name="renameTarget?.file_name ?? ''"
+      @submit="onLocalRenameSubmit"
+    />
   </div>
 </template>
 
@@ -848,6 +1271,11 @@ onMounted(() => {
 /* 点选行高亮（与远程栏 .row-selected 同款） */
 .file-table :deep(.n-data-table-tr.row-selected .n-data-table-td) {
   background-color: var(--ashell-row-selected, rgba(99, 153, 255, 0.16));
+}
+
+/* 剪切（待粘贴移动）的行：半透明提示"待移动" */
+.file-table :deep(.n-data-table-tr.row-cut .n-data-table-td) {
+  opacity: 0.45;
 }
 
 .name-cell {
