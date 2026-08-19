@@ -64,9 +64,9 @@ pub struct Host {
     pub parity: Option<String>,
     /// 串口流控：none/software/hardware（仅 protocol=serial）
     pub flow_control: Option<String>,
-    /// SSH keepalive 间隔（秒），0 或 null 使用默认 30s
+    /// SSH keepalive 间隔（秒）：null 用默认 30s；0 禁用；> 0 自定义
     pub keepalive_interval: Option<i64>,
-    /// SSH 不活动超时（秒），0 或 null 使用默认 120s
+    /// SSH 不活动超时（秒）：null 用默认 120s；0 禁用；> 0 自定义
     pub inactivity_timeout: Option<i64>,
     /// 终端 idle 时定时发送空字符的间隔（秒），0 或 null 表示不发送
     pub idle_send_interval: Option<i64>,

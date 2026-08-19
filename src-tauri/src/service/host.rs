@@ -246,9 +246,11 @@ pub async fn update(
     let new_stop_bits = input.stop_bits.or(cur.stop_bits);
     let new_parity = input.parity.or(cur.parity.clone());
     let new_flow_control = input.flow_control.or(cur.flow_control.clone());
-    let new_keepalive_interval = input.keepalive_interval.or(cur.keepalive_interval);
-    let new_inactivity_timeout = input.inactivity_timeout.or(cur.inactivity_timeout);
-    let new_idle_send_interval = input.idle_send_interval.or(cur.idle_send_interval);
+    // 三个保活/超时字段：前端表单 edit 总是发送当前值（null = 清空），
+    // 直接覆盖而非 or(cur) 保留，否则删除字段后保存会残留旧值
+    let new_keepalive_interval = input.keepalive_interval;
+    let new_inactivity_timeout = input.inactivity_timeout;
+    let new_idle_send_interval = input.idle_send_interval;
 
     // 双层 Option：None = 不修改；Some(None) = 清除；Some(Some(id)) = 设置
     let new_jump_host_id = match input.jump_host_id {

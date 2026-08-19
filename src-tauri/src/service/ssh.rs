@@ -74,6 +74,26 @@ impl ClientHandler {
 impl Handler for ClientHandler {
     type Error = russh::Error;
 
+    /// 服务器主动断开（DISCONNECT）时，默认实现会把 reason_code / message 吞掉，
+    /// 只返回无详情的 `Error::Disconnect`。这里重写以打印服务器给的真实原因，
+    /// 便于定位"connect: Disconnected"这类握手阶段断连。
+    async fn disconnected(
+        &mut self,
+        reason: client::DisconnectReason<Self::Error>,
+    ) -> Result<(), Self::Error> {
+        match reason {
+            client::DisconnectReason::ReceivedDisconnect(info) => {
+                log::warn!(
+                    "SSH server disconnected: reason={:?}, message=\"{}\"",
+                    info.reason_code,
+                    info.message
+                );
+                Ok(())
+            }
+            client::DisconnectReason::Error(e) => Err(e),
+        }
+    }
+
     async fn check_server_key(
         &mut self,
         _server_public_key: &russh::keys::ssh_key::PublicKey,
@@ -172,7 +192,14 @@ impl Session {
         let (handler, sid_slot) = ClientHandler::new();
         let mut handle = client::connect(Self::build_config(host), addr, handler)
             .await
-            .map_err(|e| AppError::Ssh(format!("connect: {e}")))?;
+            .map_err(|e| {
+                log::error!(
+                    "SSH connect failed for {}:{}: {e:?}",
+                    host.addr,
+                    port
+                );
+                AppError::Ssh(format!("connect: {e}"))
+            })?;
 
         Self::authenticate(&mut handle, host).await?;
 
@@ -204,16 +231,17 @@ impl Session {
 
     fn build_config(host: &Host) -> Arc<client::Config> {
         Arc::new(client::Config {
-            keepalive_interval: host
-                .keepalive_interval
-                .filter(|&v| v > 0)
-                .map(|v| Duration::from_secs(v as u64))
-                .or(Some(Duration::from_secs(30))),
-            inactivity_timeout: host
-                .inactivity_timeout
-                .filter(|&v| v > 0)
-                .map(|v| Duration::from_secs(v as u64))
-                .or(Some(Duration::from_secs(120))),
+            // 语义：null = 未配置（用默认）；0/负数 = 禁用；> 0 = 自定义
+            keepalive_interval: match host.keepalive_interval {
+                Some(v) if v > 0 => Some(Duration::from_secs(v as u64)),
+                Some(_) => None,
+                None => Some(Duration::from_secs(30)),
+            },
+            inactivity_timeout: match host.inactivity_timeout {
+                Some(v) if v > 0 => Some(Duration::from_secs(v as u64)),
+                Some(_) => None,
+                None => Some(Duration::from_secs(120)),
+            },
             ..Default::default()
         })
     }

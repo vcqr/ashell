@@ -265,13 +265,14 @@ async fn run_terminal(
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
 
     // idle 定时发送空字符保活：配置了 idle_send_interval > 0 时启用，
-    // 每隔该秒数向 PTY 发送 \x00（对终端无害，可防止 NAT/防火墙超时断连）
+    // 每隔该秒数向 PTY 发送 \x00（对终端无害，可防止 NAT/防火墙超时断连）。
+    // 注意：禁用时不能给超大 Duration 充当"永不触发"，tokio sleep / reset
+    // 内部会算 Instant + duration，超出 Instant 表示范围会直接 panic
+    // （overflow when adding duration to instant），表现为会话建立后瞬间
+    // WebSocket 1006 断开。select 分支有 `if idle_secs > 0` 守卫，禁用时
+    // 该 timer 永不触发，给任意安全占位时长即可。
     let idle_secs = host.idle_send_interval.unwrap_or(0);
-    let idle_dur = if idle_secs > 0 {
-        Duration::from_secs(idle_secs as u64)
-    } else {
-        Duration::from_secs(u64::MAX / 2)
-    };
+    let idle_dur = Duration::from_secs(if idle_secs > 0 { idle_secs as u64 } else { 1 });
     let idle_timer = tokio::time::sleep(idle_dur);
     tokio::pin!(idle_timer);
 
