@@ -513,7 +513,7 @@ function installCursorBlinkGuard() {
  * 自定义 rAF 节流，一帧内多次 scroll 合并为一次；ydisp !== undefined（来自 queueSync
  * 的 rAF 回调）时直接执行，不阻断正常同步。normal screen 走原始 _sync。
  *
- * 与 onCompositionStart 一样通过 term._core 访问 xterm 内部 API。
+ * 通过 term._core 访问 xterm 内部 API。
  * 升级 xterm 7.x 后需检查 _viewport._sync 的内部结构是否变化。
  */
 function installAltScreenScrollFix() {
@@ -698,32 +698,106 @@ function onContainerKeydown(e: KeyboardEvent) {
 }
 
 /**
- * 输入法 composition 开始前强制重定位 helper textarea。
+ * 拦截 composition 会话期间的普通字符 keydown（中文输入法路径）。
  *
- * 这是 xterm.js #5734 / PR #5759 的 backport：xterm 的 `_syncTextArea()` 在
- * `isComposing === true` 时会提前返回，composition 一旦开始 textarea 位置即被冻结。
- * 当 TUI（典型是 Claude Code 这类 agentic CLI 画占位提示文本）在用户首次上屏
- * composition 之前刚好重绘/移动光标，IME 候选窗会锚定到过期的光标坐标，落在
- * 「占位文本末尾」而非真实光标处。官方修复（xterm 7.0.0）在 `compositionstart`
- * 回调里、置 isComposing 之前补一次 `_syncTextArea()`，之后再 `updateCompositionElements()`。
+ * xterm 6.0.0 的 CompositionHelper.keydown 在 isComposing 时遇到非特殊键
+ * （非 CapsLock / 229 / Shift / Ctrl / Alt）会立即 _finalizeComposition(false)
+ * 提前提交当前 marked text。中文输入法整句 composition 期间若字符 keydown
+ * 以普通键码到达，会被它提前打断并绕过下方 onCompositionEndCapture 的提交接管，
+ * 造成拼音/候选泄漏。这里在容器捕获阶段吞掉这些 keydown，让 composition
+ * 完整走 compositionend 由接管逻辑一次性提交。
  *
- * 本项目用 6.0.0，没有该修复：这里在容器上用捕获阶段监听抢在 xterm 自身的
- * `compositionstart` 监听之前跑 `_syncTextArea()`；`updateCompositionElements()` 需
- * isComposing 为 true 才生效，故推迟到微任务里（此时 xterm 的 compositionstart 已执行完）。
- * 升级到 xterm 7.x 后此 backport 变成无害冗余，可移除。
+ * 只拦 composition 会话期间（e.isComposing）的可打印字符键与空格；控制键
+ * （方向键/Enter/Esc/退格）与修饰键组合放行，避免干扰候选窗导航与快捷键。
+ * 英文联想输入法不走 composition（keyCode 229 路径），由 onImeKeydown 处理。
  */
-function onCompositionStart() {
+function onCompositionKeydown(e: KeyboardEvent) {
+  if (!e.isComposing) return
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  if (e.key === " " || e.key.length === 1) {
+    e.stopPropagation()
+  }
+}
+
+/**
+ * 接管中文输入法 composition 提交。
+ *
+ * xterm 6.0.0 的 CompositionHelper 在 compositionend 时用 setTimeout(0) 异步读取
+ * textarea.value 增量提交，且提交后不清空 textarea，快速连续输入时相邻
+ * composition 事件与 setTimeout 竞争，marked text 切割错位、字符丢失。
+ *
+ * 提交文本来源优先级：
+ * 1. 最后一次 compositionupdate 的 e.data —— 输入法通过 DOM 事件报告的完整
+ *    marked text，与 textarea.value 相互独立，不受 xterm 对 value 的读写干扰；
+ * 2. 回退读 textarea.value（个别输入法不派发 update 时）。
+ *
+ * 发送走 term.input()（公开 API，与键盘输入同一 onData 通道），并清空
+ * textarea.value：xterm 随后异步提交读到空串、自然不发，无双发；下一次
+ * compositionstart 记录的起点也因 value 已清空而正确。
+ *
+ * 英文联想输入法不走 composition（keyCode 229 + input 事件路径），
+ * 由 onImeKeydown / onTextInputCapture 处理。
+ */
+let lastCompositionText = ""
+
+function onCompositionStartCapture() {
+  lastCompositionText = ""
+}
+
+function onCompositionUpdateCapture(e: CompositionEvent) {
+  lastCompositionText = e.data ?? ""
+}
+
+function onCompositionEndCapture() {
   if (!term) return
-  const core = (term as unknown as {
-    _core?: {
-      _syncTextArea?: () => void
-      _compositionHelper?: { updateCompositionElements?: () => void }
-    }
-  })._core
-  if (!core) return
-  core._syncTextArea?.()
-  const helper = core._compositionHelper
-  if (helper) queueMicrotask(() => helper.updateCompositionElements?.())
+  const ta = term.textarea
+  // value 优先：实测日志显示输入法联想 reflow 时 e.data 会回退（"ce"→"c"），
+  // 而 textarea.value 不回退、compositionend 时最完整；data 仅作 value 为空时的回退。
+  const text = (ta ? ta.value : "") || lastCompositionText
+  if (ta) ta.value = ""
+  lastCompositionText = ""
+  if (text) {
+    term.input(text)
+  }
+}
+
+/**
+ * 英文联想输入法路径：keydown(keyCode 229) + 字符直接写 textarea（不走 composition）。
+ * xterm 用 _handleAnyTextareaChanges 的 setTimeout 异步 diff textarea.value 增量发送，
+ * 快速输入时与下一次 keydown 竞争，丢字（ceshi → cesi）。
+ *
+ * 这里拦截 keyCode 229 的可打印字符键（xterm 不再 diff），字符改由 input 事件
+ * （insertText 携带 e.data = 本次插入字符）同步发送。普通英文输入 keydown 是
+ * 字母键码（非 229），不受影响。
+ */
+function onImeKeydown(e: KeyboardEvent) {
+  if (e.keyCode !== 229) return
+  if (e.key.length === 1 || e.key === " ") {
+    e.stopPropagation()
+  }
+}
+
+/**
+ * 接管 textarea 的 input 事件：英文联想输入法写入 textarea 时触发 insertText，
+ * e.data 即本次插入的字符，同步发送并清空 value，绕开 xterm 的异步 diff 竞态。
+ *
+ * 普通键盘输入时字符已由 xterm 的 keypress 发送（_keyPressHandled=true），跳过
+ * 避免双发；英文联想输入法 keydown 是 229、不产生 keypress（_keyPressHandled
+ * 保持 false），才由这里接管。
+ */
+function onTextInputCapture(e: Event) {
+  const ie = e as InputEvent
+  if (!term) return
+  if (ie.isComposing) return // composition 由 onCompositionEndCapture 接管
+  if (ie.inputType !== "insertText") return
+  const data = ie.data
+  if (!data) return
+  const core = (term as unknown as { _core?: { _keyPressHandled?: boolean } })._core
+  if (core?._keyPressHandled) return
+  const ta = term.textarea
+  if (ta) ta.value = ""
+  e.stopPropagation()
+  term.input(data)
 }
 
 /** 自动重连退避上限（ms）。1s 起步指数退避：1s -> 2s -> 4s -> ... -> 30s 封顶。 */
@@ -1028,9 +1102,15 @@ onMounted(() => {
   containerRef.value.addEventListener("wheel", onWheel, { passive: false })
   // Ctrl+F 在捕获阶段拦截：xterm 内部会处理一部分快捷键，必须比它先动手。
   containerRef.value.addEventListener("keydown", onContainerKeydown, true)
-  // compositionstart 在捕获阶段抢在 xterm 自身监听之前重定位 helper textarea，
-  // 修复 TUI 占位文本下 IME 候选窗锚定到过期光标的问题（见 onCompositionStart）。
-  containerRef.value.addEventListener("compositionstart", onCompositionStart, true)
+  // composition 期间的字符键在捕获阶段吞掉，避免 xterm 提前提交造成丢字（见 onCompositionKeydown）
+  containerRef.value.addEventListener("keydown", onCompositionKeydown, true)
+  // 英文联想输入法路径：拦 keyCode 229 的可打印键，input 事件同步接管（见 onImeKeydown/onTextInputCapture）
+  containerRef.value.addEventListener("keydown", onImeKeydown, true)
+  containerRef.value.addEventListener("input", onTextInputCapture, true)
+  // composition 提交接管：捕获阶段先于 xterm 用 e.data 发送 marked text 并清空（见 onCompositionEndCapture）
+  containerRef.value.addEventListener("compositionstart", onCompositionStartCapture, true)
+  containerRef.value.addEventListener("compositionupdate", onCompositionUpdateCapture, true)
+  containerRef.value.addEventListener("compositionend", onCompositionEndCapture, true)
 
   themeObserver = new MutationObserver(() => applyTheme())
   themeObserver.observe(document.documentElement, {
@@ -1230,7 +1310,12 @@ onBeforeUnmount(() => {
     containerRef.value.removeEventListener("mousedown", onSuggestMousedown)
     containerRef.value.removeEventListener("wheel", onWheel)
     containerRef.value.removeEventListener("keydown", onContainerKeydown, true)
-    containerRef.value.removeEventListener("compositionstart", onCompositionStart, true)
+    containerRef.value.removeEventListener("keydown", onCompositionKeydown, true)
+    containerRef.value.removeEventListener("keydown", onImeKeydown, true)
+    containerRef.value.removeEventListener("input", onTextInputCapture, true)
+    containerRef.value.removeEventListener("compositionstart", onCompositionStartCapture, true)
+    containerRef.value.removeEventListener("compositionupdate", onCompositionUpdateCapture, true)
+    containerRef.value.removeEventListener("compositionend", onCompositionEndCapture, true)
   }
   if (resizeObserver) {
     try {
@@ -1548,17 +1633,6 @@ onBeforeUnmount(() => {
    原生滚动条的 thumb 上下跳动是视觉抖动的直接来源之一。 */
 .terminal-host :deep(.xterm.enable-mouse-events .xterm-viewport) {
   overflow: hidden !important;
-}
-
-/* 隐藏 xterm 的内联 composition 浮层（.composition-view）。
-   它在输入法 composition 期间显示在光标处，但 white-space:nowrap + 绝对定位 + 不设 width，
-   文本会向右无限溢出；某些 TUI（光标偏右 / 长 composition 串）下会把整个布局撑开，
-   composition 结束后浮层变回 display:none、宽度消失，UI 又向左缩回，造成左右抖动。
-   现代 OS 输入法（Windows 微软拼音/搜狗、macOS 简拼）自带候选窗已显示 composition 文本，
-   这层浮层是冗余（xterm 自带 CSS 里都留了 "TODO: Composition position got messed up somewhere"）。
-   隐藏后输入仍经 helper textarea + compositionend 正常提交，不受影响。 */
-.terminal-host :deep(.composition-view) {
-  display: none !important;
 }
 
 .search-bar {
