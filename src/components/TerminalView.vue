@@ -28,6 +28,7 @@ import { useApiStore } from "@/stores/api"
 import { useTerminalStore } from "@/stores/terminal"
 import { useBroadcastStore } from "@/stores/broadcast"
 import { useStartupStore } from "@/stores/startup"
+import { useKeybindingStore, matchesBinding } from "@/stores/keybindings"
 import { useSudoFill } from "@/composables/useSudoFill"
 import { useAiSelection } from "@/composables/useAiSelection"
 import { useTerminalSearch } from "@/composables/useTerminalSearch"
@@ -83,6 +84,7 @@ const apiStore = useApiStore()
 const termStore = useTerminalStore()
 const broadcastStore = useBroadcastStore()
 const startupStore = useStartupStore()
+const keybindingStore = useKeybindingStore()
 
 const { sudoArmed, armSudo, disarmSudo } = useSudoFill()
 
@@ -688,9 +690,11 @@ function serializeSession(): string {
 function onContainerKeydown(e: KeyboardEvent) {
   // 命令建议弹窗的导航/接受/关闭按键拦截
   if (onSuggestKeydown(e)) return
-  // Ctrl+F / Cmd+F 唤起搜索条；放在容器层级捕获，避免被 xterm 拦走。
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+  // 搜索快捷键：从 keybinding store 读取当前绑定进行匹配。
+  // 放在容器层级捕获，避免被 xterm 拦走。
+  if (matchesBinding(keybindingStore.getBinding("search.toggle"), e)) {
     if (!termStore.searchHotkeyEnabled) return
+    if (keybindingStore.recording) return
     e.preventDefault()
     e.stopPropagation()
     openSearchBar()

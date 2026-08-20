@@ -101,6 +101,7 @@ const {
   onStatusChange,
   onTitleChange,
   closeHostsIfOpen,
+  toggleHosts,
   sendCommandToActive,
 } = useTabs();
 
@@ -118,6 +119,9 @@ const {
   toggleHostInfo,
   toggleForward,
   toggleTemplate,
+  toggleSettings,
+  toggleAiProviders,
+  toggleActivityBar,
   onSendToAi,
   onSftpSendToAi,
 } = usePanels(activeSftpTab, activeAiTab, activeTerminalTab, aiAssistantRef);
@@ -133,7 +137,22 @@ const {
   onHeaderDblClick,
 } = useWindowControls(terminalRefs, activeTabKey);
 
-useGlobalShortcuts({ isMac, tabs, activeTabKey, openLocal, closeTab });
+useGlobalShortcuts({
+  isMac,
+  tabs,
+  activeTabKey,
+  openLocal,
+  closeTab,
+  toggleHosts,
+  toggleSettings,
+  toggleAi,
+  toggleSftp,
+  toggleAiProviders,
+  toggleHostInfo,
+  toggleForward,
+  toggleTemplate,
+  toggleActivityBar,
+});
 </script>
 
 <template>

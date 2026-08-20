@@ -109,6 +109,18 @@ export function usePanels(
     }
   }
 
+  function toggleSettings() {
+    settingsOpen.value = !settingsOpen.value;
+  }
+
+  function toggleAiProviders() {
+    aiProvidersOpen.value = !aiProvidersOpen.value;
+  }
+
+  function toggleActivityBar() {
+    activityBarVisible.value = !activityBarVisible.value;
+  }
+
   watch(activeSftpTab, (tab) => {
     if (!tab) {
       sftpOpen.value = false;
@@ -142,6 +154,9 @@ export function usePanels(
     toggleHostInfo,
     toggleForward,
     toggleTemplate,
+    toggleSettings,
+    toggleAiProviders,
+    toggleActivityBar,
     onSendToAi,
     onSftpSendToAi,
   };

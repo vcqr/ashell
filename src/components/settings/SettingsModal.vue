@@ -6,6 +6,7 @@ import { useI18n } from "vue-i18n";
 import GeneralSection from "./GeneralSection.vue";
 import ThemeSection from "./ThemeSection.vue";
 import TerminalSection from "./TerminalSection.vue";
+import ShortcutsSection from "./ShortcutsSection.vue";
 import IconsSection from "./IconsSection.vue";
 import StartupSection from "./StartupSection.vue";
 import WindowSection from "./WindowSection.vue";
@@ -20,6 +21,7 @@ type SettingsTab =
   | "general"
   | "theme"
   | "terminal"
+  | "shortcuts"
   | "window"
   | "icons"
   | "startup"
@@ -101,6 +103,14 @@ function close() {
           </button>
           <button
             class="settings-tab"
+            :class="{ active: activeTab === 'shortcuts' }"
+            type="button"
+            @click="activeTab = 'shortcuts'"
+          >
+            {{ t("settings.tabs.shortcuts") }}
+          </button>
+          <button
+            class="settings-tab"
             :class="{ active: activeTab === 'window' }"
             type="button"
             @click="activeTab = 'window'"
@@ -167,6 +177,7 @@ function close() {
             @update:theme-mode="(v: ThemeMode) => emit('update:themeMode', v)"
           />
           <TerminalSection v-else-if="activeTab === 'terminal'" />
+          <ShortcutsSection v-else-if="activeTab === 'shortcuts'" />
           <WindowSection v-else-if="activeTab === 'window'" />
           <IconsSection v-else-if="activeTab === 'icons'" />
           <StartupSection v-else-if="activeTab === 'startup'" />

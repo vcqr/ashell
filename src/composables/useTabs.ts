@@ -476,6 +476,10 @@ export function useTabs() {
     if (hostsOpen.value) hostsOpen.value = false;
   }
 
+  function toggleHosts() {
+    hostsOpen.value = !hostsOpen.value;
+  }
+
   // 启动钩子：新窗口通过 URL query string 接收启动参数自动打开 tab；
   // 主窗口走"记住 tab"或"自动开本地终端"。
   // 放在 store 创建之后、其它逻辑之前；不放 onMounted 是为了在首屏渲染前就把 tab 加上。
@@ -540,6 +544,7 @@ export function useTabs() {
     onStatusChange,
     onTitleChange,
     closeHostsIfOpen,
+    toggleHosts,
     sendCommandToActive,
   };
 }
