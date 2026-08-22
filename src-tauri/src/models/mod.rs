@@ -124,8 +124,25 @@ pub struct HostUpdate {
     pub keepalive_interval: Option<i64>,
     pub inactivity_timeout: Option<i64>,
     pub idle_send_interval: Option<i64>,
-    /// 双层 Option：缺省 = 不修改；显式 null = 清除；数值 = 设置
+    /// 双层 Option：缺省 = 不修改；显式 null = 清除；数值 = 设置。
+    /// serde 默认把显式 null 折叠成外层 None（与缺省键不可区分），
+    /// 必须用自定义反序列化才能收到 Some(None)
+    #[serde(default, deserialize_with = "double_option::deserialize")]
     pub jump_host_id: Option<Option<i64>>,
+}
+
+/// 字段存在时（无论 null 还是值）都包成 Some(Option<T>)；
+/// 配合 #[serde(default)]，缺省键走 Default 而不经过本函数
+mod double_option {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        Ok(Some(Option::<T>::deserialize(deserializer)?))
+    }
 }
 
 /// 列表联表 DTO：包含 host 全字段 + 所属 group 名称 / 上级 gid
@@ -267,4 +284,23 @@ pub struct CommandTemplateUpdate {
     pub title: Option<String>,
     pub command: Option<String>,
     pub description: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 前端「清除跳板机」依赖显式 null 被反序列化成 Some(None)，
+    /// 缺省键才是 None（不修改）——这是 service::host::update 清除逻辑的前提
+    #[test]
+    fn host_update_jump_host_id_double_option() {
+        let v: HostUpdate = serde_json::from_str(r#"{"jump_host_id":null}"#).unwrap();
+        assert_eq!(v.jump_host_id, Some(None));
+
+        let v: HostUpdate = serde_json::from_str(r#"{"jump_host_id":5}"#).unwrap();
+        assert_eq!(v.jump_host_id, Some(Some(5)));
+
+        let v: HostUpdate = serde_json::from_str("{}").unwrap();
+        assert_eq!(v.jump_host_id, None);
+    }
 }

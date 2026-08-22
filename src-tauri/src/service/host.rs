@@ -244,12 +244,14 @@ pub async fn update(
     }
 
     let new_name = input.name.unwrap_or(cur.name.clone());
-    let new_icon = input.icon.or(cur.icon.clone());
-    let new_color = input.color.or(cur.color.clone());
+    // 可空展示字段：前端编辑表单总是发送当前值（null = 清空），
+    // 直接覆盖而非 or(cur) 保留，否则清空后保存会残留旧值
+    let new_icon = input.icon;
+    let new_color = input.color;
     let new_addr = input.addr.unwrap_or(cur.addr.clone());
     let new_port = input.port.unwrap_or(cur.port.clone());
     let new_username = input.username.unwrap_or(cur.username.clone());
-    let new_desc = input.desc.or(cur.desc.clone());
+    let new_desc = input.desc;
 
     let new_password = match input.password {
         Some(p) if p.is_empty() => None,
@@ -261,7 +263,7 @@ pub async fn update(
         Some(p) => Some(crypto::encrypt(key, &p)?),
         None => cur.private_key.clone(),
     };
-    let new_private_key_path = input.private_key_path.or(cur.private_key_path.clone());
+    let new_private_key_path = input.private_key_path;
     let new_protocol = input.protocol.unwrap_or(cur.protocol.clone());
     let new_baud_rate = input.baud_rate.or(cur.baud_rate);
     let new_data_bits = input.data_bits.or(cur.data_bits);
