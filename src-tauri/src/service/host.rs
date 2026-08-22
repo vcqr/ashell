@@ -151,6 +151,28 @@ pub async fn get_with_credentials(pool: &DbPool, key: &[u8; 32], id: i64) -> App
     Ok(h)
 }
 
+/// 仅更新密码字段（AES-256-GCM 加密落盘）。
+/// 用于终端连接时发现密码已变更、用户选择"记住新密码"的场景。
+pub async fn update_password_only(
+    pool: &DbPool,
+    key: &[u8; 32],
+    id: i64,
+    plain: &str,
+) -> AppResult<()> {
+    let enc = crypto::encrypt(key, plain)?;
+    let res = sqlx::query(
+        "UPDATE hosts SET password = ?, updated_at = datetime('now') WHERE id = ? AND is_del = 0",
+    )
+    .bind(enc)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("host {id}")));
+    }
+    Ok(())
+}
+
 pub async fn list(pool: &DbPool, gid: Option<i64>) -> AppResult<Vec<Host>> {
     let rows = match gid {
         Some(g) => {

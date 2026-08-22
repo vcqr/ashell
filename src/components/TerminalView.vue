@@ -7,7 +7,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links"
 import { Unicode11Addon } from "@xterm/addon-unicode11"
 import { LigaturesAddon } from "@xterm/addon-ligatures"
 import { SerializeAddon } from "@xterm/addon-serialize"
-import { NIcon, NInput, NTooltip, NButton } from "naive-ui"
+import { NCheckbox, NIcon, NInput, NModal, NTooltip, NButton } from "naive-ui"
 import {
   ArrowDownOutline as ArrowDownIcon,
   ArrowUpOutline as ArrowUpIcon,
@@ -189,6 +189,47 @@ const showReconnectBtn = ref(false)
 const currentStatus = ref<TermStatus>("connecting")
 const showConnectingOverlay = ref(false)
 let connectingOverlayTimer: number | null = null
+
+// ===== SSH 认证失败重试弹窗（密码过期 / 被修改后重新输入） =====
+const authPromptVisible = ref(false)
+const authPromptLabel = ref("")
+const authPromptRetry = ref(false)
+const authPasswordInput = ref("")
+const authRememberPassword = ref(true)
+const authSubmitting = ref(false)
+// 用户主动取消认证后，本轮断线不再自动重连，避免弹窗随退避反复出现
+let authCancelledByUser = false
+
+function showAuthPrompt(label: string) {
+  // 提交后再次收到 auth_required：说明上一次密码错误
+  if (authSubmitting.value) {
+    authSubmitting.value = false
+    authPromptRetry.value = true
+  }
+  authPromptLabel.value = label
+  authPasswordInput.value = ""
+  authPromptVisible.value = true
+}
+
+function submitAuthPassword() {
+  if (!authPromptVisible.value || !authPasswordInput.value) return
+  authSubmitting.value = true
+  authPromptVisible.value = false
+  sendJson({
+    kind: "auth_response",
+    password: authPasswordInput.value,
+    remember: authRememberPassword.value,
+  })
+  authPasswordInput.value = ""
+}
+
+function cancelAuthPrompt() {
+  if (!authPromptVisible.value && !authSubmitting.value) return
+  authPromptVisible.value = false
+  authSubmitting.value = false
+  authCancelledByUser = true
+  sendJson({ kind: "auth_cancel" })
+}
 
 function applyTheme() {
   if (!term) return
@@ -945,6 +986,10 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         if (msg.kind === "ready" && typeof msg.sid === "string") {
           emit("sid-ready", props.tab.key, msg.sid)
           setStatus("connected")
+          // 认证重试成功：复位弹窗状态
+          authSubmitting.value = false
+          authPromptRetry.value = false
+          authCancelledByUser = false
           // 自动重连成功：清计数并提示（首次连接不计）
           if (reconnectAttempts > 0) {
             term?.writeln(`\x1b[32m[ashell] ${t("terminal.autoReconnected")}\x1b[0m`)
@@ -957,6 +1002,17 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           if (props.active) {
             requestAnimationFrame(() => term?.focus())
           }
+          return
+        }
+        if (msg.kind === "fatal") {
+          const m = msg as { message?: string }
+          term?.writeln(`\r\n\x1b[31m[ashell] ${m.message ?? "connection fatal error"}\x1b[0m`)
+          return
+        }
+        if (msg.kind === "auth_required") {
+          const m = msg as { label?: string }
+          term?.writeln(`\x1b[36m[ashell] ${t("terminal.authRequiredNotice")}\x1b[0m`)
+          showAuthPrompt(m.label ?? "")
           return
         }
         if (msg.kind === "pong") {
@@ -995,6 +1051,9 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     clearHeartbeat()
     resetTextProgress()
     disarmSudo()
+    // 服务端断开时若认证弹窗还开着（如等待超时 fatal），一并收掉
+    authPromptVisible.value = false
+    authSubmitting.value = false
     setStatus("closed")
     // local 终端 shell 进程已退出，无法重连，直接关闭 tab
     if (props.tab.kind === "local") {
@@ -1006,6 +1065,11 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
       const reason = ev.reason ? `: ${ev.reason}` : ""
       term.writeln(`\r\n\x1b[31m[ashell] connection closed (code=${ev.code})${reason}\x1b[0m`)
       term.writeln(`\x1b[33m[ashell] ${t("terminal.sessionClosed")}\x1b[0m`)
+    }
+    if (authCancelledByUser) {
+      // 用户在认证弹窗点了取消：本轮不自动重连，避免弹窗随退避反复出现
+      authCancelledByUser = false
+      return
     }
     scheduleAutoReconnect()
   }
@@ -1582,6 +1646,53 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </Transition>
+
+    <!-- SSH 认证失败重试：密码过期/被修改后重新输入，可选记住新密码 -->
+    <NModal
+      v-model:show="authPromptVisible"
+      preset="card"
+      :title="t('terminal.authPromptTitle')"
+      class="auth-prompt-modal"
+      style="max-width: 440px; width: calc(100vw - 32px)"
+      :mask-closable="false"
+      :bordered="false"
+      size="small"
+      @update:show="(v) => { if (!v) cancelAuthPrompt() }"
+    >
+      <div class="auth-prompt-desc">
+        {{ t('terminal.authPromptDesc', { label: authPromptLabel }) }}
+      </div>
+      <div v-if="authPromptRetry" class="auth-prompt-retry">
+        {{ t('terminal.authPromptRetry') }}
+      </div>
+      <NInput
+        v-model:value="authPasswordInput"
+        type="password"
+        show-password-on="click"
+        :placeholder="t('terminal.authPromptPlaceholder')"
+        :disabled="authSubmitting"
+        @keydown.enter.prevent="submitAuthPassword"
+      />
+      <NCheckbox v-model:checked="authRememberPassword" class="auth-prompt-remember">
+        {{ t('terminal.authPromptRemember') }}
+      </NCheckbox>
+      <template #footer>
+        <div class="auth-prompt-actions">
+          <NButton size="small" :disabled="authSubmitting" @click="cancelAuthPrompt">
+            {{ t('common.cancel') }}
+          </NButton>
+          <NButton
+            size="small"
+            type="primary"
+            :loading="authSubmitting"
+            :disabled="!authPasswordInput"
+            @click="submitAuthPassword"
+          >
+            {{ t('terminal.authPromptConfirm') }}
+          </NButton>
+        </div>
+      </template>
+    </NModal>
   </div>
 </template>
 
@@ -1664,6 +1775,30 @@ onBeforeUnmount(() => {
   color: var(--ashell-text-secondary, #98a2b3);
   text-align: center;
   user-select: none;
+}
+
+.auth-prompt-desc {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ashell-text-secondary, #98a2b3);
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+
+.auth-prompt-retry {
+  font-size: 12px;
+  color: #e88080;
+  margin-bottom: 8px;
+}
+
+.auth-prompt-remember {
+  margin-top: 10px;
+}
+
+.auth-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .search-toggle,

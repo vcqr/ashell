@@ -159,18 +159,31 @@ impl Session {
         let jump_host = host_svc::get_with_credentials(pool, crypto_key, jump_id)
             .await
             .map_err(|e| AppError::Ssh(format!("load jump host {jump_id}: {e}")))?;
+        Self::connect_via(&jump_host, host).await
+    }
+
+    /// 用调用方准备好的（已解密）跳板机配置连接目标主机。
+    ///
+    /// 终端 WS 在认证失败后的交互式重试中会缓存并原地修改主机凭证，
+    /// 需要绕过 [`Session::connect`] 内部的重新加载，故单独暴露此入口。
+    pub async fn connect_prepared(jump_host: Option<&Host>, host: &Host) -> AppResult<Self> {
+        match jump_host {
+            Some(j) => Self::connect_via(j, host).await,
+            None => Self::connect_direct(host).await,
+        }
+    }
+
+    /// 经由已解密的跳板机配置连接目标主机（仅支持一级跳板）
+    async fn connect_via(jump_host: &Host, host: &Host) -> AppResult<Self> {
         if jump_host.protocol != "ssh" {
             return Err(AppError::Ssh("jump host must use SSH protocol".into()));
         }
-
-        let jump_sess = Self::connect_direct(&jump_host)
-            .await
-            .map_err(|e| AppError::Ssh(format!("jump host connect: {e}")))?;
 
         let port: u16 = host
             .port
             .parse()
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
+        let jump_sess = Self::connect_direct(jump_host).await?;
         let channel = jump_sess
             .channel_open_direct_tcpip(&host.addr, port, "127.0.0.1", 0)
             .await
@@ -301,7 +314,9 @@ impl Session {
         }
 
         if !authed {
-            return Err(AppError::Ssh("authentication failed".into()));
+            // 结构化错误：携带主机 id，终端 WS 据此发起交互式重新输入密码；
+            // 其余调用方（如独立 SFTP 会话）经 IntoResponse 映射为 401。
+            return Err(AppError::AuthFailed { host_id: host.id });
         }
         Ok(())
     }

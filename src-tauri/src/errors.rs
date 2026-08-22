@@ -18,6 +18,10 @@ pub enum AppError {
     #[error("ssh error: {0}")]
     Ssh(String),
 
+    /// SSH 认证失败（携带主机 id，供终端 WS 发起交互式重新输入密码）
+    #[error("ssh authentication failed (host {host_id})")]
+    AuthFailed { host_id: i64 },
+
     #[error("{0}")]
     Sftp(String),
 
@@ -46,6 +50,7 @@ impl AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::AuthFailed { .. } => StatusCode::UNAUTHORIZED,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Sftp(msg) => {
                 let lower = msg.to_ascii_lowercase();

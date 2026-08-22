@@ -60,6 +60,15 @@ export default {
   connectingSerial: "Connecting to serial device",
   connectingCancel: "Cancel",
   connectingCancelled: "Connection cancelled",
+  authRequiredNotice:
+    "SSH authentication failed (password may have expired or changed). Enter the new password in the dialog.",
+  authPromptTitle: "SSH Authentication",
+  authPromptDesc:
+    "Password authentication failed for {label}. The password may have been changed or has expired on the server. Enter the new password to continue.",
+  authPromptRetry: "The previous password was incorrect. Please try again.",
+  authPromptPlaceholder: "New password",
+  authPromptRemember: "Remember new password and update host config",
+  authPromptConfirm: "Reconnect",
   sessionRestored: 'Session restored offline. Click "Reconnect" in the top-right to connect.',
   sessionClosed: 'Click "Reconnect" in the top-right to re-establish the session.',
   autoReconnectWait: "Auto-reconnecting in {sec}s (attempt {n})…",

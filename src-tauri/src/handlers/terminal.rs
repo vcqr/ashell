@@ -4,13 +4,16 @@ use std::time::Duration;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
+use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
+use crate::errors::AppError;
 use crate::handlers;
+use crate::models::Host;
 use crate::service::ssh::{self as ssh_svc, Session};
 use crate::service::{self, AppState};
 
@@ -68,6 +71,16 @@ enum ClientMsg {
     /// 用户确认自动填充 sudo 密码
     #[serde(rename = "sudo_fill")]
     SudoFill,
+    /// 用户提交新密码（密码过期/变更后的重新认证）
+    #[serde(rename = "auth_response")]
+    AuthResponse {
+        password: String,
+        #[serde(default)]
+        remember: bool,
+    },
+    /// 用户取消重新认证
+    #[serde(rename = "auth_cancel")]
+    AuthCancel,
 }
 
 /// 服务端首条消息：把生成的 sid 通知客户端
@@ -75,6 +88,88 @@ enum ClientMsg {
 struct ReadyMsg<'a> {
     kind: &'a str,
     sid: &'a str,
+}
+
+/// 服务端消息：SSH 认证失败（密码过期/被修改），请求前端弹窗重新输入
+#[derive(Debug, Serialize)]
+struct AuthRequiredMsg<'a> {
+    kind: &'a str,
+    host_id: i64,
+    /// user@addr:port 形式的目标描述，供弹窗展示
+    label: &'a str,
+}
+
+/// 等待用户在弹窗中输入密码的超时时间
+const AUTH_INPUT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// 认证重试次数上限：防止错误密码经 WS 无限暴力尝试
+const MAX_AUTH_ATTEMPTS: u32 = 5;
+
+async fn send_fatal(ws_tx: &mut SplitSink<WebSocket, Message>, message: &str) {
+    let payload = serde_json::json!({ "kind": "fatal", "message": message }).to_string();
+    let _ = ws_tx.send(Message::Text(payload.into())).await;
+}
+
+async fn send_pong(ws_tx: &mut SplitSink<WebSocket, Message>) {
+    let _ = ws_tx
+        .send(Message::Text("{\"kind\":\"pong\"}".to_string().into()))
+        .await;
+}
+
+/// 认证失败后向前端请求新密码。
+///
+/// 返回 `Some((password, remember))` 表示用户提交；`None` 表示用户取消、
+/// 输入超时或连接已断开。等待期间仅处理 auth 帧与心跳，忽略键盘输入。
+async fn request_new_password(
+    ws_tx: &mut SplitSink<WebSocket, Message>,
+    ws_rx: &mut SplitStream<WebSocket>,
+    host_id: i64,
+    label: &str,
+) -> Option<(String, bool)> {
+    let msg = serde_json::to_string(&AuthRequiredMsg {
+        kind: "auth_required",
+        host_id,
+        label,
+    })
+    .ok()?;
+    if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+        return None;
+    }
+
+    let deadline = tokio::time::sleep(AUTH_INPUT_TIMEOUT);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => {
+                send_fatal(ws_tx, "等待输入新密码超时").await;
+                return None;
+            }
+            frame = ws_rx.next() => {
+                match frame {
+                    Some(Ok(Message::Text(text))) => {
+                        let s = text.as_str();
+                        if !(s.starts_with('{') && s.ends_with('}')) {
+                            continue;
+                        }
+                        match serde_json::from_str::<ClientMsg>(s) {
+                            Ok(ClientMsg::AuthResponse { password, remember }) => {
+                                return Some((password, remember));
+                            }
+                            Ok(ClientMsg::AuthCancel) => return None,
+                            Ok(ClientMsg::Ping) => send_pong(ws_tx).await,
+                            _ => {} // 建连阶段忽略其它输入帧
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => return None,
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => {
+                        log::warn!("ws recv error during auth: {e}");
+                        return None;
+                    }
+                }
+            }
+        }
+    }
 }
 
 const PROMPT_BUF_LIMIT: usize = 1024;
@@ -217,16 +312,70 @@ async fn run_terminal(
     q: TerminalQuery,
     sid: &str,
 ) -> anyhow::Result<()> {
-    // 1) 取主机并解密凭证
-    let host = service::host::get_with_credentials(&state.db, &state.config.crypto_key, host_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("load host: {e}"))?;
+    // 0) 先拆分 socket：SSH 认证失败时需要在建连完成前与前端交互（重新输入密码）
+    let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // 2) 建立 SSH session 并注册到全局（配置了跳板机时内部自动双跳）
-    let session = Session::connect(&state.db, &state.config.crypto_key, &host)
-        .await
-        .map_err(|e| anyhow::anyhow!("ssh connect: {e}"))?;
-    let session_arc = Arc::new(session);
+    // 1) 取主机并解密凭证
+    let mut host =
+        service::host::get_with_credentials(&state.db, &state.config.crypto_key, host_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("load host: {e}"))?;
+
+    // 跳板机凭证缓存：认证失败重试时原地更新，避免每轮重新解密加载
+    let mut jump_host: Option<Host> = match host.jump_host_id {
+        Some(jid) => Some(
+            service::host::get_with_credentials(&state.db, &state.config.crypto_key, jid)
+                .await
+                .map_err(|e| anyhow::anyhow!("load jump host: {e}"))?,
+        ),
+        None => None,
+    };
+
+    // 2) 建立 SSH session 并注册到全局（配置了跳板机时经 direct-tcpip 双跳）。
+    // 认证失败（典型场景：服务器上改了密码，本地存的还是旧密码）时向前端
+    // 弹窗请求新密码，可选记住，然后重试建连。
+    let mut attempts: u32 = 0;
+    let session_arc = loop {
+        attempts += 1;
+        match Session::connect_prepared(jump_host.as_ref(), &host).await {
+            Ok(s) => break Arc::new(s),
+            Err(AppError::AuthFailed { host_id: failed_id }) => {
+                if attempts >= MAX_AUTH_ATTEMPTS {
+                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试").await;
+                    anyhow::bail!("ssh auth failed after {attempts} attempts");
+                }
+                let is_jump = jump_host.as_ref().is_some_and(|j| j.id == failed_id);
+                let target: &mut Host = if is_jump {
+                    jump_host.as_mut().unwrap()
+                } else {
+                    &mut host
+                };
+                let label = format!("{}@{}:{}", target.username, target.addr, target.port);
+                match request_new_password(&mut ws_tx, &mut ws_rx, failed_id, &label).await {
+                    Some((pwd, remember)) => {
+                        if remember {
+                            if let Err(e) = service::host::update_password_only(
+                                &state.db,
+                                &state.config.crypto_key,
+                                failed_id,
+                                &pwd,
+                            )
+                            .await
+                            {
+                                log::warn!("save updated password for host {failed_id}: {e}");
+                            }
+                        }
+                        target.password = Some(pwd);
+                    }
+                    None => {
+                        send_fatal(&mut ws_tx, "认证已取消").await;
+                        anyhow::bail!("auth cancelled by user");
+                    }
+                }
+            }
+            Err(e) => return Err(anyhow::anyhow!("ssh connect: {e}")),
+        }
+    };
     // 把 sid 写入 client handler，使远程转发回连能路由到本会话
     session_arc.attach_sid(sid).await;
     ssh_svc::set_client(sid.to_string(), session_arc.clone()).await;
@@ -246,8 +395,6 @@ async fn run_terminal(
         .request_shell(true)
         .await
         .map_err(|e| anyhow::anyhow!("request shell: {e}"))?;
-
-    let (mut ws_tx, mut ws_rx) = socket.split();
 
     // 创建终端命令注入 / 输出广播通道（供 POST /api/ssh/send/{sid} 使用）
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
@@ -315,6 +462,8 @@ async fn run_terminal(
                                             }
                                         }
                                     }
+                                    // 会话已建立后迟到的认证帧：忽略
+                                    ClientMsg::AuthResponse { .. } | ClientMsg::AuthCancel => {}
                                 }
                             } else if channel.data(s.as_bytes()).await.is_err() {
                                 break;
