@@ -18,8 +18,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-ai": ">0.84.0",
+    "@earendil-works/pi-coding-agent": ">0.84.0",
     "dotenv": "^17.4.2"
   }
 }
