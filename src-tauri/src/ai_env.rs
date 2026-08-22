@@ -366,8 +366,25 @@ pub(crate) fn normalize_path(v: &str) -> String {
 }
 
 /// 检测系统中是否安装了 `claude` 命令，返回其完整路径。
+///
+/// 优先级：
+/// 1. `~/.ashell/ai/bin/`（用户手动放置的默认位置，与 sidecar 的路径回退一致）
+/// 2. where/which 命令搜索（Windows 下从候选中挑选可直接 spawn 的 .exe）
 #[tauri::command]
 pub fn detect_claude_path() -> Option<String> {
+    // 1. 用户手动放置的位置
+    if let Ok(ai_dir) = crate::config::ai_dir() {
+        let probe = if cfg!(target_os = "windows") {
+            ai_dir.join("bin").join("claude.exe")
+        } else {
+            ai_dir.join("bin").join("claude")
+        };
+        if probe.is_file() {
+            return Some(normalize_path(&probe.to_string_lossy()));
+        }
+    }
+
+    // 2. 命令搜索
     let cmd = if cfg!(target_os = "windows") {
         "where"
     } else {
@@ -381,12 +398,54 @@ pub fn detect_claude_path() -> Option<String> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let path = stdout.lines().next()?.trim();
-    if path.is_empty() {
-        None
+    let candidates: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let first = candidates.first()?.to_string();
+
+    if cfg!(target_os = "windows") {
+        detect_claude_path_windows(&candidates).map(|p| normalize_path(&p))
     } else {
-        Some(normalize_path(path))
+        Some(normalize_path(&first))
     }
+}
+
+/// Windows 下从 `where claude` 的候选中挑选 sidecar 能直接 spawn 的真实可执行文件。
+///
+/// npm 全局安装会在每个 PATH 目录生成三种 shim：无扩展名 `claude`（POSIX 脚本）、
+/// `claude.cmd`、`claude.ps1`。Bun/Node 的 child_process 出于 CVE-2024-27980 加固
+/// 拒绝直接 spawn `.cmd`/`.bat`，无扩展名脚本 CreateProcess 同样起不来——只有包内
+/// 原生二进制可用。因此：
+/// 1. 候选里已有 `.exe` 直接命中
+/// 2. 否则从 shim 所在目录向上探测包内二进制
+///    `node_modules/@anthropic-ai/claude-code/bin/claude.exe`
+/// 3. 都没有则返回 None（宁可让用户手填，也不自动填一个 spawn 不了的路径）
+fn detect_claude_path_windows(candidates: &[&str]) -> Option<String> {
+    for line in candidates {
+        if line.to_ascii_lowercase().ends_with(".exe") {
+            return Some((*line).to_string());
+        }
+    }
+
+    for line in candidates {
+        let Some(start) = std::path::Path::new(line).parent() else {
+            continue;
+        };
+        let mut dir = start.to_path_buf();
+        for _ in 0..3 {
+            let probe = dir.join("node_modules/@anthropic-ai/claude-code/bin/claude.exe");
+            if probe.is_file() {
+                return Some(probe.to_string_lossy().into_owned());
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent.to_path_buf(),
+                None => break,
+            }
+        }
+    }
+    None
 }
 
 /// 从供应商 API 获取可用模型列表。
@@ -560,5 +619,20 @@ mod tests {
         assert_eq!(encode_value("plain"), "plain");
         assert_eq!(encode_value("with space"), "\"with space\"");
         assert_eq!(encode_value("a\"b"), "\"a\\\"b\"");
+    }
+
+    #[test]
+    fn windows_detect_prefers_exe_over_shims() {
+        // npm 三种 shim 中无扩展名脚本排最前是常态，.exe 命中分支在探测
+        // 文件系统之前返回，因此该断言不依赖本机文件布局
+        let cands = vec![
+            r"D:\env\nodejs\claude",
+            r"D:\env\nodejs\claude.cmd",
+            r"D:\tools\claude\claude.exe",
+        ];
+        assert_eq!(
+            detect_claude_path_windows(&cands),
+            Some(r"D:\tools\claude\claude.exe".to_string())
+        );
     }
 }
