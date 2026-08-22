@@ -1,6 +1,6 @@
 [package]
 name = "ashell"
-version = "0.1.18"
+version = "0.1.19"
 description = "A modern cross-platform terminal / SSH client built with Tauri 2 + Vue 3"
 authors = ["vcqr"]
 license = "MIT"
