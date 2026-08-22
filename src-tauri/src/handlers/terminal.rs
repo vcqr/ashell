@@ -351,6 +351,11 @@ async fn run_terminal(
                             && sudo_password.as_deref().is_some_and(|p| !p.is_empty())
                         {
                             sudo_buf.clear();
+                            // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
+                            // 最近输入窗口里，本次提权完成后命令输出中普通的冒号
+                            // 结尾行（apt 的 "The following ... installed:" 等）会被
+                            // 反复误判成新的密码提示，前端跟着反复弹出。
+                            terminal_input_buf.clear();
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
@@ -368,6 +373,11 @@ async fn run_terminal(
                             && sudo_password.as_deref().is_some_and(|p| !p.is_empty())
                         {
                             sudo_buf.clear();
+                            // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
+                            // 最近输入窗口里，本次提权完成后命令输出中普通的冒号
+                            // 结尾行（apt 的 "The following ... installed:" 等）会被
+                            // 反复误判成新的密码提示，前端跟着反复弹出。
+                            terminal_input_buf.clear();
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
@@ -439,6 +449,32 @@ mod tests {
     fn ignores_non_prompt_output() {
         let output = b"total 0\n-rw-r--r-- 1 root root 0 Jan  1 00:00 file\n";
         assert!(!detect_sudo_password_prompt(output, b"sudo ls\r"));
+    }
+
+    /// 回归：sudo 填充命中后必须清空输入缓冲，否则旧 sudo 命令残留在
+    /// 最近输入窗口里，本次提权完成后命令输出中的普通冒号结尾行会被
+    /// 反复误判成密码提示（前端反复弹出）。
+    #[test]
+    fn clears_input_elevation_after_hit_to_stop_false_positives() {
+        // 填充前：短冒号行 + 最近输入有 sudo -> 命中（这正是误报来源）
+        assert!(detect_sudo_password_prompt(
+            b"The following NEW packages will be installed: ",
+            b"sudo apt install foo\r"
+        ));
+
+        // 模拟 handler 命中后清空两个缓冲
+        let empty_input: Vec<u8> = Vec::new();
+        assert!(!detect_sudo_password_prompt(
+            b"The following NEW packages will be installed: ",
+            &empty_input
+        ));
+
+        // 自带 sudo + password 词的真实提示不依赖输入缓冲：
+        // 密码输错重试仍能再次识别
+        assert!(detect_sudo_password_prompt(
+            b"[sudo] password for user: ",
+            &empty_input
+        ));
     }
 }
 
