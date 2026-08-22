@@ -7,6 +7,7 @@ export default {
   restart: "Restart session (clear history and restart sidecar)",
   settings: "Settings",
   close: "Close",
+  openInNewWindow: "Open in new window",
   needSession: "Please open a terminal session first",
   placeholder: "Chat with AI…",
   inputPlaceholder: "Type a message, Enter to send, Shift+Enter for newline",
@@ -29,6 +30,13 @@ export default {
     content: "The current conversation will be cleared and the sidecar process will restart. Continue?",
     cancel: "Cancel",
     confirm: "OK",
+  },
+  popupDialog: {
+    title: "AI is still responding",
+    content:
+      "The session is still generating a reply or waiting for confirmation. The popped-out window receives a snapshot of this moment — content produced during the switch won't appear there (the original panel keeps the full record). Pop out anyway?",
+    cancel: "Cancel",
+    confirm: "Pop out",
   },
   providerSwitch: {
     title: "Switch Model Provider",

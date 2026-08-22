@@ -205,6 +205,86 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
+  /**
+   * 用移交的历史消息填充会话（独立窗口弹出时经 localStorage 移交）。
+   * seq 取最大消息 id，保证后续 pushMessage 的 id 不冲突；不动 sidecar 相关状态。
+   */
+  function hydrate(ssid: string, messages: ChatMessage[]) {
+    if (!ssid || messages.length === 0) return
+    const s = ensure(ssid)
+    if (s.messages.length > 0) return
+    const seq = messages.reduce((max, m) => Math.max(max, m.id), 0)
+    sessions.value = {
+      ...sessions.value,
+      [ssid]: { ...s, messages: [...messages], seq },
+    }
+  }
+
+  /**
+   * 附着到后端已在运行的 sidecar（不 spawn）。
+   *
+   * 独立 AI 窗口 / 多窗口共享同一 ssid 的场景：spawn_sidecar 会先 kill
+   * 同 ssid 的旧进程，直接调会打断别的窗口正在进行的对话。这里先查
+   * has_sidecar，进程存在时只注册 stdout/stderr 监听（Tauri emit 本身
+   * 广播到所有窗口，多窗口各自监听互不干扰）并回填 pid。
+   *
+   * 返回附着到的 pid；后端无该 ssid 的进程时返回 null（调用方走 spawn）。
+   */
+  async function attachFor(
+    ssid: string,
+    onStdout: (line: string) => void,
+  ): Promise<number | null> {
+    if (!ssid) return null
+
+    let running = false
+    try {
+      running = await invoke<boolean>('has_sidecar', { ssid })
+    } catch {
+      return null
+    }
+    if (!running) return null
+
+    const s = ensure(ssid)
+    if (s.unlistenStdout) {
+      s.unlistenStdout()
+    }
+    if (s.unlistenStderr) {
+      s.unlistenStderr()
+    }
+
+    try {
+      const unlistenStdout = await listen<string>(
+        `sidecar-stdout-${ssid}`,
+        (event) => onStdout(event.payload),
+      )
+      const unlistenStderr = await listen<string>(
+        `sidecar-stderr-${ssid}`,
+        () => {
+          /* stderr ignored in UI */
+        },
+      )
+
+      let pid: number | null = null
+      try {
+        pid = await invoke<number | null>('get_sidecar_pid', { ssid })
+      } catch {
+        pid = null
+      }
+
+      patch(ssid, {
+        sidecarPid: pid ?? null,
+        isSessionActive: true,
+        isTyping: false,
+        unlistenStdout,
+        unlistenStderr,
+      })
+      return pid ?? null
+    } catch (error) {
+      console.error('[AI store] attach failed:', error)
+      return null
+    }
+  }
+
   /** 终止指定 ssid 的 sidecar 并从 store 移除会话（含监听器清理） */
   async function killFor(ssid: string) {
     if (!ssid) return
@@ -243,6 +323,8 @@ export const useAiStore = defineStore('ai', () => {
     appendProcessStep,
     finalizeProcess,
     clearMessages,
+    hydrate,
+    attachFor,
     spawnFor,
     killFor,
     writeTo,

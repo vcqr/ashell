@@ -27,6 +27,7 @@ import TabBar from "@/components/TabBar.vue";
 import HostsDrawer from "@/components/HostsDrawer.vue";
 import TerminalView from "@/components/TerminalView.vue";
 import AiAssistant from "@/components/AiAssistant.vue";
+import AiWindow from "@/components/AiWindow.vue";
 import ActivityBar from "@/components/ActivityBar.vue";
 import SftpDrawer from "@/components/SftpDrawer.vue";
 import SftpWindow from "@/components/SftpWindow.vue";
@@ -126,11 +127,13 @@ const {
   onSftpSendToAi,
 } = usePanels(activeSftpTab, activeAiTab, activeTerminalTab, aiAssistantRef);
 
-// SFTP 独立窗口：由 openSftpInNewWindow 创建，URL 带 newwin=1&kind=sftp。
-// 走完整 App 实例（providers/api init/theme），但只渲染 SftpWindow 布局。
+// 独立窗口：由 openSftpInNewWindow / openAiInNewWindow 创建，
+// URL 带 newwin=1&kind=sftp|ai。走完整 App 实例（providers/api init/theme），
+// 但只渲染对应 solo 布局。
 const launchParams = new URLSearchParams(window.location.search);
-const soloSftp =
-  launchParams.get("newwin") === "1" && launchParams.get("kind") === "sftp";
+const soloKind = launchParams.get("newwin") === "1" ? launchParams.get("kind") : null;
+const soloSftp = soloKind === "sftp";
+const soloAi = soloKind === "ai";
 
 const {
   isMac,
@@ -160,8 +163,9 @@ useGlobalShortcuts({
     <NMessageProvider>
       <NDialogProvider>
         <NNotificationProvider>
-          <UpdateChecker v-if="!soloSftp" />
+          <UpdateChecker v-if="!soloSftp && !soloAi" />
           <SftpWindow v-if="soloSftp" />
+          <AiWindow v-else-if="soloAi" />
           <div
             v-else
             class="app-root"
@@ -352,6 +356,7 @@ useGlobalShortcuts({
               ref="aiAssistantRef"
               v-model:open="aiOpen"
               :sid="activeAiTab?.sid ?? null"
+              :host-name="activeAiTab?.title ?? null"
             />
 
             <SettingsModal

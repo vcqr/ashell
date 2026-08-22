@@ -32,6 +32,7 @@ import {
   Star,
   BookmarkOutline,
   TrashOutline,
+  OpenOutline,
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
 import type { ChatMessage, ProcessStep } from "@/types";
@@ -40,12 +41,17 @@ import { useAiStore } from "@/stores/ai";
 import { useAiConfigStore } from "@/stores/aiConfig";
 import { usePhraseStore } from "@/stores/phrases";
 import { getApiInfo } from "@/api/client";
+import { openAiInNewWindow } from "@/utils/newWindow";
 import { parseModelIds } from "@/composables/useAiConfig";
 
 const props = defineProps<{
   open: boolean;
   /** 当前激活终端 tab 的 SSH session id（无激活终端时为空） */
   sid?: string | null;
+  /** 独立窗口模式：铺满窗口，关闭=关窗口，不渲染拖宽手柄与弹出按钮 */
+  standalone?: boolean;
+  /** 所属终端 tab 标题（独立窗口标题栏显示用） */
+  hostName?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -157,11 +163,15 @@ function onResizeEnd() {
 
 onBeforeUnmount(onResizeEnd);
 
-const panelStyle = computed(() => ({
-  width: `${width.value}px`,
-  transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
-  transform: props.open ? "translateX(0)" : "translateX(100%)",
-}));
+const panelStyle = computed(() => {
+  // 独立窗口模式：铺满窗口，由 .standalone 类接管布局
+  if (props.standalone) return {}
+  return {
+    width: `${width.value}px`,
+    transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
+    transform: props.open ? "translateX(0)" : "translateX(100%)",
+  }
+});
 
 // ── Markdown ──
 
@@ -240,6 +250,7 @@ const ASSISTANT_NAME = computed(() => t("ai.name"));
 
 const input = ref("");
 const showConfirmDialog = ref(false);
+const showPopupConfirmDialog = ref(false);
 const scrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
 
 /** 当前激活的 ssid（空字符串表示无终端） */
@@ -288,7 +299,46 @@ function scrollBottom() {
 }
 
 function close() {
+  // 独立窗口模式下"关闭"语义是关掉整个窗口
+  if (props.standalone) {
+    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+      getCurrentWindow().close(),
+    )
+    return
+  }
+  emit("update:open", false)
+}
+
+/** 弹出到独立窗口（复用当前 ssid 的 sidecar 进程）。
+ *  "移动"语义：弹出后收起本面板；历史经 localStorage 移交，此后两个窗口
+ *  都监听同一 sidecar 事件流，后续输出双端同步。
+ *  流式输出/等待确认时先弹确认框：移交是快照，附着前产生的输出行不会进新窗口。 */
+function openInStandaloneWindow() {
+  if (!currentSsid.value) return;
+  if (isTyping.value || isApprovalActive.value) {
+    showPopupConfirmDialog.value = true;
+    return;
+  }
+  doPopout();
+}
+
+function doPopout() {
+  if (!currentSsid.value) return;
+  void openAiInNewWindow({
+    ssid: currentSsid.value,
+    title: props.hostName ?? undefined,
+    history: messages.value,
+  });
   emit("update:open", false);
+}
+
+function confirmPopout() {
+  showPopupConfirmDialog.value = false;
+  doPopout();
+}
+
+function cancelPopout() {
+  showPopupConfirmDialog.value = false;
 }
 
 // ── Sidecar ──
@@ -333,6 +383,13 @@ async function ensureSidecarFor(ssid: string) {
   // 占位 session，避免并发 spawn
   aiStore.ensure(ssid);
 
+  // 已有同 ssid 的 sidecar 在跑（如弹出的独立窗口）：只附着监听，不重启进程，
+  // 否则 spawn_sidecar 会 kill 掉别的窗口正在使用的进程
+  const attachedPid = await aiStore.attachFor(ssid, (line) =>
+    handleSidecarOutput(ssid, line),
+  );
+  if (attachedPid !== null) return;
+
   const workspace = await invoke<string>("get_ai_dir");
   const token = await getToken();
   const addr = await getApiAddr();
@@ -350,6 +407,32 @@ async function ensureSidecarFor(ssid: string) {
       time: nowStr(),
     });
     scrollBottom();
+  }
+}
+
+/**
+ * 独立窗口启动时取回弹出方移交的对话历史（读后即删）。
+ * 必须在 ensureSidecarFor 之前执行，保证历史先于新输出渲染。
+ */
+function restoreHandoverHistory() {
+  if (!props.standalone || !currentSsid.value) return;
+  const key = `ashell:ai-handover:${currentSsid.value}`;
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(key);
+    if (raw) localStorage.removeItem(key);
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as { messages?: ChatMessage[] };
+    if (Array.isArray(parsed.messages) && parsed.messages.length > 0) {
+      aiStore.hydrate(currentSsid.value, parsed.messages);
+      scrollBottom();
+    }
+  } catch {
+    // 历史损坏时降级为空白会话
   }
 }
 
@@ -658,6 +741,8 @@ onMounted(async () => {
   // 启动时加载供应商与引擎配置（共享 store）
   await aiConfig.load();
 
+  restoreHandoverHistory();
+
   unlistenApiMessage = await listen<string>("api-message", (event) => {
     const ssid = currentSsid.value;
     if (!ssid) return;
@@ -730,6 +815,8 @@ async function handleClearAll() {
 defineExpose({
   callStreamingApi,
   sendText,
+  /** 独立窗口标题栏的"重新开始"按钮经此触发确认框（面板头隐藏后入口在 chrome） */
+  openRestartConfirm: handleNewChat,
 });
 </script>
 
@@ -738,17 +825,20 @@ defineExpose({
   <Teleport to="body">
     <aside
       class="ai-panel"
-      :class="{ open: props.open, resizing: resizing }"
+      :class="{ open: props.open, resizing: resizing, standalone: props.standalone }"
       :style="panelStyle"
       :aria-hidden="!props.open"
     >
       <div
+        v-if="!props.standalone"
         class="resize-handle"
         title="Drag to resize"
         @pointerdown="onResizeStart"
       />
 
-      <header class="panel-header">
+      <!-- 独立窗口模式下不渲染面板头：标题与重启按钮由 AiWindow 标题栏承担，
+           关闭走系统窗口控制，避免双标题 -->
+      <header v-if="!props.standalone" class="panel-header">
         <NSpace align="center" :size="10">
           <div class="ai-avatar">
             <NIcon :size="16"><SparklesOutline /></NIcon>
@@ -768,6 +858,19 @@ defineExpose({
           >
             <template #icon>
               <NIcon><RefreshOutline /></NIcon>
+            </template>
+          </NButton>
+          <NButton
+            v-if="!props.standalone"
+            quaternary
+            circle
+            size="small"
+            :disabled="!currentSsid"
+            :title="t('ai.openInNewWindow')"
+            @click="openInStandaloneWindow"
+          >
+            <template #icon>
+              <NIcon><OpenOutline /></NIcon>
             </template>
           </NButton>
           <NButton quaternary circle size="small" :title="t('ai.close')" @click="close">
@@ -1026,6 +1129,25 @@ defineExpose({
           </template>
         </NCard>
       </NModal>
+
+      <!-- Popout while streaming confirm -->
+      <NModal v-model:show="showPopupConfirmDialog">
+        <NCard
+          style="width: min(360px, 80vw)"
+          :title="t('ai.popupDialog.title')"
+          :bordered="false"
+          role="dialog"
+          aria-modal="true"
+        >
+          <p>{{ t("ai.popupDialog.content") }}</p>
+          <template #footer>
+            <NSpace justify="end">
+              <NButton @click="cancelPopout">{{ t("ai.popupDialog.cancel") }}</NButton>
+              <NButton type="primary" @click="confirmPopout">{{ t("ai.popupDialog.confirm") }}</NButton>
+            </NSpace>
+          </template>
+        </NCard>
+      </NModal>
     </aside>
 
     <!-- Model settings -->
@@ -1048,6 +1170,18 @@ defineExpose({
 
 .ai-panel.open {
   box-shadow: -8px 0 24px var(--ashell-shadow);
+}
+
+/* 独立窗口模式：面板铺满窗口（顶部让位给窗口标题栏），无侧边阴影 */
+.ai-panel.standalone {
+  left: 0;
+  right: 0;
+  width: auto;
+  border-left: none;
+}
+
+.ai-panel.standalone.open {
+  box-shadow: none;
 }
 
 .ai-panel.resizing {

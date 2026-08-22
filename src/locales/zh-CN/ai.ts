@@ -7,6 +7,7 @@ export default {
   restart: "重新开始会话（清空历史并重启 sidecar）",
   settings: "Settings",
   close: "Close",
+  openInNewWindow: "在新窗口打开",
   needSession: "请先打开一个终端会话",
   placeholder: "和 AI 聊点什么吧～",
   inputPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
@@ -29,6 +30,13 @@ export default {
     content: "当前对话将被清除，sidecar 进程会重启。确定继续？",
     cancel: "取消",
     confirm: "确定",
+  },
+  popupDialog: {
+    title: "AI 正在输出中",
+    content:
+      "当前会话仍在生成回复或等待确认。弹出的独立窗口拿到的是此刻的快照，切换瞬间产生的内容不会出现在新窗口（原面板仍保留完整记录）。确定要弹出吗？",
+    cancel: "取消",
+    confirm: "继续弹出",
   },
   providerSwitch: {
     title: "切换模型供应商",
