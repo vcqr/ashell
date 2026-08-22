@@ -57,7 +57,7 @@ AShell focuses on performance, privacy, and customizability. All SSH credentials
 - **Cross-window support**: source tab selectable, auto-append newline, cross-window broadcast just works.
 
 ### 🤖 AI Assistant
-- **Multi-agent**: Claude (sidecar-cc) and Pi coding agent (sidecar-pi), one independent process per terminal session.
+- **Multi-agent**: unified sidecar (sidecar-ai) embedding both the Claude Agent SDK and the Pi coding agent engines (factory-selected), one independent process per terminal session.
 - **Send to AI**: terminal selection and SFTP right-click menu support sending content to the AI assistant.
 - **Collapsible execution trace**: tool calls and returns aggregated into foldable blocks for a clean conversation.
 - **Destructive-operation confirmation**: y/n approval bar before execution; sensitive info (SSH session credentials) never revealed directly.
@@ -110,19 +110,18 @@ Grab the installer for your platform from [Releases](https://github.com/vcqr/ash
 npm install
 
 # 2. Install sidecar dependencies
-cd sidecar-cc && npm install && cd ..
-cd sidecar-pi && npm install && cd ..
+cd sidecar-ai && npm install && cd ..
 
 # 3. Development mode (Vite + Rust hot reload)
 npm run tauri dev
-#    dev does not auto-compile sidecars; run this first if you need the AI assistant:
+#    dev does not auto-compile the sidecar; run this first if you need the AI assistant:
 npm run sidecar:build
 
-# 4. Production build (auto-compiles sidecars + frontend + bundles)
+# 4. Production build (auto-compiles sidecar + frontend + bundles)
 npm run tauri build
 ```
 
-> `npm run tauri build` automatically runs `npm run sidecar:build` (compiles Claude / Pi sidecar binaries) first, then `npm run build` (frontend type-check + Vite build) - no manual sidecar compilation needed.
+> `npm run tauri build` automatically runs `npm run sidecar:build` (compiles the unified AI sidecar binary) first, then `npm run build` (frontend type-check + Vite build) - no manual sidecar compilation needed.
 
 ---
 

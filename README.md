@@ -57,7 +57,7 @@ AShell 注重性能、隐私与可定制性。所有 SSH 凭证本地加密存�
 - **跨窗口支持**：源 Tab 可选、自动追加回车，跨窗口广播无障碍。
 
 ### 🤖 AI 助手
-- **多 Agent 驱动**：Claude（sidecar-cc）与 Pi coding agent（sidecar-pi），每个终端会话独立进程。
+- **多 Agent 驱动**：统一 sidecar（sidecar-ai）内嵌 Claude Agent SDK 与 Pi coding agent 双引擎（工厂模式按需选择），每个终端会话独立进程。
 - **发送给 AI**：终端选中文本与 SFTP 右键菜单支持发送给 AI 助手。
 - **执行过程可折叠**：工具调用与返回聚合成可折叠块，对话整洁可读。
 - **破坏性操作确认**：执行前弹 y/n 确认条，敏感信息（SSH 会话凭证）不直接透露。
@@ -115,8 +115,7 @@ AShell 注重性能、隐私与可定制性。所有 SSH 凭证本地加密存�
 npm install
 
 # 2. 安装 sidecar 依赖
-cd sidecar-cc && npm install && cd ..
-cd sidecar-pi && npm install && cd ..
+cd sidecar-ai && npm install && cd ..
 
 # 3. 开发模式（Vite + Rust 热重载）
 npm run tauri dev
@@ -127,7 +126,7 @@ npm run sidecar:build
 npm run tauri build
 ```
 
-> `npm run tauri build` 会先自动执行 `npm run sidecar:build`（编译 Claude / Pi sidecar 二进制），再执行 `npm run build`（前端类型检查 + Vite 构建），无需手动编译 sidecar。
+> `npm run tauri build` 会先自动执行 `npm run sidecar:build`（编译统一 AI sidecar 二进制），再执行 `npm run build`（前端类型检查 + Vite 构建），无需手动编译 sidecar。
 
 ---
 

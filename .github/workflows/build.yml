@@ -74,9 +74,7 @@ jobs:
         run: npm install
 
       - name: install sidecar dependencies
-        run: |
-          cd sidecar-cc && npm install && cd ..
-          cd sidecar-pi && npm install && cd ..
+        run: cd sidecar-ai && npm install
 
       - name: generate release notes
         id: release_notes

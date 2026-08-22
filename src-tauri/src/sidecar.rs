@@ -41,11 +41,12 @@ where
 
 /// 启动 sidecar 进程（按 ssid 索引，每个 SSH 终端一个独立进程）
 ///
-/// 位置参数顺序：`<workspace> <ssid> <token> <addr>`
+/// 位置参数顺序：`<workspace> <ssid> <token> <addr> <engine>`
+/// 第 5 个参数把引擎类型下发给统一二进制 sidecar-ai；旧版二进制会忽略它。
 ///
 /// - 同一 ssid 重复 spawn 会先 kill 旧进程（用户主动「新对话」场景）
 /// - ssid 为空字符串时返回错误（无终端时不允许启动）
-/// - sidecar_type 决定查找哪个二进制（"claude" / "pi"），None 默认 "claude"
+/// - sidecar_type 决定旧版二进制回退名（"claude" / "pi"），None 默认 "claude"
 #[tauri::command]
 pub fn spawn_sidecar(
     app: tauri::AppHandle,
@@ -120,6 +121,7 @@ pub fn spawn_sidecar(
                 .arg(&ssid)
                 .arg(&token)
                 .arg(&addr)
+                .arg(&sidecar_type)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .pre_exec(move || {
@@ -151,6 +153,7 @@ pub fn spawn_sidecar(
             .arg(&ssid)
             .arg(&token)
             .arg(&addr)
+            .arg(&sidecar_type)
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

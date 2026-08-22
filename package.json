@@ -10,7 +10,7 @@
     "lint:fix": "eslint . --fix",
     "preview": "vite preview",
     "tauri": "tauri",
-    "sidecar:build": "cd sidecar-cc && npm run build && cd ../sidecar-pi && npm run build",
+    "sidecar:build": "cd sidecar-ai && npm run build",
     "prepare": "husky"
   },
   "dependencies": {
