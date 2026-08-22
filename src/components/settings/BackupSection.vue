@@ -407,7 +407,7 @@ function formatTime(timestamp: string): string {
     </NSpin>
 
     <!-- Password Dialog -->
-    <NModal :show="pwdDialog.show" @update:show="(v: boolean) => !v && cancelPassword()">
+    <NModal :show="pwdDialog.show" :mask-closable="false" @update:show="(v: boolean) => !v && cancelPassword()">
       <NCard
         :title="pwdDialog.title"
         size="small"

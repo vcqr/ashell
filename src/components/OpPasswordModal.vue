@@ -169,7 +169,7 @@ async function submit() {
 <template>
   <NModal
     :show="show"
-    :mask-closable="!loading"
+    :mask-closable="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <NCard

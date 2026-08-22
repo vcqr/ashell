@@ -140,7 +140,7 @@ async function doImport() {
 </script>
 
 <template>
-  <NModal :show="props.show" @update:show="emit('update:show', $event)">
+  <NModal :show="props.show" :mask-closable="false" @update:show="emit('update:show', $event)">
     <NCard
       style="width: min(680px, 90vw)"
       :title="t('hosts.import.title')"

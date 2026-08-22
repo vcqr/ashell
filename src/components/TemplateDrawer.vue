@@ -233,7 +233,7 @@ async function onDelete(id: number) {
       </div>
 
       <!-- Create / Edit modal -->
-      <NModal v-model:show="showForm">
+      <NModal v-model:show="showForm" :mask-closable="false">
         <NCard
           style="width: min(460px, 90vw)"
           :title="editingId !== null ? t('templates.editTitle') : t('templates.newTitle')"

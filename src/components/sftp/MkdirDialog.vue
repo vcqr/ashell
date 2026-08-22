@@ -62,7 +62,7 @@ function onSubmit() {
 </script>
 
 <template>
-  <NModal :show="props.open" @update:show="(v) => emit('update:open', v)">
+  <NModal :show="props.open" :mask-closable="false" @update:show="(v) => emit('update:open', v)">
     <NCard
       :title="title"
       style="width: 480px"

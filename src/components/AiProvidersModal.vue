@@ -194,7 +194,7 @@ watch(() => props.open, (v) => {
 </script>
 
 <template>
-  <NModal :show="open" @update:show="(v: boolean) => emit('update:open', v)">
+  <NModal :show="open" :mask-closable="false" @update:show="(v: boolean) => emit('update:open', v)">
     <NCard
       style="width: min(760px, 92vw); max-height: min(660px, 88vh)"
       :title="t('settings.ai.provider.title')"

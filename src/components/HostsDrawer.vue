@@ -185,7 +185,8 @@ function onClose() {
     </aside>
   </Teleport>
 
-  <NModal v-model:show="formOpen" :mask-closable="!formSubmitting">
+  <!-- 表单填写中误触蒙版不应关闭（丢输入）；关闭走取消按钮 / Esc -->
+  <NModal v-model:show="formOpen" :mask-closable="false">
     <NCard
       style="width: 760px; max-width: 92vw"
       :title="formMode === 'create' ? t('hosts.drawer.newHost') : t('hosts.drawer.editHost')"

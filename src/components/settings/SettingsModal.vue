@@ -51,7 +51,7 @@ function close() {
 </script>
 
 <template>
-  <NModal :show="open" @update:show="(v: boolean) => emit('update:open', v)">
+  <NModal :show="open" :mask-closable="false" @update:show="(v: boolean) => emit('update:open', v)">
     <NCard
       style="width: min(900px, 88vw); height: min(680px, 84vh)"
       :title="t('settings.title')"

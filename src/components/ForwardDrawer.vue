@@ -408,7 +408,7 @@ function onClose() {
       </div>
     </aside>
 
-    <NModal v-model:show="formOpen">
+    <NModal v-model:show="formOpen" :mask-closable="false">
       <NCard
         style="width: min(480px, 90vw)"
         :title="t('forward.newRule')"

@@ -749,7 +749,7 @@ async function onRefresh() {
       </div>
     </Teleport>
 
-    <NModal v-model:show="folderModalOpen">
+    <NModal v-model:show="folderModalOpen" :mask-closable="false">
       <NCard
         style="width: 420px"
         :title="t('hosts.tree.newFolderDialog')"
@@ -803,7 +803,7 @@ async function onRefresh() {
       </NCard>
     </NModal>
 
-    <NModal v-model:show="renameModalOpen">
+    <NModal v-model:show="renameModalOpen" :mask-closable="false">
       <NCard
         style="width: 380px"
         :title="t('hosts.tree.renameDialog')"
