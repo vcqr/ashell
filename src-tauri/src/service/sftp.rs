@@ -367,3 +367,67 @@ pub async fn read_all(sid: &str, filename: &str) -> AppResult<Vec<u8>> {
         .map_err(|e| sftp_err("read", e))?;
     Ok(buf)
 }
+
+/// 名称或纯数字字符串 -> 数字 ID；名称在 map（/etc/passwd、/etc/group 反查）中找不到时报错
+fn resolve_id(name: &str, map: &HashMap<u32, String>, kind: &str) -> AppResult<u32> {
+    if let Ok(id) = name.parse::<u32>() {
+        return Ok(id);
+    }
+    map.iter()
+        .find(|(_, n)| n.as_str() == name)
+        .map(|(id, _)| *id)
+        .ok_or_else(|| AppError::BadRequest(format!("无法解析{kind} \"{name}\" 的数字 ID")))
+}
+
+/// 修改远程文件属性（chmod / chown）。走 SFTP setstat：只携带调用方
+/// 提供的字段（permissions / uid / gid），未提供的字段服务器不会改动。
+/// mode 为 3-4 位八进制串；user/group 可传名称（经 /etc/passwd、/etc/group
+/// 反查）或纯数字 ID。
+pub async fn set_attrs(
+    sid: &str,
+    path: &str,
+    mode: Option<String>,
+    user: Option<String>,
+    group: Option<String>,
+) -> AppResult<()> {
+    let sftp = ssh_svc::get_sftp(sid).await?;
+    let mut attrs = FileAttributes::default();
+    if let Some(m) = mode {
+        let trimmed = m.trim();
+        let parsed = u32::from_str_radix(trimmed, 8)
+            .map_err(|_| AppError::BadRequest(format!("无效的八进制权限: {m}")))?;
+        attrs.permissions = Some(parsed);
+    }
+    if user.is_some() || group.is_some() {
+        if let Some(u) = user {
+            let map = read_id_map(&sftp, "/etc/passwd").await;
+            attrs.uid = Some(resolve_id(&u, &map, "用户")?);
+        }
+        if let Some(g) = group {
+            let map = read_id_map(&sftp, "/etc/group").await;
+            attrs.gid = Some(resolve_id(&g, &map, "组")?);
+        }
+    }
+    if attrs.permissions.is_none() && attrs.uid.is_none() && attrs.gid.is_none() {
+        return Err(AppError::BadRequest("没有需要修改的属性".into()));
+    }
+    sftp.set_metadata(path, attrs)
+        .await
+        .map_err(|e| sftp_err("set_attrs", e))?;
+    Ok(())
+}
+
+/// 计算目录/文件占用大小（du -sk，POSIX/BusyBox 兼容），返回字节数。
+/// 子目录部分不可读时 du 仍输出已统计部分（exit != 0），按 stdout 解析。
+pub async fn du_size(sid: &str, path: &str) -> AppResult<u64> {
+    let client = ssh_svc::get_client(sid).await?;
+    let cmd = format!("du -sk '{}' 2>/dev/null", path.replace('\'', "'\\''"));
+    let res = client.execute(&cmd).await?;
+    let first = res.stdout.lines().next().unwrap_or("");
+    let kb: u64 = first
+        .split_whitespace()
+        .next()
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| AppError::Sftp(format!("du 解析失败: {}", res.stderr.trim())))?;
+    Ok(kb * 1024)
+}

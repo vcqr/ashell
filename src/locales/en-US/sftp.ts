@@ -18,6 +18,20 @@ export default {
   downloadListButton: "Download list",
   clearCompleted: "Clear completed",
   remotePaneTitle: "Remote",
+  clickToEditPath: "Click the blank area to type a path",
+  filterPlaceholder: "Filter current directory…",
+  nav: {
+    back: "Back",
+    forward: "Forward",
+  },
+  bookmarks: {
+    title: "Bookmarks & Recent",
+    add: "Bookmark current directory",
+    remove: "Remove bookmark for current directory",
+    empty: "No bookmarks yet. Click the ☆ next to the address bar to bookmark.",
+    recent: "Recent",
+    noRecent: "No recent locations",
+  },
   localPane: {
     title: "Local",
     thisPc: "This PC",
@@ -86,6 +100,8 @@ export default {
     copyPath: "Copy path",
     sendToAi: "Send to AI assistant",
     properties: "Properties",
+    openTerminalHere: "Open terminal here",
+    calcSize: "Calculate directory size",
   },
   newMenu: {
     newFolder: "New folder",
@@ -101,6 +117,27 @@ export default {
     userGroup: "User/Group: ",
     modifyTime: "Modified: ",
     confirm: "OK",
+  },
+  props: {
+    saved: "Properties updated",
+    saveFailed: "Update failed: {error}",
+    permTitle: "Permissions",
+    read: "Read",
+    write: "Write",
+    exec: "Execute",
+    owner: "Owner",
+    groupRole: "Group",
+    others: "Others",
+    octalLabel: "Octal",
+    ownerName: "User",
+    groupName: "Group",
+    nameOrIdHint:
+      "Accepts a name or numeric ID; user/group are only submitted when changed.",
+    apply: "Apply",
+  },
+  transfer: {
+    eta: "{time} left",
+    retry: "Retry",
   },
   message: {
     copied: "Copied",
@@ -120,6 +157,13 @@ export default {
     downloadFailed: "Download failed: {error}",
     uploaded: "Uploaded: {name}",
     uploadFailed: "Upload failed: {error}",
+    uploadedMulti: "Uploaded {count} file(s)",
+    uploadFailedMulti:
+      "{count} file(s) failed to upload; see the task list for details",
+    downloadedMulti: "Downloaded {count} file(s)",
+    downloadedToMulti: "Downloaded {count} file(s) to the local directory",
+    downloadFailedMulti:
+      "{count} file(s) failed to download; see the task list for details",
     noFileSelected: "No file selected",
     cannotParseUploadDir: "Cannot parse upload directory",
     dirUploadDone: "Folder upload complete: {count} files",
@@ -131,6 +175,8 @@ export default {
     pasted: "Paste completed",
     pasteFailed: "Paste failed: {error}",
     pastePartial: "Partially pasted: {ok} succeeded, {fail} failed",
+    dirSize: "{name} uses {size}",
+    dirSizeFailed: "Failed to calculate size: {error}",
   },
   dialog: {
     deleteTitle: "Confirm delete",

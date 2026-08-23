@@ -120,6 +120,35 @@ export function duplicate(sid: string, srcPath: string, dstDir: string): Promise
   })
 }
 
+/** 修改远程文件属性（chmod / chown，走 SFTP setstat）。
+ *  mode 为 3-4 位八进制串（如 "755"）；user/group 可传名称或数字 ID。
+ *  只传需要修改的字段，未传的服务器不改动。 */
+export function setAttrs(
+  sid: string,
+  path: string,
+  attrs: { mode?: string; user?: string; group?: string } = {},
+): Promise<void> {
+  return request<void>("/api/ssh/sftp/chmod", {
+    method: "POST",
+    json: {
+      sid,
+      path,
+      mode: attrs.mode ?? null,
+      user: attrs.user ?? null,
+      group: attrs.group ?? null,
+    },
+  })
+}
+
+/** 计算目录/文件占用大小（远端 du -sk），返回字节数 */
+export function duSize(sid: string, path: string): Promise<{ bytes: number }> {
+  return request<{ bytes: number }>("/api/ssh/sftp/du", {
+    method: "POST",
+    json: { sid, path },
+    timeout: 0,
+  })
+}
+
 export function closeSftp(sid: string): Promise<void> {
   return request<void>("/api/ssh/sftp/close", {
     method: "POST",

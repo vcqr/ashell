@@ -2,10 +2,11 @@
 import { computed } from "vue"
 import { NButton, NEmpty, NIcon, NProgress, NTag } from "naive-ui"
 import { useI18n } from "vue-i18n"
-import { CloseCircleOutline } from "@vicons/ionicons5"
+import { CloseCircleOutline, RefreshOutline } from "@vicons/ionicons5"
 import type { TransferStatus, TransferTask } from "@/types"
-import { humanSize } from "@/utils/humanSize"
+import { humanDuration, humanSize } from "@/utils/humanSize"
 import { progressColor } from "@/utils/progressColor"
+import { useTransferSpeed } from "@/composables/useTransferSpeed"
 
 interface Props {
   tasks: TransferTask[]
@@ -14,14 +15,28 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits<{
   cancel: [id: string]
+  retry: [id: string]
 }>()
 
 const { t } = useI18n()
 const list = computed(() => props.tasks)
+const { speeds } = useTransferSpeed(list)
 
-function percent(t: TransferTask): number {
-  if (!t.total || t.total <= 0) return t.status === "done" ? 100 : 0
-  return Math.min(100, Math.floor((t.loaded / t.total) * 100))
+function percent(task: TransferTask): number {
+  if (!task.total || task.total <= 0) return task.status === "done" ? 100 : 0
+  return Math.min(100, Math.floor((task.loaded / task.total) * 100))
+}
+
+function speedText(task: TransferTask): string {
+  const bps = speeds.value[task.id]
+  if (!bps || bps <= 0) return ""
+  return `${humanSize(bps)}/s`
+}
+
+function etaText(task: TransferTask): string {
+  const bps = speeds.value[task.id]
+  if (!bps || bps <= 0 || !task.total || task.total <= task.loaded) return ""
+  return t("sftp.transfer.eta", { time: humanDuration((task.total - task.loaded) / bps) })
 }
 
 /** running / pending 时按百分比阶梯着色；其它状态交给 NProgress 的 status 处理 */
@@ -82,6 +97,10 @@ function statusLabel(s: TransferStatus): string {
         :height="6"
         :show-indicator="false"
       />
+      <div v-if="task.status === 'running' && speedText(task)" class="speeds">
+        <span>{{ speedText(task) }}</span>
+        <span v-if="etaText(task)">{{ etaText(task) }}</span>
+      </div>
       <div class="meta">
         <span>
           {{ humanSize(task.loaded) }} / {{ humanSize(task.total) }}
@@ -100,7 +119,21 @@ function statusLabel(s: TransferStatus): string {
           {{ t("common.cancel") }}
         </NButton>
       </div>
-      <div v-if="task.error" class="err">{{ task.error }}</div>
+      <div v-if="task.error" class="err-row">
+        <span class="err">{{ task.error }}</span>
+        <NButton
+          v-if="task.status === 'error' && task.retry"
+          size="tiny"
+          quaternary
+          type="warning"
+          @click="emit('retry', task.id)"
+        >
+          <template #icon>
+            <NIcon><RefreshOutline /></NIcon>
+          </template>
+          {{ t("sftp.transfer.retry") }}
+        </NButton>
+      </div>
     </div>
   </div>
 </template>
@@ -150,6 +183,24 @@ function statusLabel(s: TransferStatus): string {
   color: var(--ashell-text-subtle);
 }
 
+.speeds {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ashell-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.err-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .pct {
   margin-left: 8px;
   color: var(--ashell-text-strong);
@@ -157,9 +208,11 @@ function statusLabel(s: TransferStatus): string {
 }
 
 .err {
-  margin-top: 6px;
+  margin-top: 0;
   color: #e88080;
   font-size: 12px;
   word-break: break-all;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 </style>

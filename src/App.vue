@@ -140,6 +140,11 @@ const {
   onHeaderDblClick,
 } = useWindowControls(terminalRefs, activeTabKey);
 
+// SFTP 面板右键目录 -> 当前终端 cd 到该目录（sendCommand 自动补 \r 执行）
+function onSftpOpenTerminalHere(path: string) {
+  sendCommandToActive(`cd '${path.replace(/'/g, `'\\''`)}'`);
+}
+
 useGlobalShortcuts({
   isMac,
   tabs,
@@ -334,6 +339,7 @@ useGlobalShortcuts({
               :host-name="activeSftpTab?.title"
               :host-addr="activeSftpTab?.hostInfo?.addr"
               @send-to-ai="onSftpSendToAi"
+              @open-terminal-here="onSftpOpenTerminalHere"
             />
             <HostInfoDrawer
               v-model:open="hostInfoOpen"

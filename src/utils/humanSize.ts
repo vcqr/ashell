@@ -11,3 +11,14 @@ export function humanSize(bytes: number | undefined | null): string {
   }
   return `${n.toFixed(n >= 100 || i === 0 ? 0 : 2)} ${units[i]}`
 }
+
+/** 秒数转可读时长："mm:ss"，超过 1 小时为 "h:mm:ss" */
+export function humanDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  const mm = String(m).padStart(2, "0")
+  const ss = String(sec).padStart(2, "0")
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+}

@@ -7,6 +7,8 @@
 //! - POST /api/ssh/sftp/remove_file           删除文件              { sid, path }
 //! - POST /api/ssh/sftp/remove_dir            递归删除目录          { sid, path }
 //! - POST /api/ssh/sftp/rename                重命名                { sid, old_path, new_path }
+//! - POST /api/ssh/sftp/chmod                 修改属性/属主(setstat) { sid, path, mode?, user?, group? }
+//! - POST /api/ssh/sftp/du                    目录大小(du -sk)      { sid, path } -> { bytes }
 //! - GET  /api/ssh/sftp/download              下载文件流            ?sid=&filename=
 //! - POST /api/ssh/sftp/upload                上传文件流(multipart) ?sid=&filename=
 //! - POST /api/ssh/sftp/close                 释放 sid 关联会话     { sid }
@@ -207,6 +209,44 @@ pub async fn upload(
         .map_err(|e| sftp_svc::sftp_err("close", e))?;
 
     Ok(ok_msg("ok"))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetAttrsReq {
+    pub sid: String,
+    pub path: String,
+    /// 3-4 位八进制权限串，如 "755"
+    pub mode: Option<String>,
+    /// 用户名或数字 uid
+    pub user: Option<String>,
+    /// 组名或数字 gid
+    pub group: Option<String>,
+}
+
+/// 修改远程文件属性（chmod / chown，走 SFTP setstat）
+pub async fn chmod(
+    Json(req): Json<SetAttrsReq>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    sftp_svc::set_attrs(&req.sid, &req.path, req.mode, req.user, req.group)
+        .await?;
+    Ok(ok_msg("ok"))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DuReq {
+    pub sid: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DuResp {
+    pub bytes: u64,
+}
+
+/// 计算目录/文件占用大小（远端 du -sk）
+pub async fn du(Json(req): Json<DuReq>) -> AppResult<Json<ApiResponse<DuResp>>> {
+    let bytes = sftp_svc::du_size(&req.sid, &req.path).await?;
+    Ok(ApiResponse::ok(DuResp { bytes }))
 }
 
 #[derive(Debug, Deserialize)]

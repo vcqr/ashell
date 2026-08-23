@@ -184,6 +184,8 @@ export interface TransferTask {
   error?: string
   controller?: AbortController
   startedAt: number
+  /** 失败重试：复用同一任务对象重跑传输（创建任务时闭包注入） */
+  retry?: () => void
 }
 
 /* ---------- 前端运行时类型 ---------- */

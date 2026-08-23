@@ -151,6 +151,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/ssh/sftp/rename", post(handlers::sftp::rename))
         .route("/api/ssh/sftp/move", post(handlers::sftp::move_path))
         .route("/api/ssh/sftp/duplicate", post(handlers::sftp::duplicate))
+        .route("/api/ssh/sftp/chmod", post(handlers::sftp::chmod))
+        .route("/api/ssh/sftp/du", post(handlers::sftp::du))
         .route("/api/ssh/sftp/download", get(handlers::sftp::download))
         .route("/api/ssh/sftp/upload", post(handlers::sftp::upload))
         .route("/api/ssh/sftp/close", post(handlers::sftp::close))

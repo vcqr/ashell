@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import type { Component } from "vue"
 import {
   NBadge,
   NButton,
@@ -9,6 +10,7 @@ import {
   NIcon,
   NInput,
   NModal,
+  NPopover,
   NSpace,
   NSpin,
   NTooltip,
@@ -26,6 +28,9 @@ import {
   ArrowUpOutline,
   ArrowBackOutline,
   ArrowForwardOutline,
+  BookmarksOutline,
+  ChevronBackOutline,
+  ChevronForwardOutline,
   CloseOutline,
   CloudUploadOutline,
   CopyOutline,
@@ -40,14 +45,35 @@ import {
   LaptopOutline,
   OpenOutline,
   RefreshOutline,
+  SearchOutline,
   SendOutline,
   SparklesOutline,
+  StarOutline,
+  Star,
+  StatsChartOutline,
+  TerminalOutline,
+  TimeOutline,
   TrashOutline,
 } from "@vicons/ionicons5"
-import { FileRegular, Folder, Link } from "@vicons/fa"
+import {
+  FileRegular,
+  FileAlt,
+  FileArchive,
+  FileAudio,
+  FileCode,
+  FileExcel,
+  FileImage,
+  FilePdf,
+  FilePowerpoint,
+  FileVideo,
+  FileWord,
+  Folder,
+  Link,
+} from "@vicons/fa"
 import {
   downloadStream,
   duplicate as duplicateApi,
+  duSize,
   isAbortError,
   listSftp,
   mkdir as mkdirApi,
@@ -67,6 +93,7 @@ import { joinPath, normalizePath, parentPath } from "@/utils/pathJoin"
 import { formatUnix } from "@/utils/time"
 import MkdirDialog from "@/components/sftp/MkdirDialog.vue"
 import RenameDialog from "@/components/sftp/RenameDialog.vue"
+import PropsModal from "@/components/sftp/PropsModal.vue"
 import SftpUploadList from "@/components/sftp/SftpUploadList.vue"
 import SftpDownloadList from "@/components/sftp/SftpDownloadList.vue"
 import FileEditor from "@/components/sftp/FileEditor.vue"
@@ -96,6 +123,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   "update:open": [value: boolean]
   "send-to-ai": [text: string]
+  "open-terminal-here": [path: string]
 }>()
 
 const { t } = useI18n()
@@ -110,10 +138,17 @@ const currentPath = ref<string>("/")
 
 /** 隐藏文件（dotfile）显示开关：默认隐藏，与 Finder/资源管理器一致 */
 const showHidden = ref(false)
+/** 当前目录名称过滤（前端即时过滤，只影响显示与选择范围） */
+const filterText = ref("")
 /** 表格实际渲染的列表（隐藏文件关闭时过滤 dotfile；多选基于该列表） */
-const displayFiles = computed(() =>
-  showHidden.value ? files.value : files.value.filter((f) => !f.file_name.startsWith(".")),
-)
+const displayFiles = computed(() => {
+  const base = showHidden.value
+    ? files.value
+    : files.value.filter((f) => !f.file_name.startsWith("."))
+  const q = filterText.value.trim().toLowerCase()
+  if (!q) return base
+  return base.filter((f) => f.file_name.toLowerCase().includes(q))
+})
 
 /* ---------- 远程栏多选（与本地栏共用 useMultiSelect 语义） ---------- */
 
@@ -133,6 +168,95 @@ const remoteClipboard = ref<{ op: "copy" | "cut"; files: SftpFile[] } | null>(nu
 /** 双栏下最近交互的面板：Ctrl+A 全选的目标 */
 const activePane = ref<"remote" | "local">("remote")
 
+/* ---------- 导航历史（前进/后退）与访问记录 ---------- */
+
+const backStack = ref<string[]>([])
+const forwardStack = ref<string[]>([])
+/** 会话内访问过的目录（新 -> 旧，去重，供书签浮层"最近访问"展示） */
+const recentPaths = ref<string[]>([])
+
+const canBack = computed(() => backStack.value.length > 0)
+const canForward = computed(() => forwardStack.value.length > 0)
+
+function pushRecent(path: string) {
+  recentPaths.value = [path, ...recentPaths.value.filter((x) => x !== path)].slice(0, 30)
+}
+
+function goBack() {
+  const prev = backStack.value.pop()
+  if (prev) void load(prev, "back")
+}
+
+function goForward() {
+  const next = forwardStack.value.pop()
+  if (next) void load(next, "forward")
+}
+
+/** 面包屑分段：根目录固定为首段（显示 "/"），后续逐级拼接 */
+const crumbs = computed<Array<{ name: string; full: string }>>(() => {
+  const p = currentPath.value || "/"
+  const parts = p.split("/").filter(Boolean)
+  const out: Array<{ name: string; full: string }> = [{ name: "/", full: "/" }]
+  let acc = ""
+  for (const part of parts) {
+    acc += `/${part}`
+    out.push({ name: part, full: acc })
+  }
+  return out
+})
+
+/* ---------- 书签（localStorage 持久化，全局共用） ---------- */
+
+const BOOKMARKS_KEY = "ashell:sftp-bookmarks"
+interface Bookmark {
+  path: string
+}
+
+function loadBookmarks(): Bookmark[] {
+  try {
+    const raw = localStorage.getItem(BOOKMARKS_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr)
+      ? arr.filter((b): b is Bookmark => b && typeof b.path === "string")
+      : []
+  } catch {
+    return []
+  }
+}
+
+const bookmarks = ref<Bookmark[]>(loadBookmarks())
+
+function persistBookmarks() {
+  try {
+    localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks.value))
+  } catch {
+    // ignore
+  }
+}
+
+const isBookmarked = computed(() =>
+  bookmarks.value.some((b) => b.path === currentPath.value),
+)
+
+function toggleBookmark() {
+  const p = currentPath.value
+  if (isBookmarked.value) {
+    bookmarks.value = bookmarks.value.filter((b) => b.path !== p)
+  } else {
+    bookmarks.value = [...bookmarks.value, { path: p }]
+  }
+  persistBookmarks()
+}
+
+function removeBookmark(path: string) {
+  bookmarks.value = bookmarks.value.filter((b) => b.path !== path)
+  persistBookmarks()
+}
+
+/* ---------- 键盘导航光标（↑↓ 移动、Enter/F2/Delete 等作用于光标行） ---------- */
+
+const cursorKey = ref<string | null>(null)
+
 const mkdirOpen = ref(false)
 const mkdirMode = ref<"mkdir" | "touch">("mkdir")
 const renameOpen = ref(false)
@@ -150,6 +274,10 @@ const editorFile = ref<SftpFile | null>(null)
 
 const previewOpen = ref(false)
 const previewFile = ref<SftpFile | null>(null)
+
+/** 属性弹窗（可编辑权限/属主） */
+const propsOpen = ref(false)
+const propsTarget = ref<SftpFile | null>(null)
 
 const ctxMenuVisible = ref(false)
 const ctxMenuX = ref(0)
@@ -196,6 +324,28 @@ const finishedDownloadCount = computed(
       (t) => t.status === "done" || t.status === "error" || t.status === "cancelled",
     ).length,
 )
+
+/* ---------- 结果 toast 聚合（批量传输防刷屏） ----------
+ * 串行批量传输时若每个文件完成都弹 toast 会刷屏：同类结果在 400ms
+ * 窗口内合并为一条计数提示；单文件仍显示原始文案。 */
+const toastTimers = new Map<string, number>()
+const toastCounts = new Map<string, number>()
+
+function coalescedToast(key: string, single: () => void, multi: (n: number) => void) {
+  toastCounts.set(key, (toastCounts.get(key) ?? 0) + 1)
+  const prev = toastTimers.get(key)
+  if (prev !== undefined) window.clearTimeout(prev)
+  toastTimers.set(
+    key,
+    window.setTimeout(() => {
+      toastTimers.delete(key)
+      const n = toastCounts.get(key) ?? 0
+      toastCounts.delete(key)
+      if (n === 1) single()
+      else if (n > 1) multi(n)
+    }, 400),
+  )
+}
 
 function clearFinishedUploads() {
   if (!props.sid) return
@@ -258,7 +408,9 @@ const drawerTitle = computed(() => {
 
 /* ---------- data loading ---------- */
 
-async function load(path?: string) {
+/** 拉取目录。history: push=常规导航（压后退栈、清前进栈）；
+ *  back/forward=历史导航（对向栈承接当前位置）。 */
+async function load(path?: string, history: "push" | "back" | "forward" = "push") {
   if (!props.sid) return
   const sid = props.sid
   loading.value = true
@@ -267,8 +419,16 @@ async function load(path?: string) {
     const resp = await listSftp(sid, target)
     // 排序状态跨目录保留（与受控前 NDataTable 内部排序行为一致）
     files.value = applySort(resp.files)
+    const prev = currentPath.value
     currentPath.value = resp.path || target
+    if (prev && prev !== currentPath.value) {
+      if (history === "back") forwardStack.value.push(prev)
+      else backStack.value.push(prev)
+      if (history === "push") forwardStack.value = []
+    }
+    pushRecent(currentPath.value)
     clearRemoteSelection()
+    cursorKey.value = null
     store.setPath(sid, currentPath.value)
   } catch (e) {
     message.error(t("sftp.message.loadFailed", { error: (e as Error).message }))
@@ -398,17 +558,22 @@ function confirmRemove(file: SftpFile) {
 
 /* ---------- 远程内部复制 / 剪切（移动）/ 粘贴 ---------- */
 
-/** 复制/剪切到内部剪贴板：作用于右键行所在的选择集（批量） */
-function setRemoteClipboard(op: "copy" | "cut") {
-  const target = ctxMenuTarget.value
-  if (!target) return
-  const items = isRemoteSelected(target) ? remoteSelectedFiles.value : [target]
+/** 写入内部剪贴板并提示（右键菜单与 Ctrl+C/X 共用） */
+function clipboardCopyOf(op: "copy" | "cut", items: SftpFile[]) {
+  if (items.length === 0) return
   remoteClipboard.value = { op, files: [...items] }
   message.info(
     op === "copy"
       ? t("sftp.message.copiedToClipboard", { count: items.length })
       : t("sftp.message.cutToClipboard", { count: items.length }),
   )
+}
+
+/** 复制/剪切到内部剪贴板：作用于右键行所在的选择集（批量） */
+function setRemoteClipboard(op: "copy" | "cut") {
+  const target = ctxMenuTarget.value
+  if (!target) return
+  clipboardCopyOf(op, isRemoteSelected(target) ? remoteSelectedFiles.value : [target])
 }
 
 function isCutRow(row: SftpFile): boolean {
@@ -490,32 +655,158 @@ function overlayOpen(): boolean {
     downloadModalOpen.value ||
     aiPromptVisible.value ||
     pathEditing.value ||
+    propsOpen.value ||
     (localPaneRef.value?.hasOverlay?.() ?? false)
   )
 }
 
-function onGlobalKeydown(e: KeyboardEvent) {
-  if (!props.open || !props.sid) return
-  if (e.key === "Escape") {
-    if (overlayOpen()) return
-    if (activePane.value === "remote") clearRemoteSelection()
-    else localPaneRef.value?.clearSelection()
+/** 光标行在 displayFiles 中的下标；-1 表示无光标 */
+function remoteCursorIndex(): number {
+  if (!cursorKey.value) return -1
+  return displayFiles.value.findIndex((f) => f.full_path === cursorKey.value)
+}
+
+function scrollRowIntoView(path: string) {
+  const el = panelRef.value?.querySelector(`[data-path="${CSS.escape(path)}"]`)
+  el?.scrollIntoView({ block: "nearest" })
+}
+
+/** ↑/↓ 移动光标并独占选中该行 */
+function moveCursor(delta: number) {
+  const list = displayFiles.value
+  if (list.length === 0) {
+    cursorKey.value = null
     return
   }
-  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "a") return
+  let i = remoteCursorIndex()
+  if (i < 0) i = delta > 0 ? -1 : list.length
+  i = Math.min(list.length - 1, Math.max(0, i + delta))
+  const row = list[i]
+  if (!row) return
+  cursorKey.value = row.full_path
+  selectRemoteExclusive(row)
+  scrollRowIntoView(row.full_path)
+}
+
+/** 键盘操作的目标行：光标行优先，退化为唯一选中行 */
+function cursorRow(): SftpFile | null {
+  const i = remoteCursorIndex()
+  if (i >= 0) return displayFiles.value[i] ?? null
+  const sel = remoteSelectedFiles.value
+  return sel.length === 1 ? (sel[0] ?? null) : null
+}
+
+/** Enter 激活行：目录/链接进入，文件按可预览性分流（与双击语义一致） */
+function activateRow(file: SftpFile) {
+  if (file.file_type === "dir" || file.file_type === "symlink") {
+    enterDir(file)
+  } else if (file.file_type === "file") {
+    if (isPreviewable(file.file_name)) {
+      openPreview(file)
+    } else {
+      void onDownload(file)
+    }
+  }
+}
+
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (!props.open || !props.sid) return
   const el = e.target as HTMLElement | null
   // 输入框 / 终端（xterm 焦点是 textarea）/ CodeMirror 保留原生行为
-  if (
+  const inEditable = !!(
     el &&
     (el.tagName === "INPUT" ||
       el.tagName === "TEXTAREA" ||
       el.isContentEditable)
-  ) {
+  )
+
+  if (e.key === "Escape") {
+    if (overlayOpen()) return
+    // 分层清除：先清目录过滤，再清选择集
+    if (filterText.value) {
+      filterText.value = ""
+      e.preventDefault()
+      return
+    }
+    if (activePane.value === "remote") {
+      clearRemoteSelection()
+      cursorKey.value = null
+    } else {
+      localPaneRef.value?.clearSelection()
+    }
     return
   }
-  e.preventDefault()
-  if (activePane.value === "remote") selectRemoteAll()
-  else localPaneRef.value?.selectAll()
+
+  if (inEditable) return
+
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !e.shiftKey) {
+    e.preventDefault()
+    if (activePane.value === "remote") selectRemoteAll()
+    else localPaneRef.value?.selectAll()
+    return
+  }
+
+  // Ctrl/Cmd + C/X/V 接入远程内部剪贴板（仅远程面板）
+  if (
+    (e.metaKey || e.ctrlKey) &&
+    !e.shiftKey &&
+    activePane.value === "remote"
+  ) {
+    const k = e.key.toLowerCase()
+    if (k === "c" || k === "x" || k === "v") {
+      e.preventDefault()
+      if (k === "v") void pasteRemote()
+      else clipboardCopyOf(k === "c" ? "copy" : "cut", remoteSelectedFiles.value)
+      return
+    }
+  }
+
+  // 单键导航/操作仅在远程面板且无浮层时接管
+  if (activePane.value !== "remote" || overlayOpen()) return
+
+  switch (e.key) {
+    case "ArrowDown":
+    case "ArrowUp":
+      e.preventDefault()
+      moveCursor(e.key === "ArrowDown" ? 1 : -1)
+      return
+    case "Enter": {
+      const row = cursorRow()
+      if (row) {
+        e.preventDefault()
+        activateRow(row)
+      }
+      return
+    }
+    case "Backspace":
+      e.preventDefault()
+      goUp()
+      return
+    case "Delete": {
+      const row = cursorRow()
+      if (row) {
+        e.preventDefault()
+        confirmRemove(row)
+      }
+      return
+    }
+    case "F2": {
+      const row = cursorRow()
+      if (row) {
+        e.preventDefault()
+        openRename(row)
+      }
+      return
+    }
+    case " ": {
+      const row = cursorRow()
+      if (row && row.file_type === "file" && isPreviewable(row.file_name)) {
+        e.preventDefault()
+        openPreview(row)
+      }
+      return
+    }
+  }
 }
 
 onMounted(() => {
@@ -547,61 +838,91 @@ function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** 经 webview 下载单个文件到本机（下载任务 + 进度 + 取消） */
+/** 经 webview 下载单个文件到本机（下载任务 + 进度 + 取消 + 失败重试）。
+ *  run 与 retry 闭包复用同一任务对象：重试时重置状态并换新 controller。 */
 async function downloadViaBrowser(file: SftpFile) {
   if (!props.sid) return
   const sid = props.sid
-  const ctrl = new AbortController()
   const taskId = genId()
-  const task: TransferTask = {
+  const total0 = file.size_bytes ?? 0
+  let ctrl = new AbortController()
+  const run = async (): Promise<void> => {
+    store.updateDownload(sid, taskId, {
+      loaded: 0,
+      total: total0,
+      status: "running",
+      error: undefined,
+      controller: ctrl,
+    })
+    try {
+      const { blob, contentLength, suggestedFilename } = await downloadStream(
+        sid,
+        file.full_path,
+        {
+          signal: ctrl.signal,
+          onProgress: (loaded, total) => {
+            store.updateDownload(sid, taskId, {
+              loaded,
+              total: total > 0 ? total : loaded,
+            })
+          },
+        },
+      )
+      const total = contentLength > 0 ? contentLength : blob.size
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = suggestedFilename || file.file_name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      store.updateDownload(sid, taskId, {
+        loaded: blob.size,
+        total,
+        status: "done",
+      })
+      coalescedToast(
+        "download-ok",
+        () =>
+          message.success(
+            t("sftp.message.downloaded", {
+              name: suggestedFilename || file.file_name,
+            }),
+          ),
+        (n) => message.success(t("sftp.message.downloadedMulti", { count: n })),
+      )
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateDownload(sid, taskId, { status: "cancelled" })
+      } else {
+        const err = e as Error
+        store.updateDownload(sid, taskId, { status: "error", error: err.message })
+        coalescedToast(
+          "download-err",
+          () =>
+            message.error(t("sftp.message.downloadFailed", { error: err.message })),
+          (n) =>
+            message.warning(t("sftp.message.downloadFailedMulti", { count: n })),
+        )
+      }
+    }
+  }
+  store.addDownload(sid, {
     id: taskId,
     sid,
     filename: file.full_path,
-    total: file.size_bytes ?? 0,
+    total: total0,
     loaded: 0,
     status: "running",
     controller: ctrl,
     startedAt: Date.now(),
-  }
-  store.addDownload(sid, task)
-  try {
-    const { blob, contentLength, suggestedFilename } = await downloadStream(
-      sid,
-      file.full_path,
-      {
-        signal: ctrl.signal,
-        onProgress: (loaded, total) => {
-          store.updateDownload(sid, taskId, {
-            loaded,
-            total: total > 0 ? total : loaded,
-          })
-        },
-      },
-    )
-    const total = contentLength > 0 ? contentLength : blob.size
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = suggestedFilename || file.file_name
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    store.updateDownload(sid, taskId, {
-      loaded: blob.size,
-      total,
-      status: "done",
-    })
-    message.success(t("sftp.message.downloaded", { name: suggestedFilename || file.file_name }))
-  } catch (e) {
-    if (isAbortError(e)) {
-      store.updateDownload(sid, taskId, { status: "cancelled" })
-    } else {
-      const err = e as Error
-      store.updateDownload(sid, taskId, { status: "error", error: err.message })
-      message.error(t("sftp.message.downloadFailed", { error: err.message }))
-    }
-  }
+    retry: () => {
+      ctrl = new AbortController()
+      void run()
+    },
+  })
+  await run()
 }
 
 function confirmDownload(content: string): Promise<boolean> {
@@ -682,45 +1003,72 @@ async function onDownloadMulti(files: SftpFile[]) {
   }
 }
 
-/** 双栏模式：远端文件直落本地栏当前目录（Rust 进程内流式写盘） */
+/** 双栏模式：远端文件直落本地栏当前目录（Rust 进程内流式写盘，含失败重试） */
 async function downloadToLocalDir(file: SftpFile) {
   if (!props.sid) return
   const sid = props.sid
-  const ctrl = new AbortController()
+  const targetDir = localDir.value
+  if (!targetDir) return
   const taskId = genId()
-  const task: TransferTask = {
+  const total0 = file.size_bytes ?? 0
+  let ctrl = new AbortController()
+  const run = async (): Promise<void> => {
+    store.updateDownload(sid, taskId, {
+      loaded: 0,
+      total: total0,
+      status: "running",
+      error: undefined,
+      controller: ctrl,
+    })
+    const stopPolling = pollDirectTransferProgress("download", sid, taskId, total0)
+    try {
+      const { bytes } = await downloadToLocal(sid, file.full_path, targetDir, {
+        signal: ctrl.signal,
+        taskId,
+      })
+      const total = bytes > 0 ? bytes : total0
+      store.updateDownload(sid, taskId, { loaded: total, total, status: "done" })
+      coalescedToast(
+        "downloadto-ok",
+        () => message.success(t("sftp.message.downloadedTo", { dir: targetDir })),
+        (n) =>
+          message.success(t("sftp.message.downloadedToMulti", { count: n })),
+      )
+      localPaneRef.value?.refresh()
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateDownload(sid, taskId, { status: "cancelled" })
+      } else {
+        const err = e as Error
+        store.updateDownload(sid, taskId, { status: "error", error: err.message })
+        coalescedToast(
+          "download-err",
+          () =>
+            message.error(t("sftp.message.downloadFailed", { error: err.message })),
+          (n) =>
+            message.warning(t("sftp.message.downloadFailedMulti", { count: n })),
+        )
+      }
+    } finally {
+      stopPolling()
+    }
+  }
+  store.addDownload(sid, {
     id: taskId,
     sid,
     filename: file.full_path,
     remoteDir: currentPath.value,
-    total: file.size_bytes ?? 0,
+    total: total0,
     loaded: 0,
     status: "running",
     controller: ctrl,
     startedAt: Date.now(),
-  }
-  store.addDownload(sid, task)
-  const stopPolling = pollDirectTransferProgress("download", sid, taskId, task.total)
-  try {
-    const { bytes } = await downloadToLocal(sid, file.full_path, localDir.value, {
-      signal: ctrl.signal,
-      taskId,
-    })
-    const total = bytes > 0 ? bytes : (file.size_bytes ?? 0)
-    store.updateDownload(sid, taskId, { loaded: total, total, status: "done" })
-    message.success(t("sftp.message.downloadedTo", { dir: localDir.value }))
-    localPaneRef.value?.refresh()
-  } catch (e) {
-    if (isAbortError(e)) {
-      store.updateDownload(sid, taskId, { status: "cancelled" })
-    } else {
-      const err = e as Error
-      store.updateDownload(sid, taskId, { status: "error", error: err.message })
-      message.error(t("sftp.message.downloadFailed", { error: err.message }))
-    }
-  } finally {
-    stopPolling()
-  }
+    retry: () => {
+      ctrl = new AbortController()
+      void run()
+    },
+  })
+  await run()
 }
 
 /** 递归收集远程目录树为文件清单（rel 相对顶层目录）。
@@ -748,11 +1096,12 @@ async function walkRemoteDir(
 /** 远程目录整树下载到本地栏当前目录（Rust 直传，逐文件落
  *  <本地当前目录>/<顶层目录名>/<相对路径>；目标子目录链由后端
  *  download_to_local 的 create_dir_all 自动创建，空目录不会被创建）。
- *  顶层同名确认由调用方 downloadEntries 统一处理。 */
+ *  每个文件独立任务（含失败重试闭包），顶层同名确认由调用方处理。 */
 async function downloadRemoteDirTree(dirRow: SftpFile) {
   if (!props.sid || dirRow.file_type !== "dir" || !localDir.value) return
   const sid = props.sid
   const topName = dirRow.file_name
+  const dirBase = localDir.value
   const list: Array<{ rel: string; file: SftpFile }> = []
   try {
     await walkRemoteDir(dirRow.full_path, "", list)
@@ -762,15 +1111,53 @@ async function downloadRemoteDirTree(dirRow: SftpFile) {
   }
   let okCount = 0
   let failCount = 0
-  for (const ent of list) {
+
+  /** 单个文件的下载任务（retry 复用同一任务对象） */
+  async function runEntry(ent: { rel: string; file: SftpFile }): Promise<void> {
     const relDir = ent.rel.includes("/")
       ? ent.rel.slice(0, ent.rel.lastIndexOf("/"))
       : ""
-    const targetDir = `${localDir.value}/${topName}${relDir ? `/${relDir}` : ""}`
-    const ctrl = new AbortController()
+    const targetDir = `${dirBase}/${topName}${relDir ? `/${relDir}` : ""}`
     const taskId = genId()
     const total = ent.file.size_bytes ?? 0
-    const task: TransferTask = {
+    let ctrl = new AbortController()
+    const run = async (): Promise<void> => {
+      store.updateDownload(sid, taskId, {
+        loaded: 0,
+        total,
+        status: "running",
+        error: undefined,
+        controller: ctrl,
+      })
+      const stopPolling = pollDirectTransferProgress("download", sid, taskId, total)
+      try {
+        const { bytes } = await downloadToLocal(
+          sid,
+          ent.file.full_path,
+          targetDir,
+          {
+            signal: ctrl.signal,
+            taskId,
+          },
+        )
+        const done = bytes > 0 ? bytes : total
+        store.updateDownload(sid, taskId, { loaded: done, total, status: "done" })
+        okCount++
+      } catch (e) {
+        if (isAbortError(e)) {
+          store.updateDownload(sid, taskId, { status: "cancelled" })
+        } else {
+          store.updateDownload(sid, taskId, {
+            status: "error",
+            error: (e as Error).message,
+          })
+        }
+        failCount++
+      } finally {
+        stopPolling()
+      }
+    }
+    store.addDownload(sid, {
       id: taskId,
       sid,
       filename: ent.file.full_path,
@@ -780,30 +1167,18 @@ async function downloadRemoteDirTree(dirRow: SftpFile) {
       status: "running",
       controller: ctrl,
       startedAt: Date.now(),
-    }
-    store.addDownload(sid, task)
-    const stopPolling = pollDirectTransferProgress("download", sid, taskId, total)
-    try {
-      const { bytes } = await downloadToLocal(sid, ent.file.full_path, targetDir, {
-        signal: ctrl.signal,
-        taskId,
-      })
-      const done = bytes > 0 ? bytes : total
-      store.updateDownload(sid, taskId, { loaded: done, total, status: "done" })
-      okCount++
-    } catch (e) {
-      if (isAbortError(e)) {
-        store.updateDownload(sid, taskId, { status: "cancelled" })
-      } else {
-        store.updateDownload(sid, taskId, {
-          status: "error",
-          error: (e as Error).message,
-        })
-      }
-      failCount++
-    } finally {
-      stopPolling()
-    }
+      retry: () => {
+        // 重试成功时把上次记的失败数冲回（重跑 run 会再次计数）
+        ctrl = new AbortController()
+        failCount--
+        void run()
+      },
+    })
+    await run()
+  }
+
+  for (const ent of list) {
+    await runEntry(ent)
   }
   if (failCount === 0) {
     message.success(t("sftp.message.dirDownloadDone", { count: okCount }))
@@ -861,12 +1236,45 @@ async function onLocalUpload(sel: SftpFile[]) {
     }
   }
 
-  for (const f of upFiles) {
+  // 单个本地文件的直传任务（retry 复用同一任务对象）
+  async function runFileUpload(f: SftpFile): Promise<void> {
     const remotePath = joinPath(currentPath.value, f.file_name)
-    const ctrl = new AbortController()
     const taskId = genId()
     const total = f.size_bytes ?? 0
-    const task: TransferTask = {
+    let ctrl = new AbortController()
+    const run = async (): Promise<void> => {
+      store.updateUpload(sid, taskId, {
+        loaded: 0,
+        total,
+        status: "running",
+        error: undefined,
+        controller: ctrl,
+      })
+      const stopPolling = pollDirectTransferProgress("upload", sid, taskId, total)
+      try {
+        await uploadLocalToRemote(sid, f.full_path, remotePath, {
+          signal: ctrl.signal,
+          taskId,
+        })
+        store.updateUpload(sid, taskId, { loaded: total, total, status: "done" })
+      } catch (e) {
+        if (isAbortError(e)) {
+          store.updateUpload(sid, taskId, { status: "cancelled" })
+        } else {
+          const err = e as Error
+          store.updateUpload(sid, taskId, { status: "error", error: err.message })
+          coalescedToast(
+            "upload-err",
+            () =>
+              message.error(t("sftp.message.uploadFailed", { error: err.message })),
+            (n) => message.warning(t("sftp.message.uploadFailedMulti", { count: n })),
+          )
+        }
+      } finally {
+        stopPolling()
+      }
+    }
+    store.addUpload(sid, {
       id: taskId,
       sid,
       filename: remotePath,
@@ -876,26 +1284,16 @@ async function onLocalUpload(sel: SftpFile[]) {
       status: "running",
       controller: ctrl,
       startedAt: Date.now(),
-    }
-    store.addUpload(sid, task)
-    const stopPolling = pollDirectTransferProgress("upload", sid, taskId, total)
-    try {
-      await uploadLocalToRemote(sid, f.full_path, remotePath, {
-        signal: ctrl.signal,
-        taskId,
-      })
-      store.updateUpload(sid, taskId, { loaded: total, total, status: "done" })
-    } catch (e) {
-      if (isAbortError(e)) {
-        store.updateUpload(sid, taskId, { status: "cancelled" })
-      } else {
-        const err = e as Error
-        store.updateUpload(sid, taskId, { status: "error", error: err.message })
-        message.error(t("sftp.message.uploadFailed", { error: err.message }))
-      }
-    } finally {
-      stopPolling()
-    }
+      retry: () => {
+        ctrl = new AbortController()
+        void run()
+      },
+    })
+    await run()
+  }
+
+  for (const f of upFiles) {
+    await runFileUpload(f)
   }
   for (const d of upDirs) {
     await onLocalDirUpload(d)
@@ -979,50 +1377,66 @@ async function onLocalDirUpload(dirRow: SftpFile) {
     }
   }
 
-  // 串行直传 + 任务/进度
+  // 串行直传 + 任务/进度（每个文件独立任务，含失败重试闭包）
   let okCount = 0
   let failCount = 0
-  for (const ent of list) {
+
+  async function runDirEntry(ent: { rel: string; path: string; size: number }): Promise<void> {
     const remotePath = joinPath(baseDir, `${topName}/${ent.rel}`)
-    const ctrl = new AbortController()
     const taskId = genId()
-    const task: TransferTask = {
+    const total = ent.size
+    let ctrl = new AbortController()
+    const run = async (): Promise<void> => {
+      store.updateUpload(sid, taskId, {
+        loaded: 0,
+        total,
+        status: "running",
+        error: undefined,
+        controller: ctrl,
+      })
+      const stopPolling = pollDirectTransferProgress("upload", sid, taskId, total)
+      try {
+        await uploadLocalToRemote(sid, ent.path, remotePath, {
+          signal: ctrl.signal,
+          taskId,
+        })
+        store.updateUpload(sid, taskId, { loaded: total, total, status: "done" })
+        okCount++
+      } catch (e) {
+        if (isAbortError(e)) {
+          store.updateUpload(sid, taskId, { status: "cancelled" })
+        } else {
+          store.updateUpload(sid, taskId, {
+            status: "error",
+            error: (e as Error).message,
+          })
+        }
+        failCount++
+      } finally {
+        stopPolling()
+      }
+    }
+    store.addUpload(sid, {
       id: taskId,
       sid,
       filename: remotePath,
       remoteDir: parentPath(remotePath),
-      total: ent.size,
+      total,
       loaded: 0,
       status: "running",
       controller: ctrl,
       startedAt: Date.now(),
-    }
-    store.addUpload(sid, task)
-    const stopPolling = pollDirectTransferProgress("upload", sid, taskId, ent.size)
-    try {
-      await uploadLocalToRemote(sid, ent.path, remotePath, {
-        signal: ctrl.signal,
-        taskId,
-      })
-      store.updateUpload(sid, taskId, {
-        loaded: ent.size,
-        total: ent.size,
-        status: "done",
-      })
-      okCount++
-    } catch (e) {
-      if (isAbortError(e)) {
-        store.updateUpload(sid, taskId, { status: "cancelled" })
-      } else {
-        store.updateUpload(sid, taskId, {
-          status: "error",
-          error: (e as Error).message,
-        })
-      }
-      failCount++
-    } finally {
-      stopPolling()
-    }
+      retry: () => {
+        ctrl = new AbortController()
+        failCount--
+        void run()
+      },
+    })
+    await run()
+  }
+
+  for (const ent of list) {
+    await runDirEntry(ent)
   }
   if (failCount === 0) {
     message.success(t("sftp.message.dirUploadDone", { count: okCount }))
@@ -1064,9 +1478,18 @@ function cancelDownload(id: string) {
   store.updateDownload(props.sid, id, { status: "cancelled" })
 }
 
+/** 任务列表"重试"：执行创建任务时注入的闭包（复用同一任务对象重跑） */
+function retryDownload(id: string) {
+  if (!props.sid) return
+  store
+    .listDownloads(props.sid)
+    .find((x) => x.id === id)
+    ?.retry?.()
+}
+
 /* ---------- 上传 ---------- */
 
-/** 上传单个文件到当前目录（含同名覆盖确认、任务进度条、取消）。
+/** 上传单个文件到当前目录（含同名覆盖确认、任务进度条、取消、失败重试）。
  *  按钮上传与 OS 拖放共用此通道。返回是否实际完成上传。 */
 async function uploadOneFile(file: File): Promise<boolean> {
   if (!props.sid) return false
@@ -1090,10 +1513,59 @@ async function uploadOneFile(file: File): Promise<boolean> {
     })
     if (!ok) return false
   }
-  const ctrl = new AbortController()
   const taskId = genId()
   const remotePath = joinPath(currentPath.value, file.name)
-  const task: TransferTask = {
+  let ctrl = new AbortController()
+  let okFlag = false
+  const run = async (): Promise<void> => {
+    okFlag = false
+    store.updateUpload(sid, taskId, {
+      loaded: 0,
+      total: file.size,
+      status: "running",
+      error: undefined,
+      controller: ctrl,
+    })
+    try {
+      await uploadStream({
+        sid,
+        filename: remotePath,
+        file,
+        signal: ctrl.signal,
+        onProgress: (loaded, total) => {
+          store.updateUpload(sid, taskId, {
+            loaded,
+            total: total > 0 ? total : loaded,
+          })
+        },
+      })
+      store.updateUpload(sid, taskId, {
+        loaded: file.size,
+        total: file.size,
+        status: "done",
+      })
+      coalescedToast(
+        "upload-ok",
+        () => message.success(t("sftp.message.uploaded", { name: file.name })),
+        (n) => message.success(t("sftp.message.uploadedMulti", { count: n })),
+      )
+      await load()
+      okFlag = true
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateUpload(sid, taskId, { status: "cancelled" })
+      } else {
+        const err = e as Error
+        store.updateUpload(sid, taskId, { status: "error", error: err.message })
+        coalescedToast(
+          "upload-err",
+          () => message.error(t("sftp.message.uploadFailed", { error: err.message })),
+          (n) => message.warning(t("sftp.message.uploadFailedMulti", { count: n })),
+        )
+      }
+    }
+  }
+  store.addUpload(sid, {
     id: taskId,
     sid,
     filename: remotePath,
@@ -1103,39 +1575,13 @@ async function uploadOneFile(file: File): Promise<boolean> {
     status: "running",
     controller: ctrl,
     startedAt: Date.now(),
-  }
-  store.addUpload(sid, task)
-  try {
-    await uploadStream({
-      sid,
-      filename: remotePath,
-      file,
-      signal: ctrl.signal,
-      onProgress: (loaded, total) => {
-        store.updateUpload(sid, taskId, {
-          loaded,
-          total: total > 0 ? total : loaded,
-        })
-      },
-    })
-    store.updateUpload(sid, taskId, {
-      loaded: file.size,
-      total: file.size,
-      status: "done",
-    })
-    message.success(t("sftp.message.uploaded", { name: file.name }))
-    await load()
-    return true
-  } catch (e) {
-    if (isAbortError(e)) {
-      store.updateUpload(sid, taskId, { status: "cancelled" })
-    } else {
-      const err = e as Error
-      store.updateUpload(sid, taskId, { status: "error", error: err.message })
-      message.error(t("sftp.message.uploadFailed", { error: err.message }))
-    }
-    return false
-  }
+    retry: () => {
+      ctrl = new AbortController()
+      void run()
+    },
+  })
+  await run()
+  return okFlag
 }
 
 async function customUpload(opts: UploadCustomRequestOptions) {
@@ -1158,6 +1604,14 @@ function cancelUpload(id: string) {
   if (!t) return
   t.controller?.abort()
   store.updateUpload(props.sid, id, { status: "cancelled" })
+}
+
+function retryUpload(id: string) {
+  if (!props.sid) return
+  store
+    .listUploads(props.sid)
+    .find((x) => x.id === id)
+    ?.retry?.()
 }
 
 /* ---------- 上传目录（webkitdirectory） ---------- */
@@ -1265,15 +1719,55 @@ async function uploadFolderEntries(entries: FolderEntry[]) {
     }
   }
 
-  // 串行上传文件
+  // 串行上传文件（每个文件独立任务，含失败重试闭包）
   let okCount = 0
   let failCount = 0
-  for (const ent of entries) {
+
+  async function runFolderEntry(ent: FolderEntry): Promise<void> {
     const remotePath = joinPath(baseDir, ent.relPath)
-    const ctrl = new AbortController()
     const taskId = genId()
     const remoteDir = parentPath(remotePath)
-    const task: TransferTask = {
+    let ctrl = new AbortController()
+    const run = async (): Promise<void> => {
+      store.updateUpload(sid, taskId, {
+        loaded: 0,
+        total: ent.file.size,
+        status: "running",
+        error: undefined,
+        controller: ctrl,
+      })
+      try {
+        await uploadStream({
+          sid,
+          filename: remotePath,
+          file: ent.file,
+          signal: ctrl.signal,
+          onProgress: (loaded, total) => {
+            store.updateUpload(sid, taskId, {
+              loaded,
+              total: total > 0 ? total : loaded,
+            })
+          },
+        })
+        store.updateUpload(sid, taskId, {
+          loaded: ent.file.size,
+          total: ent.file.size,
+          status: "done",
+        })
+        okCount++
+      } catch (e) {
+        if (isAbortError(e)) {
+          store.updateUpload(sid, taskId, { status: "cancelled" })
+        } else {
+          store.updateUpload(sid, taskId, {
+            status: "error",
+            error: (e as Error).message,
+          })
+        }
+        failCount++
+      }
+    }
+    store.addUpload(sid, {
       id: taskId,
       sid,
       filename: remotePath,
@@ -1283,36 +1777,17 @@ async function uploadFolderEntries(entries: FolderEntry[]) {
       status: "running",
       controller: ctrl,
       startedAt: Date.now(),
-    }
-    store.addUpload(sid, task)
-    try {
-      await uploadStream({
-        sid,
-        filename: remotePath,
-        file: ent.file,
-        signal: ctrl.signal,
-        onProgress: (loaded, total) => {
-          store.updateUpload(sid, taskId, {
-            loaded,
-            total: total > 0 ? total : loaded,
-          })
-        },
-      })
-      store.updateUpload(sid, taskId, {
-        loaded: ent.file.size,
-        total: ent.file.size,
-        status: "done",
-      })
-      okCount++
-    } catch (e) {
-      if (isAbortError(e)) {
-        store.updateUpload(sid, taskId, { status: "cancelled" })
-      } else {
-        const err = e as Error
-        store.updateUpload(sid, taskId, { status: "error", error: err.message })
-      }
-      failCount++
-    }
+      retry: () => {
+        ctrl = new AbortController()
+        failCount--
+        void run()
+      },
+    })
+    await run()
+  }
+
+  for (const ent of entries) {
+    await runFolderEntry(ent)
   }
   if (failCount === 0) {
     message.success(t("sftp.message.dirUploadDone", { count: okCount }))
@@ -1466,12 +1941,55 @@ const FILE_TYPE_COLORS = {
   file: "#9aa0a6",
 }
 
+function extOf(name: string): string {
+  const i = name.lastIndexOf(".")
+  return i >= 0 ? name.slice(i + 1).toLowerCase() : ""
+}
+
+/** 扩展名 -> [图标组件, 颜色]。按类别归组（压缩包/代码/媒体/办公文档），
+ *  未命中的回落到通用文件图标。 */
+type ExtIconEntry = [Component, string]
+const EXT_ICON_MAP: Record<string, ExtIconEntry> = (() => {
+  const map: Record<string, ExtIconEntry> = {}
+  const put = (icon: Component, color: string, exts: string[]) => {
+    for (const e of exts) map[e] = [icon, color]
+  }
+  put(FileImage, "#6bc1ff", [
+    "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "ico", "avif", "tiff",
+  ])
+  put(FileVideo, "#d97fc0", [
+    "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg",
+  ])
+  put(FileAudio, "#b48cff", ["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus"])
+  put(FileArchive, "#e8a15a", [
+    "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "iso", "zst",
+  ])
+  put(FileCode, "#5fd0a5", [
+    "js", "mjs", "cjs", "ts", "tsx", "jsx", "vue", "py", "rs", "go", "java",
+    "c", "h", "cpp", "hpp", "cs", "rb", "php", "swift", "kt", "sh", "bat",
+    "ps1", "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss",
+    "less", "sql", "lua", "pl",
+  ])
+  put(FileAlt, "#8a93a6", [
+    "ini", "conf", "cfg", "env", "lock", "service", "log", "diff", "patch",
+  ])
+  put(FilePdf, "#ef6b6b", ["pdf"])
+  put(FileWord, "#5e9bff", ["doc", "docx", "rtf", "odt"])
+  put(FileExcel, "#58b368", ["xls", "xlsx", "ods", "csv", "tsv"])
+  put(FilePowerpoint, "#f0824c", ["ppt", "pptx", "odp"])
+  return map
+})()
+
 function fileIcon(file: SftpFile) {
   if (file.file_type === "dir") {
     return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.dir }, { default: () => h(Folder) })
   }
   if (file.file_type === "symlink") {
     return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.symlink }, { default: () => h(Link) })
+  }
+  const hit = EXT_ICON_MAP[extOf(file.file_name)]
+  if (hit) {
+    return h(NIcon, { size: 16, color: hit[1] }, { default: () => h(hit[0]) })
   }
   return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.file }, { default: () => h(FileRegular) })
 }
@@ -1514,6 +2032,38 @@ const sortState = ref<{
   columnKey: string | null
   order: false | "ascend" | "descend"
 }>({ columnKey: null, order: false })
+
+/* ---------- 列宽持久化（拖拽表头后记忆，跨会话恢复） ---------- */
+
+const COL_WIDTHS_KEY = "ashell:sftp-col-widths"
+
+function loadColWidths(): Record<string, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(COL_WIDTHS_KEY) || "{}")
+    return v && typeof v === "object" ? v : {}
+  } catch {
+    return {}
+  }
+}
+
+const colWidths = ref<Record<string, number>>(loadColWidths())
+
+function persistColWidths() {
+  try {
+    localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(colWidths.value))
+  } catch {
+    // ignore
+  }
+}
+
+function onColumnResize(
+  _resizedWidth: number,
+  limitedWidth: number,
+  column: { key: string | number },
+) {
+  colWidths.value = { ...colWidths.value, [String(column.key)]: limitedWidth }
+  persistColWidths()
+}
 
 /** 按当前排序状态重排列表（descend 反转；无排序时回到默认目录优先+名字） */
 function applySort(list: SftpFile[]): SftpFile[] {
@@ -1577,7 +2127,7 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
   {
     title: t("sftp.columns.size"),
     key: "size",
-    width: 96,
+    width: colWidths.value["size"] ?? 96,
     resizable: true,
     sorter: cmpSize,
     sortOrder: sortState.value.columnKey === "size" ? sortState.value.order : false,
@@ -1590,7 +2140,7 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
   {
     title: t("sftp.columns.permission"),
     key: "permissions",
-    width: 110,
+    width: colWidths.value["permissions"] ?? 110,
     resizable: true,
     render(row) {
       const perm = row.permissions || "-"
@@ -1605,7 +2155,7 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
   {
     title: t("sftp.columns.userGroup"),
     key: "user",
-    width: 140,
+    width: colWidths.value["user"] ?? 140,
     resizable: true,
     render(row) {
       return `${row.user || "-"} / ${row.group || "-"}`
@@ -1614,7 +2164,7 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
   {
     title: t("sftp.columns.modifyTime"),
     key: "mtime",
-    width: 170,
+    width: colWidths.value["mtime"] ?? 170,
     resizable: true,
     sorter: cmpMtime,
     sortOrder: sortState.value.columnKey === "mtime" ? sortState.value.order : false,
@@ -1642,11 +2192,14 @@ function rowProps(row: SftpFile) {
           ? "grab"
           : "default",
     },
+    // 键盘导航滚动定位用（scrollRowIntoView 按 data-path 查行）
+    "data-path": row.full_path,
     onPointerdown: (e: PointerEvent) => {
       // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
       // （click 阶段已经选完了）
       if (e.shiftKey) e.preventDefault()
       if (dualPane.value) remoteDrag.onRowPointerdown(row, e)
+      cursorKey.value = row.full_path
     },
     onClick: (e: MouseEvent) => {
       e.stopPropagation()
@@ -1655,15 +2208,7 @@ function rowProps(row: SftpFile) {
     },
     onDblclick: (e: MouseEvent) => {
       e.stopPropagation()
-      if (row.file_type === "dir" || row.file_type === "symlink") {
-        enterDir(row)
-      } else if (row.file_type === "file") {
-        if (isPreviewable(row.file_name)) {
-          openPreview(row)
-        } else {
-          void onDownload(row)
-        }
-      }
+      activateRow(row)
     },
     onContextmenu: (e: MouseEvent) => {
       e.preventDefault()
@@ -1765,6 +2310,21 @@ const ctxMenuOptions = computed(() => {
       icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
     })
   }
+  // 目录行附加操作：cd 终端（独立窗口无主终端，隐藏）与 du 大小统计
+  if (target.file_type === "dir") {
+    if (!props.standalone) {
+      opts.push({
+        label: t("sftp.ctxMenu.openTerminalHere"),
+        key: "terminal-here",
+        icon: () => h(NIcon, null, { default: () => h(TerminalOutline) }),
+      })
+    }
+    opts.push({
+      label: t("sftp.ctxMenu.calcSize"),
+      key: "calc-size",
+      icon: () => h(NIcon, null, { default: () => h(StatsChartOutline) }),
+    })
+  }
   opts.push({
     label:
       selCount > 1
@@ -1813,22 +2373,29 @@ const ctxMenuOptions = computed(() => {
 })
 
 function showProps(file: SftpFile) {
-  const lines = [
-    t("sftp.properties.name") + file.file_name,
-    t("sftp.properties.path") + file.full_path,
-    t("sftp.properties.type") + file.file_type,
-    t("sftp.properties.size") + (
-      typeof file.size_bytes === "number" ? humanSize(file.size_bytes) : file.size || "-"
-    ),
-    t("sftp.properties.permission") + (file.permissions || "-"),
-    t("sftp.properties.userGroup") + `${file.user || "-"} / ${file.group || "-"}`,
-    t("sftp.properties.modifyTime") + formatUnix(file.mtime ?? null),
-  ]
-  dialog.info({
-    title: t("sftp.properties.title"),
-    content: () => h("div", { style: "white-space:pre-line" }, lines.join("\n")),
-    positiveText: t("common.confirm"),
-  })
+  propsTarget.value = file
+  propsOpen.value = true
+}
+
+/** 目录大小：du 统计后回填该行 size 列并提示 */
+async function calcDirSize(file: SftpFile) {
+  if (!props.sid) return
+  try {
+    const { bytes } = await duSize(props.sid, file.full_path)
+    const i = files.value.findIndex((f) => f.full_path === file.full_path)
+    if (i >= 0 && files.value[i]) {
+      files.value[i] = {
+        ...files.value[i]!,
+        size: humanSize(bytes),
+        size_bytes: bytes,
+      }
+    }
+    message.success(
+      t("sftp.message.dirSize", { name: file.file_name, size: humanSize(bytes) }),
+    )
+  } catch (e) {
+    message.error(t("sftp.message.dirSizeFailed", { error: (e as Error).message }))
+  }
 }
 
 async function copyPath(file: SftpFile) {
@@ -1867,6 +2434,8 @@ function onCtxMenuSelect(key: string | number) {
   } else if (key === "edit") openEditor(target)
   else if (key === "clipboard-copy") setRemoteClipboard("copy")
   else if (key === "clipboard-cut") setRemoteClipboard("cut")
+  else if (key === "terminal-here") emit("open-terminal-here", target.full_path)
+  else if (key === "calc-size") void calcDirSize(target)
   else if (key === "rename") openRename(target)
   else if (key === "remove") confirmRemove(target)
   else if (key === "copy-path") void copyPath(target)
@@ -2260,6 +2829,30 @@ function openInStandaloneWindow() {
               size="small"
               quaternary
               circle
+              :title="t('sftp.nav.back')"
+              :disabled="!canBack || pathEditing"
+              @click="goBack"
+            >
+              <template #icon>
+                <NIcon><ChevronBackOutline /></NIcon>
+              </template>
+            </NButton>
+            <NButton
+              size="small"
+              quaternary
+              circle
+              :title="t('sftp.nav.forward')"
+              :disabled="!canForward || pathEditing"
+              @click="goForward"
+            >
+              <template #icon>
+                <NIcon><ChevronForwardOutline /></NIcon>
+              </template>
+            </NButton>
+            <NButton
+              size="small"
+              quaternary
+              circle
               :title="t('sftp.goUp')"
               :disabled="currentPath === '/'"
               @click="goUp"
@@ -2279,19 +2872,92 @@ function openInStandaloneWindow() {
                 @keydown="onPathKeydown"
                 @blur="submitPathEdit"
               />
+              <!-- 面包屑模式：每段可点击直达；点空白处切换为输入框 -->
               <div
                 v-else
-                class="address-display"
-                :title="currentPath"
+                class="address-display address-crumbs"
                 tabindex="0"
                 role="textbox"
-                @click="startPathEdit"
+                :title="t('sftp.clickToEditPath')"
+                @click.self="startPathEdit"
                 @keydown.enter.prevent="startPathEdit"
                 @keydown.space.prevent="startPathEdit"
               >
-                {{ currentPath }}
+                <span
+                  v-for="(seg, i) in crumbs"
+                  :key="seg.full"
+                  class="crumb"
+                  :class="{ active: i === crumbs.length - 1 }"
+                  :title="seg.full"
+                  @click.stop="void load(seg.full)"
+                >{{ seg.name }}</span>
               </div>
             </div>
+            <NPopover trigger="click" placement="bottom-end" :show-arrow="false">
+              <template #trigger>
+                <NButton
+                  size="small"
+                  quaternary
+                  circle
+                  :title="t('sftp.bookmarks.title')"
+                  :disabled="pathEditing"
+                >
+                  <template #icon>
+                    <NIcon><BookmarksOutline /></NIcon>
+                  </template>
+                </NButton>
+              </template>
+              <div class="bm-pop">
+                <div class="bm-section">{{ t("sftp.bookmarks.title") }}</div>
+                <template v-if="bookmarks.length > 0">
+                  <div v-for="b in bookmarks" :key="b.path" class="bm-item">
+                    <span class="bm-path" :title="b.path" @click="void load(b.path)">{{
+                      b.path
+                    }}</span>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      :title="t('common.delete')"
+                      @click.stop="removeBookmark(b.path)"
+                    >
+                      <template #icon>
+                        <NIcon :size="13"><TrashOutline /></NIcon>
+                      </template>
+                    </NButton>
+                  </div>
+                </template>
+                <div v-else class="bm-empty">{{ t("sftp.bookmarks.empty") }}</div>
+                <div class="bm-section">
+                  <span class="bm-section-icon"><TimeOutline /></span>
+                  {{ t("sftp.bookmarks.recent") }}
+                </div>
+                <template v-if="recentPaths.length > 0">
+                  <div
+                    v-for="p in recentPaths.slice(0, 12)"
+                    :key="p"
+                    class="bm-item"
+                  >
+                    <span class="bm-path" :title="p" @click="void load(p)">{{ p }}</span>
+                  </div>
+                </template>
+                <div v-else class="bm-empty">{{ t("sftp.bookmarks.noRecent") }}</div>
+              </div>
+            </NPopover>
+            <NButton
+              size="small"
+              quaternary
+              circle
+              :title="isBookmarked ? t('sftp.bookmarks.remove') : t('sftp.bookmarks.add')"
+              :disabled="pathEditing"
+              @click="toggleBookmark"
+            >
+              <template #icon>
+                <NIcon :color="isBookmarked ? '#f1c27d' : undefined">
+                  <Star v-if="isBookmarked" />
+                  <StarOutline v-else />
+                </NIcon>
+              </template>
+            </NButton>
             <NButton
               size="small"
               quaternary
@@ -2395,6 +3061,17 @@ function openInStandaloneWindow() {
               </NButton>
             </div>
             <div class="toolbar-right">
+              <NInput
+                v-model:value="filterText"
+                size="small"
+                clearable
+                :placeholder="t('sftp.filterPlaceholder')"
+                class="filter-input"
+              >
+                <template #prefix>
+                  <NIcon :size="14"><SearchOutline /></NIcon>
+                </template>
+              </NInput>
               <NBadge
                 class="badge-btn"
                 :value="activeUploadCount"
@@ -2448,6 +3125,7 @@ function openInStandaloneWindow() {
               flex-height
               class="file-table"
               @update:sorter="onRemoteSort"
+              @unstable-column-resize="onColumnResize"
             />
           </NSpin>
           </div>
@@ -2548,7 +3226,7 @@ function openInStandaloneWindow() {
               {{ t("common.clearCompleted") }}
             </NButton>
           </template>
-          <SftpUploadList :tasks="uploads" @cancel="cancelUpload" />
+          <SftpUploadList :tasks="uploads" @cancel="cancelUpload" @retry="retryUpload" />
         </NModal>
         <NModal
           v-model:show="downloadModalOpen"
@@ -2571,8 +3249,15 @@ function openInStandaloneWindow() {
               {{ t("common.clearCompleted") }}
             </NButton>
           </template>
-          <SftpDownloadList :tasks="downloads" @cancel="cancelDownload" />
+          <SftpDownloadList :tasks="downloads" @cancel="cancelDownload" @retry="retryDownload" />
         </NModal>
+
+        <PropsModal
+          v-model:open="propsOpen"
+          :sid="props.sid"
+          :file="propsTarget"
+          @saved="refresh()"
+        />
 
         <MkdirDialog
           v-model:open="mkdirOpen"
@@ -2832,6 +3517,110 @@ function openInStandaloneWindow() {
 
 .address-display:focus {
   border-color: rgba(124, 92, 255, 0.6);
+}
+
+/* 面包屑变体：左对齐；宽度不足时前面的段按比例压缩成 …，
+   当前段（active）不参与收缩，保证最深层级始终完整可见 */
+.address-display.address-crumbs {
+  display: flex;
+  align-items: center;
+  line-height: normal;
+  cursor: default;
+}
+
+.crumb {
+  flex: 0 1 auto;
+  min-width: 36px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: var(--ashell-text-strong);
+}
+
+.crumb:not(:first-child)::before {
+  content: "›";
+  margin-right: 6px;
+  color: var(--ashell-text-subtle);
+}
+
+.crumb:hover {
+  background: var(--ashell-row-hover, rgba(255, 255, 255, 0.06));
+  color: var(--ashell-accent, #7c5cff);
+}
+
+.crumb.active {
+  font-weight: 600;
+  /* 当前目录段始终完整可见：不参与溢出压缩 */
+  flex-shrink: 0;
+}
+
+/* 书签 + 最近访问浮层 */
+.bm-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 260px;
+  max-width: 380px;
+}
+
+.bm-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--ashell-text-muted);
+  margin: 8px 0 4px;
+}
+
+.bm-section:first-child {
+  margin-top: 0;
+}
+
+.bm-section-icon {
+  display: inline-flex;
+  font-size: 12px;
+}
+
+.bm-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+}
+
+.bm-item:hover {
+  background: var(--ashell-row-hover, rgba(255, 255, 255, 0.06));
+}
+
+.bm-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--n-font-family-mono);
+  font-size: 12px;
+  color: var(--ashell-text-strong);
+  cursor: pointer;
+  padding: 4px 2px 4px 6px;
+}
+
+.bm-path:hover {
+  color: var(--ashell-accent, #7c5cff);
+}
+
+.bm-empty {
+  font-size: 12px;
+  color: var(--ashell-text-subtle);
+  padding: 4px 6px;
+}
+
+.filter-input {
+  width: 170px;
 }
 
 .address-input {
