@@ -49,6 +49,8 @@ export interface OpenSftpWindowOptions {
   sid: string
   title: string
   addr?: string
+  /** 关联主机 id（SFTP 面板"提权"等需要主机凭证上下文的功能依赖它） */
+  hostId?: number | null
 }
 
 /**
@@ -69,6 +71,7 @@ export async function openSftpInNewWindow(opts: OpenSftpWindowOptions): Promise<
   params.set("kind", "sftp")
   params.set("sid", opts.sid)
   if (opts.addr) params.set("addr", opts.addr)
+  if (opts.hostId != null) params.set("hostId", String(opts.hostId))
   params.set("title", opts.title)
   const url = `${base}?${params.toString()}`
 

@@ -67,6 +67,18 @@ export default {
   },
   showHidden: "Show hidden files",
   hideHidden: "Hide hidden files",
+  elevate: {
+    button: "Elevate",
+    title: "Rebuild the SFTP session with sudo (root); click again to restore",
+    badge: "sudo root",
+    badgeTip: "This SFTP session is elevated via sudo; all operations run as root",
+    on: "Elevated: the SFTP session now runs as root",
+    off: "Restored to a normal SFTP session",
+    failed: "Elevate failed: {error}",
+    noHost: "Associated host info is missing; cannot elevate",
+    passwordTitle: "Sudo password required",
+    passwordPlaceholder: "Enter the sudo password of the remote user",
+  },
   transferBar: {
     up: "Upload the selected local file(s)/folder(s) to the current remote directory",
     down: "Download the selected remote file(s)/folder(s) to the current local directory",

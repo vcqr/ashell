@@ -346,11 +346,25 @@ pub async fn open_for_read(
 /// 打开远程文件用于流式上传
 pub async fn open_for_write(sid: &str, filename: &str) -> AppResult<File> {
     let sftp = ssh_svc::get_sftp(sid).await?;
-    let file = sftp
-        .create(filename)
-        .await
-        .map_err(|e| sftp_err("create", e))?;
-    Ok(file)
+    match sftp.create(filename).await {
+        Ok(f) => Ok(f),
+        Err(e) => {
+            // 附带目标文件/父目录属性，便于区分 immutable、属主、目录不可写等根因
+            let mut detail = String::new();
+            if let Ok(m) = sftp.metadata(filename).await {
+                detail.push_str(&format!(
+                    " [target exists, perms={:o}, uid={}, gid={}]",
+                    m.permissions.unwrap_or(0),
+                    m.uid.unwrap_or(0),
+                    m.gid.unwrap_or(0)
+                ));
+            } else {
+                detail.push_str(" [target missing: parent dir may not allow create]");
+            }
+            let base = sftp_err("create", e).to_string();
+            Err(AppError::Sftp(format!("{base} {detail}")))
+        }
+    }
 }
 
 /// 一次性读取整个文件到内存（小文件用）

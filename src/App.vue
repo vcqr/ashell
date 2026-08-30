@@ -338,6 +338,7 @@ useGlobalShortcuts({
               :sid="activeSftpTab?.sid ?? null"
               :host-name="activeSftpTab?.title"
               :host-addr="activeSftpTab?.hostInfo?.addr"
+              :host-id="activeSftpTab?.hostId ?? null"
               @send-to-ai="onSftpSendToAi"
               @open-terminal-here="onSftpOpenTerminalHere"
             />

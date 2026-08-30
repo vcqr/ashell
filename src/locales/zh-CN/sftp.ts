@@ -63,6 +63,18 @@ export default {
   },
   showHidden: "显示隐藏文件",
   hideHidden: "隐藏文件",
+  elevate: {
+    button: "提权",
+    title: "以 sudo (root) 重建 SFTP 会话，再次点击还原",
+    badge: "sudo root",
+    badgeTip: "当前 SFTP 会话已通过 sudo 提权，所有操作以 root 身份执行",
+    on: "已提权：SFTP 会话以 root 身份运行",
+    off: "已还原为普通 SFTP 会话",
+    failed: "提权失败：{error}",
+    noHost: "缺少关联主机信息，无法提权",
+    passwordTitle: "需要 sudo 密码",
+    passwordPlaceholder: "输入远端当前用户的 sudo 密码",
+  },
   transferBar: {
     up: "上传选中的本地文件/目录到远程当前目录",
     down: "下载远程选中的文件/目录到本地当前目录",

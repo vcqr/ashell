@@ -13,6 +13,7 @@ import {
   NPopover,
   NSpace,
   NSpin,
+  NTag,
   NTooltip,
   NUpload,
   useDialog,
@@ -47,6 +48,7 @@ import {
   RefreshOutline,
   SearchOutline,
   SendOutline,
+  ShieldCheckmarkOutline,
   SparklesOutline,
   StarOutline,
   Star,
@@ -74,6 +76,7 @@ import {
   downloadStream,
   duplicate as duplicateApi,
   duSize,
+  elevateSftp,
   isAbortError,
   listSftp,
   mkdir as mkdirApi,
@@ -115,6 +118,8 @@ interface Props {
   sid: string | null
   hostName?: string
   hostAddr?: string
+  /** 关联主机 id（提权时后端凭此取主机密码作为 sudo 密码回退） */
+  hostId?: number | null
   /** 独立窗口模式：面板铺满窗口、无宽度拖拽，关闭按钮直接关窗口 */
   standalone?: boolean
 }
@@ -405,6 +410,92 @@ const drawerTitle = computed(() => {
   const addr = props.hostAddr?.trim()
   return addr ? `${host} (${addr})` : host
 })
+
+/* ---------- 临时提权（sudo sftp-server 会话） ---------- */
+
+/** 当前 SFTP 会话是否为提权（root）会话；切换主机 tab 时随 sid 重置 */
+const elevated = ref(false)
+const elevating = ref(false)
+const sudoPasswordInput = ref("")
+
+watch(
+  () => props.sid,
+  () => {
+    elevated.value = false
+  },
+)
+
+/** 提权 / 还原都是重建会话：成功后刷新列表；需要 sudo 密码时弹输入框重试 */
+async function setElevated(next: boolean, password?: string) {
+  if (!props.sid || elevating.value) return
+  if (props.hostId == null) {
+    message.error(t("sftp.elevate.noHost"))
+    return
+  }
+  elevating.value = true
+  try {
+    await elevateSftp({
+      sid: props.sid,
+      hostId: props.hostId,
+      elevated: next,
+      password,
+    })
+    elevated.value = next
+    message.success(next ? t("sftp.elevate.on") : t("sftp.elevate.off"))
+    await load()
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e)
+    if (/ELEVATE_PASSWORD_REQUIRED|incorrect password/i.test(msg)) {
+      askSudoPassword(next, msg)
+    } else {
+      message.error(t("sftp.elevate.failed", { error: msg }))
+    }
+  } finally {
+    elevating.value = false
+  }
+}
+
+function toggleElevate() {
+  void setElevated(!elevated.value)
+}
+
+/** 弹窗收集 sudo 密码后带密码重试（主机密码不可用 / 密码错误） */
+function askSudoPassword(next: boolean, errMsg: string) {
+  sudoPasswordInput.value = ""
+  dialog.warning({
+    title: t("sftp.elevate.passwordTitle"),
+    content: () =>
+      h("div", { class: "sudo-pwd-dialog" }, [
+        h(
+          "p",
+          {
+            class: "sudo-pwd-err",
+            style: {
+              margin: "0 0 8px",
+              fontSize: "12px",
+              color: "var(--ashell-text-3, #999)",
+              wordBreak: "break-all",
+            },
+          },
+          errMsg,
+        ),
+        h(NInput, {
+          value: sudoPasswordInput.value,
+          "onUpdate:value": (v: string) => (sudoPasswordInput.value = v),
+          type: "password",
+          showPasswordOn: "click",
+          placeholder: t("sftp.elevate.passwordPlaceholder"),
+          autofocus: true,
+        }),
+      ]),
+    positiveText: t("common.confirm"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: () => {
+      if (!sudoPasswordInput.value) return false
+      void setElevated(next, sudoPasswordInput.value)
+    },
+  })
+}
 
 /* ---------- data loading ---------- */
 
@@ -2696,6 +2787,7 @@ function openInStandaloneWindow() {
     sid: props.sid,
     title: props.hostName ?? "SFTP",
     addr: props.hostAddr,
+    hostId: props.hostId,
   })
   emit("update:open", false)
 }
@@ -2739,7 +2831,20 @@ function openInStandaloneWindow() {
 
       <!-- 独立窗口模式下不渲染面板头：标题由 SftpWindow 标题栏承担，避免双标题 -->
       <header v-if="!props.standalone" class="panel-header">
-        <span class="drawer-title">{{ drawerTitle }}</span>
+        <div class="drawer-title-wrap">
+          <span class="drawer-title">{{ drawerTitle }}</span>
+          <NTooltip :disabled="!elevated">
+            <template #trigger>
+              <NTag v-if="elevated" type="warning" size="small" round :bordered="false">
+                <template #icon>
+                  <NIcon :size="12"><ShieldCheckmarkOutline /></NIcon>
+                </template>
+                {{ t("sftp.elevate.badge") }}
+              </NTag>
+            </template>
+            {{ t("sftp.elevate.badgeTip") }}
+          </NTooltip>
+        </div>
         <NSpace :size="6" align="center" :wrap="false">
           <NButton
             v-if="!props.standalone"
@@ -3037,6 +3142,20 @@ function openInStandaloneWindow() {
                   <NIcon><FolderOpenOutline /></NIcon>
                 </template>
                 {{ t("sftp.uploadFolderButton") }}
+              </NButton>
+              <NButton
+                size="small"
+                secondary
+                :type="elevated ? 'warning' : 'default'"
+                :loading="elevating"
+                :disabled="!props.sid"
+                :title="t('sftp.elevate.title')"
+                @click="toggleElevate"
+              >
+                <template #icon>
+                  <NIcon><ShieldCheckmarkOutline /></NIcon>
+                </template>
+                {{ t("sftp.elevate.button") }}
               </NButton>
               <input
                 ref="folderInputRef"
@@ -3386,8 +3505,16 @@ function openInStandaloneWindow() {
   padding: 12px 16px;
 }
 
-.drawer-title {
+.drawer-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.drawer-title {
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 15px;
   font-weight: 600;

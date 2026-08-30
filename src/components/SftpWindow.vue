@@ -18,6 +18,8 @@ const launch = new URLSearchParams(window.location.search)
 const sid = launch.get("sid")
 const hostName = launch.get("title") ?? undefined
 const hostAddr = launch.get("addr") ?? undefined
+const hostIdRaw = launch.get("hostId")
+const hostId = hostIdRaw ? Number(hostIdRaw) : null
 
 const isMac = detectMac()
 
@@ -61,6 +63,7 @@ async function onHeaderDblClick(e: MouseEvent) {
       :sid="sid"
       :host-name="hostName"
       :host-addr="hostAddr"
+      :host-id="Number.isFinite(hostId) ? hostId : null"
     />
   </div>
 </template>

@@ -381,6 +381,9 @@ async fn run_terminal(
     ssh_svc::set_client(sid.to_string(), session_arc.clone()).await;
 
     // 3) 同步打开一个 sftp 子通道（即便客户端不立刻用，后续 REST 也能用）
+    // 重连复用同一 sid：先记住此前的提权状态，open_sftp 会把它覆盖成普通会话，
+    // 等 sudo 密码就绪后（下方）再自动恢复提权。
+    let sftp_was_elevated = ssh_svc::get_sftp_elevated(sid).await;
     if let Err(e) = session_arc.open_sftp(sid).await {
         log::warn!("open sftp for sid={sid} failed: {e}");
     }
@@ -408,6 +411,21 @@ async fn run_terminal(
     // sudo 密码自动填充：检测到密码提示时通知前端，
     // 前端拦截回车发送 sudo_fill，后端注入已保存的密码。
     let sudo_password = host.password.clone();
+
+    // 重连恢复：该 sid 此前是提权会话时，用主机密码重新提权（NOPASSWD 时
+    // open_sftp_elevated 内部走免密分支）。失败仅降级为普通会话并记日志。
+    if sftp_was_elevated {
+        match session_arc
+            .open_sftp_elevated(sid, sudo_password.as_deref())
+            .await
+        {
+            Ok(_) => log::info!("sftp session {sid} re-elevated after reconnect"),
+            Err(e) => {
+                log::warn!("re-elevate sid={sid} failed: {e}; sftp stays non-elevated")
+            }
+        }
+    }
+
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
 

@@ -140,6 +140,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         // SFTP REST 系列
         .route("/api/ssh/sftp/open", post(handlers::sftp::open))
+        .route("/api/ssh/sftp/elevate", post(handlers::sftp::elevate))
         .route("/api/ssh/sftp", get(handlers::sftp::list))
         .route("/api/ssh/sftp/mkdir", post(handlers::sftp::mkdir))
         .route("/api/ssh/sftp/touch", post(handlers::sftp::touch))

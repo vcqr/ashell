@@ -369,8 +369,8 @@ async function save() {
   } catch (e) {
     const msg = (e as Error).message.toLowerCase()
     if (msg.includes("permission") || msg.includes("denied")) {
+      // 锁定编辑并保留 dirty：修复权限（提权/chmod）后可直接继续编辑重试
       readOnly.value = true
-      dirty.value = false
       if (view.value) {
         view.value.dispatch({
           effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(true)),

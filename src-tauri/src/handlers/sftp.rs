@@ -61,6 +61,52 @@ pub async fn open(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ElevateReq {
+    pub sid: String,
+    pub host_id: i64,
+    /// true = 重建为 sudo 提权会话；false = 恢复普通会话
+    pub elevated: bool,
+    /// 手动输入的 sudo 密码；缺省回退主机密码（NOPASSWD 时两者都不需要）
+    pub password: Option<String>,
+}
+
+/// 临时提权 / 还原：重建 sid 关联的 SFTP 会话。
+/// 提权 = exec `sudo <sftp-server>`（root 身份），还原 = 普通 sftp 子系统。
+/// 注意会中断该 sid 上进行中的传输。
+pub async fn elevate(
+    State(state): State<AppState>,
+    Json(req): Json<ElevateReq>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let session = ssh_svc::get_client(&req.sid).await?;
+    if !req.elevated {
+        session.open_sftp(&req.sid).await?;
+        return Ok(ok_msg("ok"));
+    }
+    let sudo_password = match req.password.as_deref().filter(|p| !p.is_empty()) {
+        Some(p) => Some(p.to_string()),
+        None => {
+            service::host::get_with_credentials(
+                &state.db,
+                &state.config.crypto_key,
+                req.host_id,
+            )
+            .await?
+            .password
+        }
+    };
+    match session
+        .open_sftp_elevated(&req.sid, sudo_password.as_deref())
+        .await
+    {
+        // 需要密码且无可用的（主机密钥登录 / 未输入）：转 400 让前端弹输入框
+        Err(AppError::BadRequest(m)) if m.contains("ELEVATE_PASSWORD_REQUIRED") => {
+            Err(AppError::BadRequest("ELEVATE_PASSWORD_REQUIRED".into()))
+        }
+        other => other.map(|_| ok_msg("ok")),
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ListQuery {
     pub sid: String,
     pub path: Option<String>,
