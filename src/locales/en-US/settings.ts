@@ -160,6 +160,9 @@ export default {
     autoOpenLocal: "Auto-open local terminal on startup",
     defaultShell: "Default shell",
     defaultShellHint: "Used for auto-open on startup and via + → New local terminal. Auto means the platform chooses automatically.",
+    localInitCommand: "Local terminal init command",
+    localInitCommandPlaceholder: "e.g. cd ~/projects",
+    localInitCommandHint: "Run automatically once each new local terminal connects. Leave empty to disable.",
   },
   ai: {
     title: "AI Assistant",

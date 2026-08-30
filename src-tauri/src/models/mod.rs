@@ -72,6 +72,8 @@ pub struct Host {
     pub idle_send_interval: Option<i64>,
     /// 跳板机主机 id（仅 SSH；连接时先连该主机再经 direct-tcpip 转发到目标，仅支持一级）
     pub jump_host_id: Option<i64>,
+    /// 连接建立后自动执行的命令（终端 ready 后注入；空/None 不执行）
+    pub connect_command: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -100,6 +102,7 @@ pub struct HostCreate {
     pub inactivity_timeout: Option<i64>,
     pub idle_send_interval: Option<i64>,
     pub jump_host_id: Option<i64>,
+    pub connect_command: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +132,9 @@ pub struct HostUpdate {
     /// 必须用自定义反序列化才能收到 Some(None)
     #[serde(default, deserialize_with = "double_option::deserialize")]
     pub jump_host_id: Option<Option<i64>>,
+    /// 双层 Option：缺省 = 不修改（HostTree 拖拽等部分更新不误清）；显式 null = 清除
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub connect_command: Option<Option<String>>,
 }
 
 /// 字段存在时（无论 null 还是值）都包成 Some(Option<T>)；
@@ -174,6 +180,7 @@ pub struct HostWithGroup {
     pub inactivity_timeout: Option<i64>,
     pub idle_send_interval: Option<i64>,
     pub jump_host_id: Option<i64>,
+    pub connect_command: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub group_name: Option<String>,
@@ -302,5 +309,20 @@ mod tests {
 
         let v: HostUpdate = serde_json::from_str("{}").unwrap();
         assert_eq!(v.jump_host_id, None);
+    }
+
+    /// connect_command 同为双层 Option：HostTree 拖拽等部分更新（缺省键）
+    /// 不得误清已配置的连接指令；显式 null = 清除
+    #[test]
+    fn host_update_connect_command_double_option() {
+        let v: HostUpdate = serde_json::from_str(r#"{"gid":3}"#).unwrap();
+        assert_eq!(v.connect_command, None);
+
+        let v: HostUpdate = serde_json::from_str(r#"{"connect_command":null}"#).unwrap();
+        assert_eq!(v.connect_command, Some(None));
+
+        let v: HostUpdate =
+            serde_json::from_str(r#"{"connect_command":"tmux attach"}"#).unwrap();
+        assert_eq!(v.connect_command, Some(Some("tmux attach".to_string())));
     }
 }

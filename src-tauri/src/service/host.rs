@@ -60,8 +60,8 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     let pk_enc = enc_opt(key, input.private_key.as_deref())?;
 
     let res = sqlx::query(
-        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval, jump_host_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval, jump_host_id, connect_command)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(input.gid)
     .bind(&input.name)
@@ -84,6 +84,7 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     .bind(input.inactivity_timeout)
     .bind(input.idle_send_interval)
     .bind(jump_host_id)
+    .bind(input.connect_command.as_deref().filter(|s| !s.is_empty()))
     .execute(pool)
     .await?;
 
@@ -202,7 +203,7 @@ pub async fn list_with_group(
                h.password, h.desc, h.is_del, h.private_key, h.private_key_path,
                h.protocol, h.baud_rate, h.data_bits, h.stop_bits, h.parity, h.flow_control,
                h.keepalive_interval, h.inactivity_timeout, h.idle_send_interval,
-               h.jump_host_id,
+               h.jump_host_id, h.connect_command,
                h.created_at, h.updated_at,
                g.name AS group_name, g.parent_id AS parent_gid
         FROM hosts h
@@ -305,7 +306,7 @@ pub async fn update(
                password = ?, desc = ?, private_key = ?, private_key_path = ?,
                protocol = ?, baud_rate = ?, data_bits = ?, stop_bits = ?, parity = ?, flow_control = ?,
                keepalive_interval = ?, inactivity_timeout = ?, idle_send_interval = ?,
-               jump_host_id = ?,
+               jump_host_id = ?, connect_command = ?,
                updated_at = datetime('now')
            WHERE id = ?"#,
     )
@@ -330,6 +331,11 @@ pub async fn update(
     .bind(new_inactivity_timeout)
     .bind(new_idle_send_interval)
     .bind(new_jump_host_id)
+    // 双层 Option：None = 不修改；Some(None) = 清除；Some(Some(cmd)) = 设置
+    .bind(match input.connect_command {
+        Some(cmd) => cmd.filter(|s| !s.is_empty()),
+        None => cur.connect_command.clone(),
+    })
     .bind(id)
     .execute(pool)
     .await?;

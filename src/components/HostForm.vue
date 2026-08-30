@@ -69,6 +69,7 @@ interface FormState {
   inactivity_timeout: number | null
   idle_send_interval: number | null
   jump_host_id: number | null
+  connect_command: string
 }
 
 function makeInitial(): FormState {
@@ -95,6 +96,7 @@ function makeInitial(): FormState {
     inactivity_timeout: init?.inactivity_timeout ?? null,
     idle_send_interval: init?.idle_send_interval ?? null,
     jump_host_id: init?.jump_host_id ?? null,
+    connect_command: init?.connect_command ?? "",
   }
 }
 
@@ -291,6 +293,7 @@ async function submit() {
       inactivity_timeout: form.inactivity_timeout,
       idle_send_interval: form.idle_send_interval,
       jump_host_id: isSsh.value ? form.jump_host_id : null,
+      connect_command: emptyToNull(form.connect_command),
     }
     emit("submit", payload)
   } else {
@@ -314,6 +317,8 @@ async function submit() {
       idle_send_interval: form.idle_send_interval,
       // 显式 null = 清除跳板机配置
       jump_host_id: isSsh.value ? form.jump_host_id : null,
+      // 编辑表单总是显式发送（null = 清除）；缺省键才表示不修改
+      connect_command: emptyToNull(form.connect_command),
     }
     if (form.password.length > 0) payload.password = form.password
     if (form.private_key.length > 0) payload.private_key = form.private_key
@@ -655,6 +660,18 @@ function onOpPasswordDone() {
               <p class="form-field-hint">{{ t('hosts.form.inactivityTimeoutDesc') }}</p>
               <p class="form-field-hint">{{ t('hosts.form.idleSendIntervalDesc') }}</p>
             </div>
+            <NFormItem
+              :label="t('hosts.form.connectCommand')"
+              path="connect_command"
+              style="margin-top: 12px"
+            >
+              <NInput
+                v-model:value="form.connect_command"
+                :placeholder="t('hosts.form.connectCommandPlaceholder')"
+                clearable
+              />
+            </NFormItem>
+            <p class="form-field-hint">{{ t('hosts.form.connectCommandDesc') }}</p>
           </NTabPane>
 
           <NTabPane v-if="isSsh" :tab="t('hosts.form.tabJump')" name="jump">

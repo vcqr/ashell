@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { NForm, NFormItem, NSelect, NSwitch } from "naive-ui";
+import { NForm, NFormItem, NInput, NSelect, NSwitch } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import {
   useStartupStore,
@@ -52,6 +52,16 @@ const shellOptions = computed(() =>
         filterable
         tag
         @update:value="(v: string) => startupStore.setDefaultShell(v)"
+      />
+    </NFormItem>
+    <NFormItem
+      :label="t('settings.startup.localInitCommand')"
+      :feedback="t('settings.startup.localInitCommandHint')"
+    >
+      <NInput
+        :value="startupStore.localInitCommand"
+        :placeholder="t('settings.startup.localInitCommandPlaceholder')"
+        @update:value="(v: string) => startupStore.setLocalInitCommand(v)"
       />
     </NFormItem>
   </NForm>

@@ -13,6 +13,8 @@ export interface StartupConfig {
   autoConnectRememberedTabs: boolean
   /** 是否启用 AI 助手；关闭时启动不加载 AI 助手，相关入口一并隐藏。 */
   aiAssistantEnabled: boolean
+  /** 本地终端初始命令：每个新建本地终端 tab 连接就绪后自动执行一次；空串不执行。 */
+  localInitCommand: string
 }
 
 const STORAGE_KEY = "ashell:startup-config"
@@ -23,6 +25,7 @@ const DEFAULT_CONFIG: StartupConfig = {
   restoreTabs: true,
   autoConnectRememberedTabs: false,
   aiAssistantEnabled: true,
+  localInitCommand: "",
 }
 
 function loadConfig(): StartupConfig {
@@ -52,6 +55,10 @@ function loadConfig(): StartupConfig {
         typeof parsed.aiAssistantEnabled === "boolean"
           ? parsed.aiAssistantEnabled
           : DEFAULT_CONFIG.aiAssistantEnabled,
+      localInitCommand:
+        typeof parsed.localInitCommand === "string"
+          ? parsed.localInitCommand
+          : DEFAULT_CONFIG.localInitCommand,
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -95,6 +102,7 @@ export const useStartupStore = defineStore("startup", () => {
     initial.autoConnectRememberedTabs,
   )
   const aiAssistantEnabled = ref<boolean>(initial.aiAssistantEnabled)
+  const localInitCommand = ref<string>(initial.localInitCommand)
 
   function persist() {
     if (typeof localStorage === "undefined") return
@@ -105,6 +113,7 @@ export const useStartupStore = defineStore("startup", () => {
         restoreTabs: restoreTabs.value,
         autoConnectRememberedTabs: autoConnectRememberedTabs.value,
         aiAssistantEnabled: aiAssistantEnabled.value,
+        localInitCommand: localInitCommand.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
     } catch {
@@ -119,6 +128,7 @@ export const useStartupStore = defineStore("startup", () => {
       restoreTabs,
       autoConnectRememberedTabs,
       aiAssistantEnabled,
+      localInitCommand,
     ],
     persist,
   )
@@ -138,6 +148,9 @@ export const useStartupStore = defineStore("startup", () => {
   function setAiAssistantEnabled(v: boolean) {
     aiAssistantEnabled.value = v
   }
+  function setLocalInitCommand(v: string) {
+    localInitCommand.value = v.trim()
+  }
 
   return {
     openLocalOnStart,
@@ -145,10 +158,12 @@ export const useStartupStore = defineStore("startup", () => {
     restoreTabs,
     autoConnectRememberedTabs,
     aiAssistantEnabled,
+    localInitCommand,
     setOpenLocalOnStart,
     setDefaultShell,
     setRestoreTabs,
     setAutoConnectRememberedTabs,
     setAiAssistantEnabled,
+    setLocalInitCommand,
   }
 })

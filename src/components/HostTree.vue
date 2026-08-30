@@ -299,7 +299,24 @@ function findFolderKeyAtPoint(x: number, y: number): string | null {
 
 async function moveHostToGid(host: Host, newGid: number) {
   try {
-    await store.editHost(host.id, { gid: newGid })
+    // update 对 icon/desc/私钥路径/keepalive 等可空字段是"直接覆盖"语义，
+    // 只传 gid 会把它们清成 NULL——必须带全当前值（读改写）
+    await store.editHost(host.id, {
+      gid: newGid,
+      icon: host.icon ?? null,
+      color: host.color ?? null,
+      desc: host.desc ?? null,
+      private_key_path: host.private_key_path ?? null,
+      protocol: host.protocol,
+      baud_rate: host.baud_rate ?? null,
+      data_bits: host.data_bits ?? null,
+      stop_bits: host.stop_bits ?? null,
+      parity: host.parity ?? null,
+      flow_control: host.flow_control ?? null,
+      keepalive_interval: host.keepalive_interval ?? null,
+      inactivity_timeout: host.inactivity_timeout ?? null,
+      idle_send_interval: host.idle_send_interval ?? null,
+    })
     const folderName =
       newGid === 0 ? t("hosts.message.rootDir") : (store.findGroup(newGid)?.name ?? `#${newGid}`)
     message.success(t("hosts.message.moved", { name: host.name, target: folderName }))

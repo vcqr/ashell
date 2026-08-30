@@ -314,6 +314,18 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v10: hosts 增加连接后自动执行的命令（SSH 终端 ready 后由前端注入执行）
+    if current < 10 {
+        sqlx::query("ALTER TABLE hosts ADD COLUMN connect_command TEXT")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (10)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -322,7 +334,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 9;
+    const LATEST_VERSION: i64 = 10;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")

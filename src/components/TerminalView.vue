@@ -28,6 +28,7 @@ import { useApiStore } from "@/stores/api"
 import { useTerminalStore } from "@/stores/terminal"
 import { useBroadcastStore } from "@/stores/broadcast"
 import { useStartupStore } from "@/stores/startup"
+import { useHostStore } from "@/stores/hosts"
 import { useKeybindingStore, matchesBinding } from "@/stores/keybindings"
 import { useSudoFill } from "@/composables/useSudoFill"
 import { useAiSelection } from "@/composables/useAiSelection"
@@ -84,6 +85,7 @@ const apiStore = useApiStore()
 const termStore = useTerminalStore()
 const broadcastStore = useBroadcastStore()
 const startupStore = useStartupStore()
+const hostStore = useHostStore()
 const keybindingStore = useKeybindingStore()
 
 const { sudoArmed, armSudo, disarmSudo } = useSudoFill()
@@ -896,6 +898,26 @@ function teardownWs() {
   ws = null
 }
 
+/**
+ * 连接就绪后注入初始命令（每次建连一次；PTY 会缓冲输入，shell 未出提示符也不丢字）。
+ * 本地 tab 用启动设置的"本地终端初始命令"；SSH tab 用主机配置的"连接后自动执行"。
+ */
+function sendInitCommand() {
+  if (props.tab.kind === "local") {
+    const cmd = startupStore.localInitCommand.trim()
+    if (cmd) sendCommand(cmd)
+    return
+  }
+  if (props.tab.kind === "ssh") {
+    const host =
+      props.tab.hostId !== undefined
+        ? hostStore.findHost(props.tab.hostId)
+        : undefined
+    const cmd = host?.connect_command?.trim()
+    if (cmd) sendCommand(cmd)
+  }
+}
+
 async function connectWs(opts: { newSession?: boolean } = {}) {
   if (disposed) return
   // 防御性清理：正常调用方（onMounted / reconnect）此时 ws 应为 null
@@ -999,6 +1021,8 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           // 服务端可能采用了客户端建议的尺寸，确保再同步一次
           sendResize()
           startHeartbeat()
+          // 连接就绪：注入初始命令（本地终端初始命令 / 主机连接后自动执行）
+          sendInitCommand()
           if (props.active) {
             requestAnimationFrame(() => term?.focus())
           }

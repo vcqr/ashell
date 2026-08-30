@@ -61,6 +61,8 @@ export interface Host {
   idle_send_interval?: number | null
   /** 跳板机主机 id（仅 SSH，仅支持一级） */
   jump_host_id?: number | null
+  /** 连接建立后自动执行的命令（终端 ready 后注入；空/缺省不执行） */
+  connect_command?: string | null
   created_at?: string | null
   updated_at?: string | null
 }
@@ -93,6 +95,7 @@ export interface HostCreate {
   inactivity_timeout?: number | null
   idle_send_interval?: number | null
   jump_host_id?: number | null
+  connect_command?: string | null
 }
 
 export interface HostUpdate {
@@ -118,6 +121,8 @@ export interface HostUpdate {
   idle_send_interval?: number | null
   /** 显式传 null 表示清除跳板机配置 */
   jump_host_id?: number | null
+  /** 缺省 = 不修改；显式传 null 表示清除 */
+  connect_command?: string | null
 }
 
 /** 从 ~/.ssh/config 解析出的主机条目 */

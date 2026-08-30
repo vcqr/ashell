@@ -160,6 +160,9 @@ export default {
     autoOpenLocal: "启动后自动打开本地终端",
     defaultShell: "默认 Shell",
     defaultShellHint: "启动自动打开 / 通过 + → 新建本地终端时使用。Auto 表示由平台自动选择。",
+    localInitCommand: "本地终端初始命令",
+    localInitCommandPlaceholder: "如：cd ~/projects",
+    localInitCommandHint: "每个新建的本地终端连接就绪后自动执行一次；留空不执行。",
   },
   ai: {
     title: "AI 助手",
