@@ -410,11 +410,10 @@ async function writeClipboard(text: string) {
 
 function pasteToTerminal(text: string) {
   if (!text || !term) return
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    sendJson({ kind: "cmd", data: text })
-  } else {
-    term.paste(text)
-  }
+  // 必须经 term.paste() 而非直接 sendJson 裸发剪贴板原文：xterm 会把 \r?\n 规范化
+  // 为 \r（CRLF 裸发到 vim 会 \r、\n 各换一行，多出空行），并在远端开启 bracketed
+  // paste 时加 200/201 包裹（防 autoindent 重排缩进）。发送仍走 onData -> WS，与键盘一致。
+  term.paste(text)
 }
 
 function onSelectionChange() {
