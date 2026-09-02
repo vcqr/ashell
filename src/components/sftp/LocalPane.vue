@@ -20,6 +20,7 @@ import type {
 import {
   ArrowUpOutline,
   CheckmarkDoneOutline,
+  CloseOutline,
   CloudUploadOutline,
   CopyOutline,
   CreateOutline,
@@ -78,6 +79,8 @@ const emit = defineEmits<{
   (e: "upload-selection"): void
   /** OS 拖放复制任务开始（父组件据此自动打开下载列表弹窗显示进度） */
   (e: "copy-started"): void
+  /** 关闭本地栏（双栏 -> 单栏），由父组件执行宽度记忆与切换 */
+  (e: "close"): void
 }>()
 
 const { t } = useI18n()
@@ -1119,6 +1122,17 @@ onMounted(() => {
             <EyeOffOutline v-if="showHidden" />
             <EyeOutline v-else />
           </NIcon>
+        </template>
+      </NButton>
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="t('sftp.localPane.close')"
+        @click="emit('close')"
+      >
+        <template #icon>
+          <NIcon><CloseOutline /></NIcon>
         </template>
       </NButton>
     </div>

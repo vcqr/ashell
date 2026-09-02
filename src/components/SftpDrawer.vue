@@ -2892,6 +2892,7 @@ function openInStandaloneWindow() {
             @transfer-dir-up="onLocalDirUpload"
             @upload-selection="transferUp"
             @copy-started="downloadModalOpen = true"
+            @close="toggleDualPane"
           />
           <div v-if="dualPane" class="transfer-bar">
             <NTooltip placement="left">
@@ -3201,13 +3202,13 @@ function openInStandaloneWindow() {
                 <NButton
                   size="small"
                   quaternary
+                  circle
                   :title="t('sftp.uploadListTitle')"
                   @click="uploadModalOpen = true"
                 >
                   <template #icon>
                     <NIcon><CloudUploadOutline /></NIcon>
                   </template>
-                  {{ t("sftp.uploadListButton") }}
                 </NButton>
               </NBadge>
               <NBadge
@@ -3220,13 +3221,13 @@ function openInStandaloneWindow() {
                 <NButton
                   size="small"
                   quaternary
+                  circle
                   :title="t('sftp.downloadListTitle')"
                   @click="downloadModalOpen = true"
                 >
                   <template #icon>
                     <NIcon><DownloadOutline /></NIcon>
                   </template>
-                  {{ t("sftp.downloadListButton") }}
                 </NButton>
               </NBadge>
             </div>
@@ -3763,9 +3764,8 @@ function openInStandaloneWindow() {
 .toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   flex-shrink: 0;
   min-width: 0;
   padding-bottom: 10px;
@@ -3781,8 +3781,15 @@ function openInStandaloneWindow() {
   min-width: 0;
 }
 
+/* 两侧都不收缩：宽度不足时右组经 wrap 整体换到第二行，
+   而不是压缩左组导致按钮溢出垫到过滤框下层 */
+.toolbar-left {
+  flex-shrink: 0;
+}
+
 .toolbar-right {
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .toolbar :deep(.n-upload) {

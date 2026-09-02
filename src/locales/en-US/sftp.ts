@@ -41,6 +41,7 @@ export default {
     empty: "Directory is empty",
     toggleButton: "Local",
     toggleTitle: "Show/hide local pane (dual-pane mode)",
+    close: "Close local pane",
     dragGhost: "{count} item(s) → remote",
     ctxUpload: "Upload this file",
     ctxUploadDir: "Upload this folder",
