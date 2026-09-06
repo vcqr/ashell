@@ -8,6 +8,7 @@ export default {
     terminal: "终端",
     shortcuts: "快捷键",
     window: "窗口",
+    tray: "托盘",
     icons: "图标",
     startup: "启动",
     ai: "AI 助手",
@@ -127,6 +128,21 @@ export default {
         activityBar: "活动栏",
       },
     },
+  },
+  tray: {
+    title: "系统托盘",
+    enable: "启用系统托盘",
+    enableHint: "关闭后不再显示托盘图标，且关闭窗口将总是退出应用。",
+    closeAction: "点击关闭按钮时",
+    closeActionQuit: "退出应用",
+    closeActionHide: "最小化到托盘（终端会话保持连接）",
+    closeActionHint:
+      "最小化到托盘后窗口从任务栏消失，但后台保持运行、会话不断开；点击托盘图标或右键菜单可重新打开窗口。",
+    autostart: "开机自启",
+    autostartHint: "登录系统后自动启动 AShell。",
+    autostartFailed: "设置开机自启失败，请检查系统权限",
+    menuHint:
+      "托盘菜单：显示主窗口 · 开机自启 · 关闭窗口时行为 · 退出。左键单击托盘图标显示主窗口。",
   },
   window: {
     wallpaperSet: "壁纸已设置",

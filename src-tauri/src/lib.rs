@@ -11,6 +11,7 @@ mod routers;
 mod service;
 mod sidecar;
 mod sidecar_factory;
+mod tray;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -148,7 +149,27 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(AppCtx::new())
+        .on_window_event(|window, event| {
+            // 主窗口关闭策略：最小化到托盘时拦截关闭，仅隐藏窗口（SSH 会话保活）。
+            // 其余动态窗口（ashell-win/sftp/ai-*）不拦截，照常关闭。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() != "main" {
+                    return;
+                }
+                let s = tray::settings();
+                if s.enabled && s.close_action == tray::CloseAction::Hide {
+                    api.prevent_close();
+                    if let Err(e) = window.hide() {
+                        log::warn!("hide main window to tray: {e}");
+                    }
+                }
+            }
+        })
         .setup(|app| {
             // 自定义应用菜单，使 macOS "关于" 面板显示正确的应用图标
             let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
@@ -212,6 +233,11 @@ pub fn run() {
                 });
             }
 
+            // 系统托盘（设置持久化在 ~/.ashell/tray.json，关闭策略在 Rust 侧拦截窗口关闭）
+            if let Err(e) = tray::setup(app.handle()) {
+                log::error!("setup tray: {e}");
+            }
+
             let handle = app.handle().clone();
             // 在 Tauri 自带的 tokio runtime 中启动 API server
             tauri::async_runtime::spawn(async move {
@@ -248,14 +274,30 @@ pub fn run() {
             sidecar::write_to_sidecar,
             sidecar::kill_sidecar,
             sidecar::get_sidecar_pid,
-            sidecar::has_sidecar
+            sidecar::has_sidecar,
+            tray::tray_get_settings,
+            tray::tray_set_settings,
+            tray::tray_get_autostart,
+            tray::tray_set_autostart,
+            tray::tray_apply_locale
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_handle, event| {
-            // 应用退出时清理所有 sidecar 子进程，避免僵尸进程
-            if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
-                sidecar::kill_all_sidecars();
+            match event {
+                // 应用退出时清理所有 sidecar 子进程，避免僵尸进程
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                    sidecar::kill_all_sidecars();
+                }
+                // macOS：窗口最小化到托盘后点 Dock 图标恢复主窗口
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen {
+                    has_visible_windows: false,
+                    ..
+                } => {
+                    tray::show_main_window(_handle);
+                }
+                _ => {}
             }
         });
 }

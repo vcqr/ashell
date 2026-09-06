@@ -10,6 +10,7 @@ import ShortcutsSection from "./ShortcutsSection.vue";
 import IconsSection from "./IconsSection.vue";
 import StartupSection from "./StartupSection.vue";
 import WindowSection from "./WindowSection.vue";
+import TraySection from "./TraySection.vue";
 import AiSection from "./AiSection.vue";
 import SecuritySection from "./SecuritySection.vue";
 import AboutSection from "./AboutSection.vue";
@@ -23,6 +24,7 @@ type SettingsTab =
   | "terminal"
   | "shortcuts"
   | "window"
+  | "tray"
   | "icons"
   | "startup"
   | "ai"
@@ -119,6 +121,14 @@ function close() {
           </button>
           <button
             class="settings-tab"
+            :class="{ active: activeTab === 'tray' }"
+            type="button"
+            @click="activeTab = 'tray'"
+          >
+            {{ t("settings.tabs.tray") }}
+          </button>
+          <button
+            class="settings-tab"
             :class="{ active: activeTab === 'icons' }"
             type="button"
             @click="activeTab = 'icons'"
@@ -179,6 +189,7 @@ function close() {
           <TerminalSection v-else-if="activeTab === 'terminal'" />
           <ShortcutsSection v-else-if="activeTab === 'shortcuts'" />
           <WindowSection v-else-if="activeTab === 'window'" />
+          <TraySection v-else-if="activeTab === 'tray'" />
           <IconsSection v-else-if="activeTab === 'icons'" />
           <StartupSection v-else-if="activeTab === 'startup'" />
           <AiSection v-else-if="activeTab === 'ai'" />

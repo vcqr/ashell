@@ -8,6 +8,7 @@ export default {
     terminal: "Terminal",
     shortcuts: "Shortcuts",
     window: "Window",
+    tray: "Tray",
     icons: "Icons",
     startup: "Startup",
     ai: "AI Assistant",
@@ -127,6 +128,22 @@ export default {
         activityBar: "Activity Bar",
       },
     },
+  },
+  tray: {
+    title: "System Tray",
+    enable: "Enable system tray",
+    enableHint:
+      "When disabled, the tray icon is hidden and closing the window always quits the app.",
+    closeAction: "When clicking the close button",
+    closeActionQuit: "Quit the app",
+    closeActionHide: "Minimize to tray (keep terminal sessions connected)",
+    closeActionHint:
+      "After minimizing to tray, the window disappears from the taskbar but keeps running in the background with sessions alive. Click the tray icon or use its menu to reopen the window.",
+    autostart: "Launch at login",
+    autostartHint: "Start AShell automatically when you log in.",
+    autostartFailed: "Failed to set launch at login. Please check system permissions.",
+    menuHint:
+      "Tray menu: Show Main Window · Launch at Login · Close Behavior · Quit. Left-click the tray icon to show the main window.",
   },
   window: {
     wallpaperSet: "Wallpaper set",

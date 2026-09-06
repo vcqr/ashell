@@ -41,6 +41,7 @@ import UpdateChecker from "@/components/UpdateChecker.vue";
 import { useApiStore } from "@/stores/api";
 import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
+import { useTrayStore } from "@/stores/tray";
 import { useTheme } from "@/composables/useTheme";
 import { useTabs } from "@/composables/useTabs";
 import { usePanels } from "@/composables/usePanels";
@@ -54,6 +55,10 @@ const terminalStore = useTerminalStore();
 void terminalStore.loadSystemFonts();
 
 const startupStore = useStartupStore();
+
+// 托盘设置：启动即加载（顺带把界面语言同步给托盘菜单）
+const trayStore = useTrayStore();
+void trayStore.load();
 
 // 全局错误边界：捕获子组件未处理的异常，避免白屏
 onErrorCaptured((err, _instance, info) => {
