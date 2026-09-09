@@ -8,6 +8,8 @@ import {
   resolveCurrentTerminalTheme,
   type TerminalThemeName,
 } from "@/theme/terminal"
+import type { TerminalThemePreset } from "@/theme/terminalPresets"
+import { guessVariant, toSchemeJson } from "@/theme/terminalImport"
 
 export type CursorStyle = "block" | "underline" | "bar"
 export type RightClickAction = "paste" | "smart" | "contextMenu" | "none"
@@ -34,6 +36,13 @@ export interface TerminalConfig {
   scrollback: number
   autoReconnect: boolean
   tabShortcutsEnabled: boolean
+}
+
+/** 用户导入的自定义终端主题（含名称与完整配色），持久化到 localStorage。 */
+export interface CustomTerminalTheme {
+  id: string
+  name: string
+  theme: ITheme
 }
 
 const STORAGE_KEY = "ashell:terminal-config"
@@ -430,6 +439,74 @@ export const useTerminalStore = defineStore("terminal", () => {
     resetTerminalTheme("light")
   }
 
+  /**
+   * 把预设 / 自定义主题的完整配色覆盖到目标（dark 或 light）上。
+   * 写入 reactive 主题后由既有 watch 自动持久化并实时应用到所有终端。
+   */
+  function applyPresetTheme(preset: TerminalThemePreset, target: TerminalThemeName) {
+    Object.assign(target === "dark" ? darkTheme : lightTheme, preset.theme)
+  }
+
+  /** 自定义主题（导入产生），持久化到 localStorage。 */
+  const CUSTOM_THEMES_KEY = "ashell:terminal-custom-themes"
+
+  function loadCustomThemes(): CustomTerminalTheme[] {
+    if (typeof localStorage === "undefined") return []
+    try {
+      const raw = localStorage.getItem(CUSTOM_THEMES_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) return []
+      const list: CustomTerminalTheme[] = []
+      for (const item of parsed) {
+        if (typeof item !== "object" || item === null) continue
+        const { id, name, theme } = item as Record<string, unknown>
+        if (typeof id !== "string" || typeof name !== "string") continue
+        if (typeof theme !== "object" || theme === null) continue
+        // 用亮度归属补全缺失键，过滤非法历史数据
+        const variant = guessVariant(theme as Partial<ITheme>)
+        list.push({
+          id,
+          name,
+          theme: mergeTerminalTheme(variant, theme as Partial<ITheme>),
+        })
+      }
+      return list
+    } catch {
+      return []
+    }
+  }
+
+  const customThemes = ref<CustomTerminalTheme[]>(loadCustomThemes())
+
+  watch(customThemes, persistCustomThemes, { deep: true })
+
+  function persistCustomThemes() {
+    if (typeof localStorage === "undefined") return
+    try {
+      localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(customThemes.value))
+    } catch {
+      // ignore
+    }
+  }
+
+  /** 保存导入的主题到自定义列表并立即应用到目标。返回生成的 id。 */
+  function addCustomTheme(name: string, theme: ITheme, target: TerminalThemeName): string {
+    const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    customThemes.value.unshift({ id, name, theme: { ...theme } })
+    applyPresetTheme({ id, name, variant: guessVariant(theme), theme }, target)
+    return id
+  }
+
+  function removeCustomTheme(id: string) {
+    customThemes.value = customThemes.value.filter((t) => t.id !== id)
+  }
+
+  /** 导出目标主题为 Windows Terminal 风格 scheme JSON 字符串。 */
+  function exportThemeJson(name: string, target: TerminalThemeName): string {
+    return toSchemeJson(name, target === "dark" ? darkTheme : lightTheme)
+  }
+
   /** 给 TerminalView 用：返回当前已解析主题的快照。背景色注入窗口透明度。 */
   function getActiveTerminalTheme(): ITheme {
     const base = resolveCurrentTerminalTheme() === "dark" ? darkTheme : lightTheme
@@ -501,6 +578,11 @@ export const useTerminalStore = defineStore("terminal", () => {
     resetDefaults,
     resetTerminalTheme,
     resetTerminalThemes,
+    applyPresetTheme,
+    customThemes,
+    addCustomTheme,
+    removeCustomTheme,
+    exportThemeJson,
     getActiveTerminalTheme,
     setFontSize,
   }
