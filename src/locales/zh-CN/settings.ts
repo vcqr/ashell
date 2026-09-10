@@ -161,6 +161,15 @@ export default {
     autostart: "开机自启",
     autostartHint: "登录系统后自动启动 AShell。",
     autostartFailed: "设置开机自启失败，请检查系统权限",
+    hotkey: "全局快捷键唤起",
+    hotkeyHint:
+      "在系统任意位置按下该快捷键即可显示/隐藏主窗口，未启用托盘时同样有效。F1-F12 等功能键可单独设置；若被其他应用占用会提示注册失败。",
+    hotkeyRecord: "录制",
+    hotkeyCancel: "取消",
+    hotkeyClear: "清除",
+    hotkeyRecording: "请按下快捷键…（Esc 取消，Backspace 清除）",
+    hotkeyNotSet: "未设置",
+    hotkeyFailed: "设置全局快捷键失败：{error}",
     menuHint:
       "托盘菜单：显示主窗口 · 开机自启 · 关闭窗口时行为 · 退出。左键单击托盘图标显示主窗口。",
   },
@@ -284,6 +293,14 @@ export default {
     clearTitle: "清除操作密码",
     clearConfirm: "确定清除操作密码？清除后查看加密凭证将不再需要密码。",
     hint: "操作密码用于保护主机加密的密码和私钥。设置后，在编辑主机时点击「查看」按钮需输入操作密码才能查看。",
+    knownHosts: "已信任主机指纹",
+    knownHostsHint:
+      "首次连接 SSH 主机时确认过的服务器密钥指纹（TOFU）。删除后下次连接该主机将重新确认。",
+    knownHostsEmpty: "暂无记录",
+    knownHostsDeleteTitle: "删除信任的指纹",
+    knownHostsDeleteConfirm: "删除 {label} 的指纹记录？下次连接该主机时将重新确认。",
+    knownHostsDeleted: "已删除",
+    knownHostsDeleteFailed: "删除失败：{error}",
   },
   about: {
     title: "关于 ASHELL",

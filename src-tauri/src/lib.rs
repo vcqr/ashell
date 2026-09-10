@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod errors;
 mod handlers;
+mod hotkey;
 mod middleware;
 mod models;
 mod routers;
@@ -57,6 +58,33 @@ fn get_api_info(ctx: State<'_, AppCtx>) -> Result<ApiInfo, String> {
         .get()
         .cloned()
         .ok_or_else(|| "api server not started yet".into())
+}
+
+/// 关闭 WebView2 的浏览器快捷键（F5 刷新 / F11 全屏 / Ctrl+F 查找 / Ctrl+P 打印等）。
+/// 终端应用里误触 F5 会整页重载、丢失全部 UI 状态；同时这些键被 WebView2 拦截后
+/// 前端永远收不到，无法录制成全局热键。仅 Windows 有此机制（macOS/Linux 无）。
+#[cfg(windows)]
+fn disable_browser_accelerators(win: &tauri::WebviewWindow) {
+    let result = win.with_webview(|webview| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+        use windows::core::Interface;
+
+        let controller = webview.controller();
+        let Ok(web) = (unsafe { controller.CoreWebView2() }) else {
+            return;
+        };
+        let Ok(settings) = (unsafe { web.Settings() }) else {
+            return;
+        };
+        if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
+            unsafe {
+                let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+            }
+        }
+    });
+    if let Err(e) = result {
+        log::warn!("disable browser accelerators: {e}");
+    }
 }
 
 /// 在系统默认文件管理器中打开 ~/.ashell/icons 目录。
@@ -153,6 +181,16 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // 全局快捷键唤起（quake 式显示/隐藏主窗口）；注册的热键由 hotkey 模块管理
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        hotkey::toggle_main_window(app);
+                    }
+                })
+                .build(),
+        )
         .manage(AppCtx::new())
         .on_window_event(|window, event| {
             // 主窗口关闭策略：最小化到托盘时拦截关闭，仅隐藏窗口（SSH 会话保活）。
@@ -223,6 +261,9 @@ pub fn run() {
 
             // 前端正常情况下会在首帧后主动 show；这里兜底：前端异常时避免窗口一直隐藏。
             if let Some(win) = app.get_webview_window("main") {
+                // 关闭 WebView2 浏览器快捷键（仅 Windows 生效，其它平台无此机制）
+                #[cfg(windows)]
+                disable_browser_accelerators(&win);
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                     if win.is_visible().ok() == Some(false) {
@@ -236,6 +277,11 @@ pub fn run() {
             // 系统托盘（设置持久化在 ~/.ashell/tray.json，关闭策略在 Rust 侧拦截窗口关闭）
             if let Err(e) = tray::setup(app.handle()) {
                 log::error!("setup tray: {e}");
+            }
+
+            // 全局快捷键唤起（设置持久化在 ~/.ashell/hotkey.json）
+            if let Err(e) = hotkey::setup(app.handle()) {
+                log::error!("setup global hotkey: {e}");
             }
 
             let handle = app.handle().clone();
@@ -279,7 +325,11 @@ pub fn run() {
             tray::tray_set_settings,
             tray::tray_get_autostart,
             tray::tray_set_autostart,
-            tray::tray_apply_locale
+            tray::tray_apply_locale,
+            hotkey::hotkey_get_settings,
+            hotkey::hotkey_set_settings,
+            hotkey::hotkey_suspend,
+            hotkey::hotkey_resume
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

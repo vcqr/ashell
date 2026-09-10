@@ -162,6 +162,15 @@ export default {
     autostart: "Launch at login",
     autostartHint: "Start AShell automatically when you log in.",
     autostartFailed: "Failed to set launch at login. Please check system permissions.",
+    hotkey: "Global hotkey",
+    hotkeyHint:
+      "Press this hotkey anywhere in the system to show/hide the main window. Works even when the tray is disabled. Function keys (F1-F12) can be used alone. You'll get an error if another app has taken the shortcut.",
+    hotkeyRecord: "Record",
+    hotkeyCancel: "Cancel",
+    hotkeyClear: "Clear",
+    hotkeyRecording: "Press shortcut… (Esc to cancel, Backspace to clear)",
+    hotkeyNotSet: "Not set",
+    hotkeyFailed: "Failed to set global hotkey: {error}",
     menuHint:
       "Tray menu: Show Main Window · Launch at Login · Close Behavior · Quit. Left-click the tray icon to show the main window.",
   },
@@ -285,6 +294,14 @@ export default {
     clearTitle: "Clear Operation Password",
     clearConfirm: "Clear the operation password? Revealing credentials will no longer require a password.",
     hint: "The operation password protects host credentials (passwords and private keys). Once set, clicking \"Reveal\" while editing a host requires the operation password.",
+    knownHosts: "Trusted Host Fingerprints",
+    knownHostsHint:
+      "Server key fingerprints confirmed on first SSH connection (TOFU). Deleting a record will re-confirm the host on the next connection.",
+    knownHostsEmpty: "No records",
+    knownHostsDeleteTitle: "Delete Trusted Fingerprint",
+    knownHostsDeleteConfirm: "Delete the fingerprint record for {label}? The host will be re-confirmed on the next connection.",
+    knownHostsDeleted: "Deleted",
+    knownHostsDeleteFailed: "Delete failed: {error}",
   },
   about: {
     title: "About ASHELL",
