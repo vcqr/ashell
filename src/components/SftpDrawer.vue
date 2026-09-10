@@ -13,6 +13,7 @@ import {
   NPopover,
   NSpace,
   NSpin,
+  NSplit,
   NTag,
   NTooltip,
   NUpload,
@@ -2712,6 +2713,36 @@ function toggleDualPane() {
   width.value = loadWidth()
 }
 
+/* ---------- 双栏左右宽度拖拽（NSplit） ---------- */
+const SPLIT_SIZE_KEY = "ashell:sftp-dual-split"
+/** 本地栏宽度占比上下限（NSplit number 语义 = 可用宽度的比例） */
+const SPLIT_MIN = 0.2
+const SPLIT_MAX = 0.75
+const SPLIT_DEFAULT = 0.42
+
+function loadSplitSize(): number {
+  if (typeof localStorage === "undefined") return SPLIT_DEFAULT
+  const n = Number(localStorage.getItem(SPLIT_SIZE_KEY))
+  if (!Number.isFinite(n) || n <= 0) return SPLIT_DEFAULT
+  return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, n))
+}
+
+/** 双栏本地栏宽度占比（受控 NSplit；拖动实时更新，拖完持久化） */
+const splitSize = ref<number>(loadSplitSize())
+
+function onSplitSizeUpdate(v: string | number) {
+  // size 始终以 number 传入，string 分支仅为类型完备
+  if (typeof v === "number") splitSize.value = v
+}
+
+function persistSplitSize() {
+  try {
+    localStorage.setItem(SPLIT_SIZE_KEY, String(splitSize.value))
+  } catch {
+    // ignore
+  }
+}
+
 const width = ref<number>(0)
 const resizing = ref(false)
 
@@ -2875,25 +2906,41 @@ function openInStandaloneWindow() {
         <div
           v-else
           class="sftp-body"
-          :class="{ dual: dualPane }"
           @contextmenu="onBlankContextMenu"
           @mousedown.capture="activePane = 'remote'"
         >
-          <LocalPane
-            v-if="dualPane"
-            ref="localPaneRef"
-            class="local-pane-slot"
-            :dir="localDir"
-            :sid="props.sid ?? ''"
-            @mousedown="activePane = 'local'"
-            @update:dir="persistLocalDir"
-            @select="localSelectedFiles = $event"
-            @transfer-up="onLocalUpload"
-            @transfer-dir-up="onLocalDirUpload"
-            @upload-selection="transferUp"
-            @copy-started="downloadModalOpen = true"
-            @close="toggleDualPane"
-          />
+          <!-- 双栏左右分栏：NSplit 分隔条可拖拽调宽（本地占比持久化）；
+               单栏时禁用拖拽、左栏宽度归零，结构保持一致避免双份远程模板 -->
+          <NSplit
+            direction="horizontal"
+            class="dual-split"
+            :disabled="!dualPane"
+            :size="dualPane ? splitSize : 0"
+            :min="SPLIT_MIN"
+            :max="SPLIT_MAX"
+            :resize-trigger-size="5"
+            @update:size="onSplitSizeUpdate"
+            @drag-end="persistSplitSize"
+          >
+            <template #1>
+              <LocalPane
+                v-if="dualPane"
+                ref="localPaneRef"
+                class="local-pane-slot"
+                :dir="localDir"
+                :sid="props.sid ?? ''"
+                @mousedown="activePane = 'local'"
+                @update:dir="persistLocalDir"
+                @select="localSelectedFiles = $event"
+                @transfer-up="onLocalUpload"
+                @transfer-dir-up="onLocalDirUpload"
+                @upload-selection="transferUp"
+                @copy-started="downloadModalOpen = true"
+                @close="toggleDualPane"
+              />
+            </template>
+            <template #2>
+              <div class="remote-side">
           <div v-if="dualPane" class="transfer-bar">
             <NTooltip placement="left">
               <template #trigger>
@@ -3249,6 +3296,9 @@ function openInStandaloneWindow() {
             />
           </NSpin>
           </div>
+              </div>
+            </template>
+          </NSplit>
 
           <!-- 远程侧拖拽跟随标签。Teleport 到 body：本 aside 有 transform
                （开合动画），fixed 的包含块会变成它导致坐标漂移 -->
@@ -3546,14 +3596,62 @@ function openInStandaloneWindow() {
   gap: 10px;
 }
 
-/* 双栏模式：本地栏在左、远程栏在右 */
-.sftp-body.dual {
+/* 双栏分栏容器（NSplit）：占满 sftp-body，内部两栏均为横向 flex */
+.dual-split {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dual-split :deep(.n-split-pane-1),
+.dual-split :deep(.n-split-pane-2) {
+  display: flex;
   flex-direction: row;
+  min-width: 0;
 }
 
 .local-pane-slot {
-  flex: 0 0 42%;
+  flex: 1 1 auto;
   min-width: 0;
+}
+
+/* pane-2 内横向容器：中间条（仅双栏渲染）+ 远程栏 */
+.remote-side {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+/* 分隔条：命中区向两侧加宽便于抓取，悬停/拖动高亮主题色 */
+.dual-split :deep(.n-split__resize-trigger-wrapper) {
+  position: relative;
+}
+
+.dual-split :deep(.n-split__resize-trigger-wrapper)::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.dual-split :deep(.n-split__resize-trigger) {
+  border-radius: 2px;
+  /* 竖向虚线把手：居中 1px 宽点列，常态可见、暗示可拖拽 */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--ashell-text-subtle, rgba(128, 128, 128, 0.5)) 0 2px,
+    transparent 2px 6px
+  );
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 1px 100%;
+}
+
+.dual-split :deep(.n-split__resize-trigger:hover),
+.dual-split :deep(.n-split__resize-trigger--hover) {
+  background-color: var(--ashell-accent, #7c5cff);
+  background-image: none;
 }
 
 .transfer-bar {
