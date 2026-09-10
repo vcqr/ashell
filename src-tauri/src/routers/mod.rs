@@ -224,6 +224,15 @@ pub fn build_router(state: AppState) -> Router {
                 .put(handlers::op_password::change)
                 .delete(handlers::op_password::clear),
         )
+        // 已信任 SSH 主机指纹（TOFU）管理
+        .route(
+            "/api/known-hosts",
+            get(handlers::known_host::list).post(handlers::known_host::trust),
+        )
+        .route(
+            "/api/known-hosts/{id}",
+            axum::routing::delete(handlers::known_host::remove),
+        )
         // 备份与恢复（S3）
         .route(
             "/api/backup/config",

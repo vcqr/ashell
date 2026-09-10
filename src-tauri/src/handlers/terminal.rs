@@ -78,6 +78,9 @@ enum ClientMsg {
         #[serde(default)]
         remember: bool,
     },
+    /// 用户确认/拒绝信任主机密钥（TOFU 弹窗结果）
+    #[serde(rename = "hostkey_response")]
+    HostKeyResponse { trust: bool },
     /// 用户取消重新认证
     #[serde(rename = "auth_cancel")]
     AuthCancel,
@@ -97,6 +100,19 @@ struct AuthRequiredMsg<'a> {
     host_id: i64,
     /// user@addr:port 形式的目标描述，供弹窗展示
     label: &'a str,
+}
+
+/// 服务端消息：主机密钥待确认（首次连接 / 指纹变更），请求前端弹窗核对指纹
+#[derive(Debug, Serialize)]
+struct HostKeyConfirmMsg<'a> {
+    kind: &'a str,
+    host_id: i64,
+    /// addr:port 形式的目标描述，供弹窗展示
+    label: &'a str,
+    key_type: &'a str,
+    fingerprint: &'a str,
+    /// 库中已存指纹；Some 即指纹变更（弹窗需强警告）
+    previous: Option<&'a str>,
 }
 
 /// 等待用户在弹窗中输入密码的超时时间
@@ -164,6 +180,66 @@ async fn request_new_password(
                     Some(Ok(_)) => {}
                     Some(Err(e)) => {
                         log::warn!("ws recv error during auth: {e}");
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 主机密钥待确认时向前端请求指纹核对结果。
+///
+/// 返回 `Some(true)` 表示用户信任（调用方写库后重试建连）；
+/// `Some(false)` / `None` 表示用户拒绝、取消、超时或连接已断开。
+async fn request_hostkey_confirm(
+    ws_tx: &mut SplitSink<WebSocket, Message>,
+    ws_rx: &mut SplitStream<WebSocket>,
+    host_id: i64,
+    label: &str,
+    key_type: &str,
+    fingerprint: &str,
+    previous: Option<&str>,
+) -> Option<bool> {
+    let msg = serde_json::to_string(&HostKeyConfirmMsg {
+        kind: "hostkey_confirm",
+        host_id,
+        label,
+        key_type,
+        fingerprint,
+        previous,
+    })
+    .ok()?;
+    if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+        return None;
+    }
+
+    let deadline = tokio::time::sleep(AUTH_INPUT_TIMEOUT);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => {
+                send_fatal(ws_tx, "等待主机密钥确认超时").await;
+                return None;
+            }
+            frame = ws_rx.next() => {
+                match frame {
+                    Some(Ok(Message::Text(text))) => {
+                        let s = text.as_str();
+                        if !(s.starts_with('{') && s.ends_with('}')) {
+                            continue;
+                        }
+                        match serde_json::from_str::<ClientMsg>(s) {
+                            Ok(ClientMsg::HostKeyResponse { trust }) => return Some(trust),
+                            Ok(ClientMsg::AuthCancel) => return None,
+                            Ok(ClientMsg::Ping) => send_pong(ws_tx).await,
+                            _ => {} // 建连阶段忽略其它输入帧
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => return None,
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => {
+                        log::warn!("ws recv error during hostkey confirm: {e}");
                         return None;
                     }
                 }
@@ -332,14 +408,57 @@ async fn run_terminal(
     };
 
     // 2) 建立 SSH session 并注册到全局（配置了跳板机时经 direct-tcpip 双跳）。
-    // 认证失败（典型场景：服务器上改了密码，本地存的还是旧密码）时向前端
-    // 弹窗请求新密码，可选记住，然后重试建连。
+    // 主机密钥未确认时向前端弹窗核对指纹，信任写库后重试；认证失败（典型场景：
+    // 服务器上改了密码，本地存的还是旧密码）时向前端弹窗请求新密码，可选记住。
+    // attempts 只计认证重试（防暴力猜密码），主机密钥确认不消耗次数。
     let mut attempts: u32 = 0;
     let session_arc = loop {
-        attempts += 1;
-        match Session::connect_prepared(jump_host.as_ref(), &host).await {
+        match Session::connect_prepared(&state.db, jump_host.as_ref(), &host).await {
             Ok(s) => break Arc::new(s),
+            Err(AppError::HostKeyVerify {
+                host_id: failed_id,
+                addr,
+                port,
+                key_type,
+                fingerprint,
+                previous,
+            }) => {
+                let label = format!("{addr}:{port}");
+                match request_hostkey_confirm(
+                    &mut ws_tx,
+                    &mut ws_rx,
+                    failed_id,
+                    &label,
+                    &key_type,
+                    &fingerprint,
+                    previous.as_deref(),
+                )
+                .await
+                {
+                    Some(true) => {
+                        if let Err(e) = service::known_host::trust(
+                            &state.db,
+                            &addr,
+                            port,
+                            &key_type,
+                            &fingerprint,
+                        )
+                        .await
+                        {
+                            send_fatal(&mut ws_tx, &format!("保存主机指纹失败: {e}")).await;
+                            anyhow::bail!("save trusted host key failed: {e}");
+                        }
+                        log::info!("host key trusted for {label} ({key_type})");
+                        // 信任写库后继续循环重试建连
+                    }
+                    _ => {
+                        send_fatal(&mut ws_tx, "主机密钥未被信任，连接已取消").await;
+                        anyhow::bail!("host key rejected for {label}");
+                    }
+                }
+            }
             Err(AppError::AuthFailed { host_id: failed_id }) => {
+                attempts += 1;
                 if attempts >= MAX_AUTH_ATTEMPTS {
                     send_fatal(&mut ws_tx, "多次认证失败，已停止重试").await;
                     anyhow::bail!("ssh auth failed after {attempts} attempts");
@@ -480,8 +599,9 @@ async fn run_terminal(
                                             }
                                         }
                                     }
-                                    // 会话已建立后迟到的认证帧：忽略
+                                    // 会话已建立后迟到的认证/主机密钥帧：忽略
                                     ClientMsg::AuthResponse { .. } | ClientMsg::AuthCancel => {}
+                                    ClientMsg::HostKeyResponse { .. } => {}
                                 }
                             } else if channel.data(s.as_bytes()).await.is_err() {
                                 break;

@@ -293,6 +293,18 @@ pub struct CommandTemplateUpdate {
     pub description: Option<String>,
 }
 
+/// 已信任的 SSH 主机密钥指纹（TOFU，known_hosts 表）
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct KnownHost {
+    pub id: i64,
+    pub addr: String,
+    pub port: i64,
+    pub key_type: String,
+    pub fingerprint: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

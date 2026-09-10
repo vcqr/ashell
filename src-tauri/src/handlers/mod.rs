@@ -2,6 +2,7 @@ pub mod forward;
 pub mod group;
 pub mod host;
 pub mod icons;
+pub mod known_host;
 pub mod local;
 pub mod serial;
 pub mod sftp;

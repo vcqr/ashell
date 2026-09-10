@@ -22,6 +22,19 @@ pub enum AppError {
     #[error("ssh authentication failed (host {host_id})")]
     AuthFailed { host_id: i64 },
 
+    /// SSH 主机密钥待确认（首次连接或指纹变更）。终端 WS 走交互式确认；
+    /// REST 调用方收到 409 + 结构化字段，做"确认 → 信任 → 重试"两段式流程
+    #[error("host key verification required for {addr}:{port}")]
+    HostKeyVerify {
+        host_id: i64,
+        addr: String,
+        port: u16,
+        key_type: String,
+        fingerprint: String,
+        /// 库中已存指纹（指纹变更场景）；首次连接为 None
+        previous: Option<String>,
+    },
+
     #[error("{0}")]
     Sftp(String),
 
@@ -51,6 +64,7 @@ impl AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::AuthFailed { .. } => StatusCode::UNAUTHORIZED,
+            AppError::HostKeyVerify { .. } => StatusCode::CONFLICT,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Sftp(msg) => {
                 let lower = msg.to_ascii_lowercase();
@@ -76,10 +90,32 @@ impl From<anyhow::Error> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status();
-        let body = Json(json!({
-            "code": status.as_u16(),
-            "message": self.to_string(),
-        }));
+        // HostKeyVerify 附带完整指纹信息，REST 调用方（如 SFTP 独立建联）
+        // 据此弹确认框，信任后重试原请求
+        let body = match &self {
+            AppError::HostKeyVerify {
+                host_id,
+                addr,
+                port,
+                key_type,
+                fingerprint,
+                previous,
+            } => Json(json!({
+                "code": status.as_u16(),
+                "kind": "hostkey_verify",
+                "message": self.to_string(),
+                "hostId": host_id,
+                "addr": addr,
+                "port": port,
+                "keyType": key_type,
+                "fingerprint": fingerprint,
+                "previous": previous,
+            })),
+            _ => Json(json!({
+                "code": status.as_u16(),
+                "message": self.to_string(),
+            })),
+        };
         (status, body).into_response()
     }
 }

@@ -23,6 +23,7 @@ use crate::errors::{AppError, AppResult};
 use crate::models::{DbPool, Host};
 use crate::service::forward as forward_svc;
 use crate::service::host as host_svc;
+use crate::service::known_host;
 use crate::service::sftp as sftp_svc;
 
 static SSH_CLIENT_MAP: Lazy<RwLock<HashMap<String, Arc<Session>>>> =
@@ -72,25 +73,55 @@ pub struct CommandExecutedResult {
     pub exit_status: u32,
 }
 
-/// russh client handler，全部接受 server key（TOFU 简化版）。
+/// check_server_key 拒绝密钥时留下的待确认信息：握手会以 UnknownKey 失败，
+/// connect_* 据此还原成 [`AppError::HostKeyVerify`] 交给上层发起用户确认
+#[derive(Debug, Clone)]
+struct PendingHostKey {
+    key_type: String,
+    fingerprint: String,
+    /// 库中已存指纹（变更场景）；首次连接为 None
+    previous: Option<String>,
+}
+
+/// russh client handler：known_hosts 指纹校验（TOFU）。
 ///
 /// 携带一个共享的 `sid`：会话建立时尚未分配，由调用方在 `Session::connect` 之后
 /// 用 [`Session::attach_sid`] 回填。一旦写入，远程转发回来的 channel 就能据此
 /// 路由到 [`crate::service::forward`] 中对应的规则。
-///
-/// TODO: 后续接入 known_hosts 校验
 pub struct ClientHandler {
     sid: Arc<AsyncMutex<Option<String>>>,
+    /// 被连主机身份：known_hosts 按 addr + port + key_type 查询
+    host_id: i64,
+    addr: String,
+    port: u16,
+    pool: DbPool,
+    pending_key: Arc<AsyncMutex<Option<PendingHostKey>>>,
 }
 
 impl ClientHandler {
-    fn new() -> (Self, Arc<AsyncMutex<Option<String>>>) {
+    fn new(
+        host_id: i64,
+        addr: String,
+        port: u16,
+        pool: DbPool,
+    ) -> (
+        Self,
+        Arc<AsyncMutex<Option<String>>>,
+        Arc<AsyncMutex<Option<PendingHostKey>>>,
+    ) {
         let sid = Arc::new(AsyncMutex::new(None));
+        let pending_key = Arc::new(AsyncMutex::new(None));
         (
             Self {
                 sid: Arc::clone(&sid),
+                host_id,
+                addr,
+                port,
+                pool,
+                pending_key: Arc::clone(&pending_key),
             },
             sid,
+            pending_key,
         )
     }
 }
@@ -118,11 +149,40 @@ impl Handler for ClientHandler {
         }
     }
 
+    /// 主机密钥校验（TOFU）：与 known_hosts 中已信任指纹比对。
+    /// - 一致：静默放行
+    /// - 首次连接 / 指纹变更：记录待确认信息后拒绝握手，由上层发起用户确认，
+    ///   确认信任写入库后重试连接即走上一分支
+    /// - 库查询失败：fail-closed 拒绝连接（不静默放行未知密钥）
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKeyOrCertificate,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let pk = server_public_key.public_key();
+        let fingerprint = pk
+            .fingerprint(russh::keys::HashAlg::Sha256)
+            .to_string();
+        let key_type = pk.algorithm().to_string();
+        match known_host::lookup(&self.pool, &self.addr, self.port, &key_type).await {
+            Ok(Some(saved)) if saved == fingerprint => Ok(true),
+            Ok(previous) => {
+                *self.pending_key.lock().await = Some(PendingHostKey {
+                    key_type,
+                    fingerprint,
+                    previous,
+                });
+                Ok(false)
+            }
+            Err(e) => {
+                log::error!(
+                    "known_hosts lookup failed for {}:{} (host {}): {e}",
+                    self.addr,
+                    self.port,
+                    self.host_id
+                );
+                Ok(false)
+            }
+        }
     }
 
     /// 远程端口转发（-R）回连：sshd 收到外部连接后会以这种 channel 通知客户端。
@@ -177,28 +237,32 @@ impl Session {
     /// 隧道到目标机，再在隧道上完成目标机的 SSH 握手（仅支持一级跳板）。
     pub async fn connect(pool: &DbPool, crypto_key: &[u8; 32], host: &Host) -> AppResult<Self> {
         let Some(jump_id) = host.jump_host_id else {
-            return Self::connect_direct(host).await;
+            return Self::connect_direct(pool, host).await;
         };
 
         let jump_host = host_svc::get_with_credentials(pool, crypto_key, jump_id)
             .await
             .map_err(|e| AppError::Ssh(format!("load jump host {jump_id}: {e}")))?;
-        Self::connect_via(&jump_host, host).await
+        Self::connect_via(pool, &jump_host, host).await
     }
 
     /// 用调用方准备好的（已解密）跳板机配置连接目标主机。
     ///
     /// 终端 WS 在认证失败后的交互式重试中会缓存并原地修改主机凭证，
     /// 需要绕过 [`Session::connect`] 内部的重新加载，故单独暴露此入口。
-    pub async fn connect_prepared(jump_host: Option<&Host>, host: &Host) -> AppResult<Self> {
+    pub async fn connect_prepared(
+        pool: &DbPool,
+        jump_host: Option<&Host>,
+        host: &Host,
+    ) -> AppResult<Self> {
         match jump_host {
-            Some(j) => Self::connect_via(j, host).await,
-            None => Self::connect_direct(host).await,
+            Some(j) => Self::connect_via(pool, j, host).await,
+            None => Self::connect_direct(pool, host).await,
         }
     }
 
     /// 经由已解密的跳板机配置连接目标主机（仅支持一级跳板）
-    async fn connect_via(jump_host: &Host, host: &Host) -> AppResult<Self> {
+    async fn connect_via(pool: &DbPool, jump_host: &Host, host: &Host) -> AppResult<Self> {
         if jump_host.protocol != "ssh" {
             return Err(AppError::Ssh("jump host must use SSH protocol".into()));
         }
@@ -207,36 +271,35 @@ impl Session {
             .port
             .parse()
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
-        let jump_sess = Self::connect_direct(jump_host).await?;
+        let jump_sess = Self::connect_direct(pool, jump_host).await?;
         let channel = jump_sess
             .channel_open_direct_tcpip(&host.addr, port, "127.0.0.1", 0)
             .await
             .map_err(|e| AppError::Ssh(format!("jump host direct_tcpip: {e}")))?;
 
-        let mut sess = Self::connect_stream(host, channel.into_stream()).await?;
+        let mut sess = Self::connect_stream(pool, host, channel.into_stream()).await?;
         sess.jump = Some(Box::new(jump_sess));
         Ok(sess)
     }
 
     /// 直接 TCP 连接目标主机
-    async fn connect_direct(host: &Host) -> AppResult<Self> {
+    async fn connect_direct(pool: &DbPool, host: &Host) -> AppResult<Self> {
         let port: u16 = host
             .port
             .parse()
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
         let addr = (host.addr.as_str(), port);
 
-        let (handler, sid_slot) = ClientHandler::new();
-        let mut handle = client::connect(Self::build_config(host), addr, handler)
-            .await
-            .map_err(|e| {
-                log::error!(
-                    "SSH connect failed for {}:{}: {e:?}",
-                    host.addr,
-                    port
-                );
-                AppError::Ssh(format!("connect: {e}"))
-            })?;
+        let (handler, sid_slot, pending_key) =
+            ClientHandler::new(host.id, host.addr.clone(), port, pool.clone());
+        let result = client::connect(Self::build_config(host), addr, handler).await;
+        let mut handle = match result {
+            Ok(h) => h,
+            Err(e) => {
+                log::error!("SSH connect failed for {}:{}: {e:?}", host.addr, port);
+                return Err(Self::map_connect_err(e, &pending_key, host, port).await);
+            }
+        };
 
         Self::authenticate(&mut handle, host).await?;
 
@@ -248,14 +311,21 @@ impl Session {
     }
 
     /// 在已有流上完成 SSH 握手（跳板机 direct-tcpip 通道）
-    async fn connect_stream<R>(host: &Host, stream: R) -> AppResult<Self>
+    async fn connect_stream<R>(pool: &DbPool, host: &Host, stream: R) -> AppResult<Self>
     where
         R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
-        let (handler, sid_slot) = ClientHandler::new();
-        let mut handle = client::connect_stream(Self::build_config(host), stream, handler)
-            .await
-            .map_err(|e| AppError::Ssh(format!("connect via jump host: {e}")))?;
+        let port: u16 = host
+            .port
+            .parse()
+            .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
+        let (handler, sid_slot, pending_key) =
+            ClientHandler::new(host.id, host.addr.clone(), port, pool.clone());
+        let result = client::connect_stream(Self::build_config(host), stream, handler).await;
+        let mut handle = match result {
+            Ok(h) => h,
+            Err(e) => return Err(Self::map_connect_err(e, &pending_key, host, port).await),
+        };
 
         Self::authenticate(&mut handle, host).await?;
 
@@ -264,6 +334,27 @@ impl Session {
             sid_slot,
             jump: None,
         })
+    }
+
+    /// 握手失败时优先还原"主机密钥待确认"：check_server_key 拒绝密钥后 russh
+    /// 以 UnknownKey 终止握手，真正的待确认信息留在 handler 的 pending 槽里
+    async fn map_connect_err(
+        e: russh::Error,
+        pending: &Arc<AsyncMutex<Option<PendingHostKey>>>,
+        host: &Host,
+        port: u16,
+    ) -> AppError {
+        if let Some(p) = pending.lock().await.take() {
+            return AppError::HostKeyVerify {
+                host_id: host.id,
+                addr: host.addr.clone(),
+                port,
+                key_type: p.key_type,
+                fingerprint: p.fingerprint,
+                previous: p.previous,
+            };
+        }
+        AppError::Ssh(format!("connect: {e}"))
     }
 
     fn build_config(host: &Host) -> Arc<client::Config> {

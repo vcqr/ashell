@@ -35,6 +35,7 @@ import { useAiSelection } from "@/composables/useAiSelection"
 import { useTerminalSearch } from "@/composables/useTerminalSearch"
 import { useTerminalProgress } from "@/composables/useTerminalProgress"
 import { useCommandSuggest } from "@/composables/useCommandSuggest"
+import HostKeyConfirmModal, { type HostKeyInfo } from "@/components/HostKeyConfirmModal.vue"
 import type { Locale } from "@/data/commandDict"
 import { buildTerminalWsUrl } from "@/api/sftp"
 import { buildLocalTerminalWsUrl } from "@/api/local"
@@ -231,6 +232,34 @@ function cancelAuthPrompt() {
   authSubmitting.value = false
   authCancelledByUser = true
   sendJson({ kind: "auth_cancel" })
+}
+
+// ===== SSH 主机密钥指纹确认（TOFU：首次连接/指纹变更） =====
+const hostkeyVisible = ref(false)
+const hostkeyInfo = ref<HostKeyInfo>({
+  label: "",
+  keyType: "",
+  fingerprint: "",
+  previous: null,
+})
+// 用户拒绝信任主机密钥后，本轮断线不再自动重连，避免弹窗随退避反复出现
+let hostkeyDeclinedByUser = false
+
+function showHostKeyConfirm(info: HostKeyInfo) {
+  hostkeyInfo.value = info
+  hostkeyVisible.value = true
+}
+
+function trustHostKey() {
+  hostkeyVisible.value = false
+  sendJson({ kind: "hostkey_response", trust: true })
+}
+
+function declineHostKey() {
+  if (!hostkeyVisible.value) return
+  hostkeyVisible.value = false
+  hostkeyDeclinedByUser = true
+  sendJson({ kind: "hostkey_response", trust: false })
 }
 
 function applyTheme() {
@@ -1011,6 +1040,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           authSubmitting.value = false
           authPromptRetry.value = false
           authCancelledByUser = false
+          hostkeyDeclinedByUser = false
           // 自动重连成功：清计数并提示（首次连接不计）
           if (reconnectAttempts > 0) {
             term?.writeln(`\x1b[32m[ashell] ${t("terminal.autoReconnected")}\x1b[0m`)
@@ -1036,6 +1066,22 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           const m = msg as { label?: string }
           term?.writeln(`\x1b[36m[ashell] ${t("terminal.authRequiredNotice")}\x1b[0m`)
           showAuthPrompt(m.label ?? "")
+          return
+        }
+        if (msg.kind === "hostkey_confirm") {
+          const m = msg as {
+            label?: string
+            key_type?: string
+            fingerprint?: string
+            previous?: string | null
+          }
+          term?.writeln(`\x1b[36m[ashell] ${t("terminal.hostKeyNotice")}\x1b[0m`)
+          showHostKeyConfirm({
+            label: m.label ?? "",
+            keyType: m.key_type ?? "",
+            fingerprint: m.fingerprint ?? "",
+            previous: m.previous ?? null,
+          })
           return
         }
         if (msg.kind === "pong") {
@@ -1077,6 +1123,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     // 服务端断开时若认证弹窗还开着（如等待超时 fatal），一并收掉
     authPromptVisible.value = false
     authSubmitting.value = false
+    hostkeyVisible.value = false
     setStatus("closed")
     // local 终端 shell 进程已退出，无法重连，直接关闭 tab
     if (props.tab.kind === "local") {
@@ -1089,9 +1136,11 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
       term.writeln(`\r\n\x1b[31m[ashell] connection closed (code=${ev.code})${reason}\x1b[0m`)
       term.writeln(`\x1b[33m[ashell] ${t("terminal.sessionClosed")}\x1b[0m`)
     }
-    if (authCancelledByUser) {
-      // 用户在认证弹窗点了取消：本轮不自动重连，避免弹窗随退避反复出现
+    if (authCancelledByUser || hostkeyDeclinedByUser) {
+      // 用户在认证/主机密钥弹窗点了取消或拒绝：本轮不自动重连，
+      // 避免弹窗随退避反复出现
       authCancelledByUser = false
+      hostkeyDeclinedByUser = false
       return
     }
     scheduleAutoReconnect()
@@ -1716,6 +1765,14 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </NModal>
+
+    <!-- SSH 主机密钥指纹确认（首次连接/指纹变更，TOFU） -->
+    <HostKeyConfirmModal
+      v-model:show="hostkeyVisible"
+      :info="hostkeyInfo"
+      @trust="trustHostKey"
+      @decline="declineHostKey"
+    />
   </div>
 </template>
 

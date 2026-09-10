@@ -326,6 +326,30 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v11: known_hosts 表（SSH 主机密钥指纹 TOFU 校验，按 addr+port+key_type 唯一）
+    if current < 11 {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS known_hosts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                addr        TEXT NOT NULL,
+                port        INTEGER NOT NULL,
+                key_type    TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now')),
+                updated_at  TEXT DEFAULT (datetime('now')),
+                UNIQUE(addr, port, key_type)
+            );
+            "#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (11)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -334,7 +358,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 10;
+    const LATEST_VERSION: i64 = 11;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")
