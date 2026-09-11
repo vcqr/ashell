@@ -89,6 +89,41 @@ fn key_to_keyring(entry: &keyring::Entry, key: &[u8; 32]) -> bool {
     true
 }
 
+/// 在工作线程中读取钥匙串密码并强制超时。
+///
+/// 无头环境（容器 / CI / 无法连接 GUI 会话的 shell）里 securityd 授权弹框
+/// 无法显示，`get_password` 会静默阻塞——超时把它变成显式错误，避免启动
+/// 无输出挂死。工作线程在超时后可能仍阻塞在 securityd 上，随进程生命周期
+/// 结束，无资源泄漏影响。
+///
+/// 返回：
+/// - `Ok(Some(password))` 读取成功
+/// - `Ok(None)` 条目不存在（NoEntry）
+/// - `Err(msg)` 读取错误或超时
+fn keyring_read_password(
+    timeout: std::time::Duration,
+) -> Result<Option<String>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("keyring-read".into())
+        .spawn(move || {
+            let result = match keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+                Ok(entry) => entry.get_password(),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        });
+    if spawned.is_err() {
+        return Err("spawn keyring reader thread failed".into());
+    }
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(password)) => Ok(Some(password)),
+        Ok(Err(keyring::Error::NoEntry)) => Ok(None),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("timeout: 授权弹框无法显示或长时间未响应".into()),
+    }
+}
+
 /// 加载或生成本机加密密钥。
 ///
 /// 存储优先级：OS 钥匙串（Windows 凭据管理器 / macOS Keychain / Linux Secret Service）
@@ -98,30 +133,43 @@ fn load_or_generate_crypto_key() -> Result<[u8; 32]> {
     let path = app_dir()?.join("secret.key");
     let entry = keyring_entry();
 
-    // 1) 钥匙串已有密钥
-    if let Some(entry) = &entry {
-        match entry.get_password() {
-            Ok(hexed) => {
-                let bytes = hex::decode(hexed.trim()).ok();
-                if let Some(bytes) = bytes {
-                    if bytes.len() == 32 {
-                        let mut key = [0u8; 32];
-                        key.copy_from_slice(&bytes);
-                        return Ok(key);
-                    }
+    // 1) 钥匙串已有密钥（带超时保护，避免无头环境静默挂死）
+    let keyring_password = if entry.is_some() {
+        match keyring_read_password(std::time::Duration::from_secs(15)) {
+            Ok(r) => r,
+            Err(e) => {
+                if e.contains("timeout") {
+                    anyhow::bail!(
+                        "OS 钥匙串访问超时：当前环境（无头/CI/远端 shell）无法显示授权弹框。\
+                         请在 GUI 会话中运行一次并点击「始终允许」，\
+                         或使用 --force-key-file（环境变量 ASHELL_FORCE_KEY_FILE）强制文件密钥"
+                    );
                 }
-                // 钥匙串内容损坏：重新生成并覆盖
-                log::error!("钥匙串中的加密密钥已损坏，重新生成。此前加密的凭证将无法解密");
-                let mut key = [0u8; 32];
-                rand::rng().fill(&mut key);
-                if key_to_keyring(entry, &key) {
-                    return Ok(key);
-                }
-                // 覆盖写入失败则继续走文件路径
+                log::warn!("读取 OS 钥匙串失败（{e}），尝试文件密钥");
+                None
             }
-            Err(keyring::Error::NoEntry) => {}
-            Err(e) => log::warn!("读取 OS 钥匙串失败（{e}），尝试文件密钥"),
         }
+    } else {
+        None
+    };
+
+    if let Some(hexed) = keyring_password {
+        let bytes = hex::decode(hexed.trim()).ok();
+        if let Some(bytes) = bytes {
+            if bytes.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                return Ok(key);
+            }
+        }
+        // 钥匙串内容损坏：重新生成并覆盖
+        log::error!("钥匙串中的加密密钥已损坏，重新生成。此前加密的凭证将无法解密");
+        let mut key = [0u8; 32];
+        rand::rng().fill(&mut key);
+        if entry.as_ref().is_some_and(|e| key_to_keyring(e, &key)) {
+            return Ok(key);
+        }
+        // 覆盖写入失败则继续走文件路径
     }
 
     // 2) 旧版文件密钥：迁移进钥匙串（成功后删除明文文件）
