@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "ashell"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",
