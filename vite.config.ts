@@ -2,6 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 
 import { defineConfig } from "vite";
 import vue from '@vitejs/plugin-vue'
+import Icons from 'unplugin-icons/vite'
 // import vueDevTools from 'vite-plugin-vue-devtools'
 
 
@@ -9,8 +10,11 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [  
+  plugins: [
     vue(),
+    // vscode-icons 文件图标集：构建期把 import 到的 SVG 编译成 Vue 组件，
+    // 桌面端离线可用，未引用的图标不进产物
+    Icons({ compiler: 'vue3' }),
     //vueDevTools(),
   ],
 
