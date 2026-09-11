@@ -217,9 +217,14 @@ const disconnectOptions = computed(() => [
       </NFormItem>
     </NForm>
     <NSpace style="margin-top: 16px">
-      <NButton size="small" @click="terminalStore.resetDefaults()">
-        {{ t("settings.terminal.resetDefaults") }}
-      </NButton>
+      <NPopconfirm @positive-click="terminalStore.resetDefaults()">
+        <template #trigger>
+          <NButton size="small">
+            {{ t("settings.terminal.resetDefaults") }}
+          </NButton>
+        </template>
+        {{ t("settings.terminal.resetDefaultsConfirm") }}
+      </NPopconfirm>
     </NSpace>
   </section>
 </template>

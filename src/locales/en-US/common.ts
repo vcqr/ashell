@@ -8,6 +8,7 @@ export default {
   create: "Create",
   rename: "Rename",
   copy: "Copy",
+  dismiss: "Dismiss",
   search: "Search",
   searchPlaceholder: "Search...",
   new: "New",

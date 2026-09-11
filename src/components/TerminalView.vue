@@ -80,6 +80,8 @@ let heartbeatTimer: number | null = null
 let reconnectTimer: number | null = null
 let reconnectAttempts = 0
 let disposed = false
+// 广播投递失败提示的限频时间戳（fanout 按键级触发）
+let lastBroadcastWarnAt = 0
 
 const { t, locale } = useI18n()
 const apiStore = useApiStore()
@@ -172,9 +174,10 @@ function sendJson(msg: unknown): boolean {
 /**
  * 把任意输入字节注入本 tab 的 ws（不经过 term.onData）。
  * 给 broadcast fanout 用：作为目标 tab 收外部源 tab 的输入。
+ * @returns ws 是否可用、字节是否已发出
  */
-function sendInputToWs(data: string) {
-  sendJson({ kind: "cmd", data })
+function sendInputToWs(data: string): boolean {
+  return sendJson({ kind: "cmd", data })
 }
 
 /**
@@ -480,6 +483,43 @@ async function onContextMenu(e: MouseEvent) {
   // action === "paste"
   const text = await readClipboard()
   pasteToTerminal(text)
+}
+
+/**
+ * xterm 按键预处理器：Windows/Linux 终端惯例的键盘复制粘贴。
+ * - 有选区时 Ctrl+C = 复制（吞掉不发 ^C）；无选区时照常透传 SIGINT
+ * - Ctrl+Shift+C = 复制；Ctrl+Shift+V = 粘贴（终端标准键位）
+ * 返回 false 只让 xterm 跳过处理，不会阻止 WebView 默认行为——所以凡是
+ * 被消费的分支必须显式 preventDefault()，否则原生 paste 事件会再贴一次
+ * 造成内容重复。
+ */
+function onTermCustomKey(ev: KeyboardEvent): boolean {
+  if (ev.type !== "keydown") return true
+  if (!ev.ctrlKey || ev.metaKey || ev.altKey) return true
+  const key = ev.key.toLowerCase()
+  if (ev.shiftKey) {
+    if (key === "c") {
+      if (term?.hasSelection()) {
+        void writeClipboard(term.getSelection())
+        term.clearSelection()
+      }
+      ev.preventDefault()
+      return false
+    }
+    if (key === "v") {
+      ev.preventDefault()
+      void readClipboard().then(pasteToTerminal)
+      return false
+    }
+    return true
+  }
+  if (key === "c" && term?.hasSelection()) {
+    ev.preventDefault()
+    void writeClipboard(term.getSelection())
+    term.clearSelection()
+    return false
+  }
+  return true
 }
 
 async function onAuxClick(e: MouseEvent) {
@@ -955,7 +995,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
   const isTelnet = props.tab.kind === "telnet"
   const isSerial = props.tab.kind === "serial"
   if (!isLocal && (props.tab.hostId === undefined || props.tab.hostId === null)) {
-    term?.writeln("\x1b[31m[ashell] missing hostId; cannot connect.\x1b[0m")
+    term?.writeln(`\x1b[31m[ashell] ${t("terminal.missingHostId")}\x1b[0m`)
     setStatus("error")
     showReconnectBtn.value = true
     return
@@ -996,7 +1036,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
       })
     }
   } catch (e) {
-    term?.writeln(`\x1b[31m[ashell] failed to build ws url: ${String(e)}\x1b[0m`)
+    term?.writeln(`\x1b[31m[ashell] ${t("terminal.wsUrlFailed", { error: String(e) })}\x1b[0m`)
     setStatus("error")
     showReconnectBtn.value = true
     scheduleAutoReconnect()
@@ -1010,7 +1050,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
   try {
     socket = new WebSocket(url)
   } catch (e) {
-    term?.writeln(`\x1b[31m[ashell] failed to open ws: ${String(e)}\x1b[0m`)
+    term?.writeln(`\x1b[31m[ashell] ${t("terminal.wsOpenFailed", { error: String(e) })}\x1b[0m`)
     setStatus("error")
     showReconnectBtn.value = true
     scheduleAutoReconnect()
@@ -1059,7 +1099,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         }
         if (msg.kind === "fatal") {
           const m = msg as { message?: string }
-          term?.writeln(`\r\n\x1b[31m[ashell] ${m.message ?? "connection fatal error"}\x1b[0m`)
+          term?.writeln(`\r\n\x1b[31m[ashell] ${m.message ?? t("terminal.connFatal")}\x1b[0m`)
           return
         }
         if (msg.kind === "auth_required") {
@@ -1133,7 +1173,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     showReconnectBtn.value = true
     if (term) {
       const reason = ev.reason ? `: ${ev.reason}` : ""
-      term.writeln(`\r\n\x1b[31m[ashell] connection closed (code=${ev.code})${reason}\x1b[0m`)
+      term.writeln(`\r\n\x1b[31m[ashell] ${t("terminal.connClosed", { code: ev.code, reason })}\x1b[0m`)
       term.writeln(`\x1b[33m[ashell] ${t("terminal.sessionClosed")}\x1b[0m`)
     }
     if (authCancelledByUser || hostkeyDeclinedByUser) {
@@ -1191,6 +1231,9 @@ onMounted(() => {
 
   installAltScreenScrollFix()
 
+  // 键盘复制粘贴（Ctrl+C 选区 / Ctrl+Shift+C / Ctrl+Shift+V），须在 onData 前注册
+  term.attachCustomKeyEventHandler(onTermCustomKey)
+
   term.onData((data: string) => {
     if (sudoArmed.value) {
       if (data === "\r") {
@@ -1218,7 +1261,14 @@ onMounted(() => {
         props.active ? broadcastStore.windowId : null,
       )
       if (source === broadcastStore.globalKey(props.tab.key)) {
-        broadcastStore.fanout(props.tab.key, data)
+        const report = broadcastStore.fanout(props.tab.key, data)
+        // 有目标未送达时在源终端内提示；fanout 按键级触发，限频防刷屏
+        if (report.failed > 0 && Date.now() - lastBroadcastWarnAt > 3000) {
+          lastBroadcastWarnAt = Date.now()
+          term?.writeln(
+            `\r\n\x1b[33m[ashell] ${t("terminal.broadcastUndelivered", { failed: report.failed, total: report.delivered + report.failed + report.unknown })}\x1b[0m`,
+          )
+        }
       }
     }
   })
@@ -1310,7 +1360,7 @@ function disconnect() {
   teardownWs()
   setStatus("closed")
   reconnectAttempts = 0
-  term?.writeln("\r\n\x1b[33m[ashell] disconnected by user\x1b[0m")
+  term?.writeln("\r\n\x1b[33m[ashell] " + t("terminal.disconnectedByUser") + "\x1b[0m")
 }
 
 /** 重新建立 ws 与 ssh 会话。保留 xterm 输出缓冲区与历史。 */
@@ -1325,7 +1375,7 @@ async function reconnect() {
   // 新会话需要再发一次 resize，重置去重状态
   lastSentCols = 0
   lastSentRows = 0
-  term?.writeln("\r\n\x1b[36m[ashell] reconnecting...\x1b[0m")
+  term?.writeln(`\r\n\x1b[36m[ashell] ${t("terminal.reconnecting")}\x1b[0m`)
   await connectWs({ newSession: true })
 }
 
@@ -1524,7 +1574,12 @@ onBeforeUnmount(() => {
     </div>
     <div ref="containerRef" class="terminal-host"></div>
     <Transition name="search-fade">
-      <div v-if="searchOpen" class="search-bar" @keydown.stop>
+      <div
+        v-if="searchOpen"
+        class="search-bar"
+        :class="{ 'below-reconnect': showReconnectBtn }"
+        @keydown.stop
+      >
         <NInput
           ref="searchInputRef"
           v-model:value="searchKeyword"
@@ -1576,23 +1631,22 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
 
+    <!-- NTooltip 根节点非普通元素，包在 Transition 里无法动画（Vue warn）。
+         悬浮按钮用原生 title 提示，让 Transition 直接作用于按钮本身。 -->
     <Transition name="ai-btn-fade">
-      <NTooltip v-if="aiButtonVisible && !aiPromptVisible" placement="top">
-        <template #trigger>
-          <button
-            type="button"
-            class="ai-send-btn"
-            :style="{ left: `${aiButtonX}px`, top: `${aiButtonY}px` }"
-            @mousedown.prevent
-            @click="openAiPrompt"
-          >
-            <NIcon :size="14">
-              <SparklesIcon />
-            </NIcon>
-          </button>
-        </template>
-        {{ t('terminal.sendToAi') }}
-      </NTooltip>
+      <button
+        v-if="aiButtonVisible && !aiPromptVisible"
+        type="button"
+        class="ai-send-btn"
+        :title="t('terminal.sendToAi')"
+        :style="{ left: `${aiButtonX}px`, top: `${aiButtonY}px` }"
+        @mousedown.prevent
+        @click="openAiPrompt"
+      >
+        <NIcon :size="14">
+          <SparklesIcon />
+        </NIcon>
+      </button>
     </Transition>
 
     <Transition name="ai-btn-fade">
@@ -1843,6 +1897,11 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ashell-border, #3a3f4b);
   border-radius: 6px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+/* 断线状态下重连按钮占据右上角，搜索条下移让位避免遮挡 */
+.search-bar.below-reconnect {
+  top: 52px;
 }
 
 .search-input {

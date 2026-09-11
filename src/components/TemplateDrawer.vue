@@ -8,6 +8,7 @@ import {
   NIcon,
   NInput,
   NModal,
+  NPopconfirm,
   NSpace,
   NScrollbar,
   useMessage,
@@ -219,13 +220,17 @@ async function onDelete(id: number) {
                 >
                   <NIcon :size="14"><CreateOutline /></NIcon>
                 </button>
-                <button
-                  class="tpl-action-btn danger"
-                  :title="t('templates.delete')"
-                  @click="onDelete(tpl.id)"
-                >
-                  <NIcon :size="14"><TrashOutline /></NIcon>
-                </button>
+                <NPopconfirm @positive-click="onDelete(tpl.id)">
+                  <template #trigger>
+                    <button
+                      class="tpl-action-btn danger"
+                      :title="t('templates.delete')"
+                    >
+                      <NIcon :size="14"><TrashOutline /></NIcon>
+                    </button>
+                  </template>
+                  {{ t("templates.deleteConfirm", { name: tpl.title }) }}
+                </NPopconfirm>
               </div>
             </div>
           </div>

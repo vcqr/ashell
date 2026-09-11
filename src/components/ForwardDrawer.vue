@@ -49,8 +49,14 @@ const emit = defineEmits<{
   "update:open": [value: boolean]
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const message = useMessage()
+
+/** 后端状态枚举 → 本地化文案；未知值回退原文 */
+function statusText(s: string): string {
+  const key = `forward.status.${s}`
+  return te(key) ? t(key) : s
+}
 
 const rules = ref<ForwardRule[]>([])
 const loading = ref(false)
@@ -138,7 +144,7 @@ const columns = computed<DataTableColumns<ForwardRule>>(() => [
       const tag = h(
         NTag,
         { size: "small", type: tagType, bordered: false },
-        { default: () => (hasErr ? `${r.status}*` : r.status) },
+        { default: () => (hasErr ? `${statusText(r.status)}*` : statusText(r.status)) },
       )
       if (!hasErr) return tag
       return h(

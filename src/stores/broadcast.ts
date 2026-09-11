@@ -36,8 +36,11 @@ export const useBroadcastStore = defineStore("broadcast", () => {
   /** 发送命令文本时是否自动追加 \r。 */
   const appendCR = ref(true)
 
-  /** TerminalView 注册的"向自己 ws 注入输入字节"的回调。key = tabKey（本窗口内）。 */
-  const inputSenders = new Map<string, (data: string) => void>()
+  /**
+   * TerminalView 注册的"向自己 ws 注入输入字节"的回调。key = tabKey（本窗口内）。
+   * 返回 false 表示 ws 不可用、输入未送达（如目标 tab 已断连）。
+   */
+  const inputSenders = new Map<string, (data: string) => boolean>()
 
   let unlistenState: UnlistenFn | null = null
   let unlistenInput: UnlistenFn | null = null
@@ -131,9 +134,9 @@ export const useBroadcastStore = defineStore("broadcast", () => {
    * @param localWindowTitle 本窗口标题
    */
   function getAllTabs(
-    localTabs: { key: string; title: string; kind?: string }[],
-  ): { gkey: string; title: string; kind: string; isLocal: boolean; windowId: string }[] {
-    const result: { gkey: string; title: string; kind: string; isLocal: boolean; windowId: string }[] = []
+    localTabs: { key: string; title: string; kind?: string; status?: string }[],
+  ): { gkey: string; title: string; kind: string; isLocal: boolean; windowId: string; status?: string }[] {
+    const result: { gkey: string; title: string; kind: string; isLocal: boolean; windowId: string; status?: string }[] = []
     // 本窗口
     for (const t of localTabs) {
       result.push({
@@ -142,6 +145,7 @@ export const useBroadcastStore = defineStore("broadcast", () => {
         kind: t.kind ?? "ssh",
         isLocal: true,
         windowId: windowId.value,
+        status: t.status,
       })
     }
     // 远程窗口
@@ -153,6 +157,7 @@ export const useBroadcastStore = defineStore("broadcast", () => {
           kind: t.kind,
           isLocal: false,
           windowId: wid,
+          status: t.status,
         })
       }
     }
@@ -183,7 +188,7 @@ export const useBroadcastStore = defineStore("broadcast", () => {
     } satisfies BroadcastStatePayload)
   }
 
-  function registerSender(tabKey: string, send: (data: string) => void) {
+  function registerSender(tabKey: string, send: (data: string) => boolean) {
     inputSenders.set(tabKey, send)
   }
 
@@ -237,14 +242,18 @@ export const useBroadcastStore = defineStore("broadcast", () => {
    * 由源 TerminalView 在 onData 里调用。
    * @param fromTabKey 调用方自身 tab key（本窗口内）
    * @param data       用户敲下的字节流
+   * @returns 投递统计：delivered/failed 仅统计本窗口可确认的结果；
+   *          跨窗口 target 为 fire-and-forget，计入 unknown。
    */
-  function fanout(fromTabKey: string, data: string) {
-    if (!enabled.value) return
-    if (targetKeys.value.size === 0) return
+  function fanout(fromTabKey: string, data: string): BroadcastDeliveryReport {
+    if (!enabled.value) return { delivered: 0, failed: 0, unknown: 0 }
+    if (targetKeys.value.size === 0) return { delivered: 0, failed: 0, unknown: 0 }
 
     const fromGkey = globalKey(fromTabKey)
     // 收集本地 target 和跨窗口 target
     const crossWindowTargets: string[] = []
+    let delivered = 0
+    let failed = 0
 
     for (const gkey of targetKeys.value) {
       if (gkey === fromGkey) continue
@@ -252,12 +261,15 @@ export const useBroadcastStore = defineStore("broadcast", () => {
       if (w === windowId.value) {
         // 本地 target：直接注入
         const sender = inputSenders.get(tabKey)
-        if (sender) {
-          try {
-            sender(data)
-          } catch {
-            // ignore
-          }
+        if (!sender) {
+          failed++
+          continue
+        }
+        try {
+          if (sender(data)) delivered++
+          else failed++
+        } catch {
+          failed++
         }
       } else {
         crossWindowTargets.push(gkey)
@@ -272,6 +284,8 @@ export const useBroadcastStore = defineStore("broadcast", () => {
         targetKeys: crossWindowTargets,
       } satisfies BroadcastInputPayload)
     }
+
+    return { delivered, failed, unknown: crossWindowTargets.length }
   }
 
   /**
@@ -322,6 +336,13 @@ interface RemoteTabInfo {
   key: string
   title: string
   kind: string
+  status?: string
+}
+
+interface BroadcastDeliveryReport {
+  delivered: number
+  failed: number
+  unknown: number
 }
 
 interface BroadcastStatePayload {

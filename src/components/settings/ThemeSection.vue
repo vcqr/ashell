@@ -359,15 +359,22 @@ async function exportCurrent() {
         </div>
       </div>
       <NSpace>
-        <NButton
-          size="small"
-          @click="terminalStore.resetTerminalTheme(themeEditTarget)"
-        >
-          {{ t("settings.theme.resetCurrent", { name: themeEditTarget === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }) }}
-        </NButton>
-        <NButton size="small" @click="terminalStore.resetTerminalThemes()">
-          {{ t("settings.theme.resetAll") }}
-        </NButton>
+        <NPopconfirm @positive-click="terminalStore.resetTerminalTheme(themeEditTarget)">
+          <template #trigger>
+            <NButton size="small">
+              {{ t("settings.theme.resetCurrent", { name: themeEditTarget === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }) }}
+            </NButton>
+          </template>
+          {{ t("settings.theme.resetCurrentConfirm") }}
+        </NPopconfirm>
+        <NPopconfirm @positive-click="terminalStore.resetTerminalThemes()">
+          <template #trigger>
+            <NButton size="small">
+              {{ t("settings.theme.resetAll") }}
+            </NButton>
+          </template>
+          {{ t("settings.theme.resetAllConfirm") }}
+        </NPopconfirm>
       </NSpace>
     </div>
 

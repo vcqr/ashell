@@ -6,6 +6,7 @@ export default {
   close: "关闭",
   edit: "编辑",
   delete: "删除",
+  deleteConfirm: "确定删除模板「{name}」吗？",
   searchPlaceholder: "搜索标题或命令…",
   empty: "还没有模板命令",
   noMatch: "没有匹配的模板命令",

@@ -1,4 +1,5 @@
 export default {
+  regenerate: "重新生成上一条提问",
   title: "AI 助手",
   name: "AI 助手",
   modelLabel: "Model: {model}",

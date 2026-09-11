@@ -17,4 +17,10 @@ export default {
     remoteWindow: " [Other window]",
     unnamed: "(Unnamed)",
   },
+  status: {
+    connected: "Connected",
+    connecting: "Connecting",
+    closed: "Disconnected",
+    error: "Connection error",
+  },
 } as const

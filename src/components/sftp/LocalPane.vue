@@ -7,6 +7,7 @@ import {
   NEmpty,
   NIcon,
   NInput,
+  NSpace,
   NSpin,
   useDialog,
   useMessage,
@@ -170,6 +171,9 @@ function localParentPath(p: string): string {
   return parent
 }
 
+/** 目录加载失败的持久错误态：与"目录为空"空态严格区分，提供重试入口 */
+const loadError = ref<string | null>(null)
+
 async function load(path?: string) {
   loading.value = true
   try {
@@ -177,15 +181,24 @@ async function load(path?: string) {
     files.value = applySort(resp.files)
     currentPath.value = resp.path
     viewingRoots.value = false
+    loadError.value = null
     clearSelection()
     emit("select", [])
     emit("update:dir", resp.path)
   } catch (e) {
     message.error(t("sftp.localPane.loadFailed", { error: (e as Error).message }))
-    files.value = []
+    // 保留上次成功列表，仅标记错误态（渲染成空目录会误导用户）
+    loadError.value = (e as Error).message
   } finally {
     loading.value = false
   }
+}
+
+/** 错误态重试：回到进入失败前请求的那个位置 */
+function retryLoad() {
+  loadError.value = null
+  if (viewingRoots.value) void goRoots()
+  else void load()
 }
 
 /** "此电脑"：Windows 盘符 / Unix 根 */
@@ -195,10 +208,12 @@ async function goRoots() {
     const resp = await listLocalFsRoots()
     files.value = applySort(resp.files)
     viewingRoots.value = true
+    loadError.value = null
     clearSelection()
     emit("select", [])
   } catch (e) {
     message.error(t("sftp.localPane.loadFailed", { error: (e as Error).message }))
+    loadError.value = (e as Error).message
   } finally {
     loading.value = false
   }
@@ -282,7 +297,8 @@ function dirFirst(a: SftpFile, b: SftpFile): number {
 function cmpDefault(a: SftpFile, b: SftpFile): number {
   const d = dirFirst(a, b)
   if (d !== 0) return d
-  return a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
+  const r = a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
+  return sortState.value.order === "descend" ? -r : r
 }
 
 function cmpSize(a: SftpFile, b: SftpFile): number {
@@ -290,7 +306,8 @@ function cmpSize(a: SftpFile, b: SftpFile): number {
   if (d !== 0) return d
   const sa = typeof a.size_bytes === "number" ? a.size_bytes : -1
   const sb = typeof b.size_bytes === "number" ? b.size_bytes : -1
-  return sa - sb
+  const r = sa - sb
+  return sortState.value.order === "descend" ? -r : r
 }
 
 function cmpMtime(a: SftpFile, b: SftpFile): number {
@@ -301,7 +318,8 @@ function cmpMtime(a: SftpFile, b: SftpFile): number {
   if (ma === null && mb === null) return 0
   if (ma === null) return 1
   if (mb === null) return -1
-  return ma - mb
+  const r = ma - mb
+  return sortState.value.order === "descend" ? -r : r
 }
 
 const sortState = ref<{
@@ -309,7 +327,8 @@ const sortState = ref<{
   order: false | "ascend" | "descend"
 }>({ columnKey: null, order: false })
 
-/** 按当前排序状态重排列表（descend 反转；无排序时回到默认目录优先+名字） */
+/** 按当前排序状态重排列表（descend 只反转键值比较，目录始终排在前面；
+ *  整体 reverse 会把目录一并沉底，不可用） */
 function applySort(list: SftpFile[]): SftpFile[] {
   const cmp =
     sortState.value.columnKey === "size"
@@ -317,8 +336,7 @@ function applySort(list: SftpFile[]): SftpFile[] {
       : sortState.value.columnKey === "mtime"
         ? cmpMtime
         : cmpDefault
-  const sorted = [...list].sort(cmp)
-  return sortState.value.order === "descend" ? sorted.reverse() : sorted
+  return [...list].sort(cmp)
 }
 
 function onLocalSort(s: DataTableSortState | DataTableSortState[]) {
@@ -1138,8 +1156,20 @@ onMounted(() => {
     </div>
 
     <NSpin :show="loading" class="table-wrap" @click="onTableAreaClick">
+      <div v-if="loadError" class="load-error">
+        <p class="load-error-title">{{ t("sftp.localPane.loadErrorTitle") }}</p>
+        <p class="load-error-detail" :title="loadError">{{ loadError }}</p>
+        <NSpace :size="8" justify="center">
+          <NButton size="small" type="primary" @click="retryLoad">
+            {{ t("sftp.localPane.retry") }}
+          </NButton>
+          <NButton size="small" @click="loadError = null">
+            {{ t("common.dismiss") }}
+          </NButton>
+        </NSpace>
+      </div>
       <NDataTable
-        v-if="files.length > 0"
+        v-else-if="files.length > 0"
         size="small"
         :columns="columns"
         :data="displayFiles"
@@ -1276,6 +1306,37 @@ onMounted(() => {
 .table-wrap :deep(.n-spin-container),
 .table-wrap :deep(.n-spin-content) {
   height: 100%;
+}
+
+/* 加载失败错误态：与"目录为空"空态明确区分 */
+.load-error {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.load-error-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ashell-danger, #d03050);
+}
+
+.load-error-detail {
+  margin: 0;
+  max-width: 90%;
+  font-size: 12px;
+  color: var(--ashell-text-muted, #98a2b3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
 }
 
 .file-table {

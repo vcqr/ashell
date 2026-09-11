@@ -1,4 +1,5 @@
 export default {
+  regenerate: "Regenerate last answer",
   title: "AI Assistant",
   name: "AI Assistant",
   modelLabel: "Model: {model}",

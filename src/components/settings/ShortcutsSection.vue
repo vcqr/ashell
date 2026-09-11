@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from "vue";
-import { NButton, NTag, NSpace } from "naive-ui";
+import { NButton, NTag, NSpace, NPopconfirm } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import {
   useKeybindingStore,
@@ -156,9 +156,14 @@ onBeforeUnmount(() => {
     </div>
 
     <NSpace style="margin-top: 16px">
-      <NButton size="small" @click="store.resetAll()">
-        {{ t("settings.shortcuts.resetAll") }}
-      </NButton>
+      <NPopconfirm @positive-click="store.resetAll()">
+        <template #trigger>
+          <NButton size="small">
+            {{ t("settings.shortcuts.resetAll") }}
+          </NButton>
+        </template>
+        {{ t("settings.shortcuts.resetAllConfirm") }}
+      </NPopconfirm>
     </NSpace>
   </section>
 </template>

@@ -4,6 +4,8 @@ export default {
   refresh: "刷新",
   close: "关闭",
   needSession: "请先建立连接",
+  errorRetry: "重试",
+  errorHint: "将在后台自动重试；若会话已断开，重连后会自动恢复采集。",
   basicInfo: "基本信息",
   resources: "资源占用",
   disk: "磁盘 ({count})",

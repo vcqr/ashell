@@ -4,6 +4,8 @@ export default {
   refresh: "Refresh",
   close: "Close",
   needSession: "Please establish a connection first",
+  errorRetry: "Retry",
+  errorHint: "Retrying automatically in the background; sampling resumes once the session reconnects.",
   basicInfo: "Basic Info",
   resources: "Resources",
   disk: "Disk ({count})",

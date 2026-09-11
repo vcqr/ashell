@@ -2,6 +2,12 @@ export default {
   title: "设置",
   close: "关闭",
   sections: "设置分区",
+  groups: {
+    general: "通用",
+    system: "系统",
+    features: "功能",
+    data: "数据与安全",
+  },
   tabs: {
     general: "通用",
     theme: "主题",
@@ -32,6 +38,8 @@ export default {
     editingHint: "当前正在编辑：{name}主题；改动会按当前应用主题实时生效。",
     resetCurrent: "仅恢复{name}配色",
     resetAll: "恢复全部配色",
+    resetCurrentConfirm: "确定将该套配色恢复为内置默认吗？自定义修改将丢失。",
+    resetAllConfirm: "确定将深浅两套配色都恢复为内置默认吗？自定义修改将丢失。",
     presets: "主题预设",
     presetsSourceHint: "来自 iterm2colorschemes.com 的流行配色，点击卡片应用到当前编辑的主题",
     importTheme: "导入主题",
@@ -110,6 +118,7 @@ export default {
     clearHistory: "清空命令历史",
     clearHistoryConfirm: "确定清空所有命令历史与已学习的命令？",
     resetDefaults: "恢复默认",
+    resetDefaultsConfirm: "确定恢复全部终端设置为默认值吗？",
   },
   shortcuts: {
     title: "快捷键",
@@ -120,6 +129,7 @@ export default {
     cancel: "取消",
     reset: "重置",
     resetAll: "全部重置",
+    resetAllConfirm: "确定重置全部快捷键为默认键位吗？",
     category: {
       tabs: "标签页",
       search: "搜索",

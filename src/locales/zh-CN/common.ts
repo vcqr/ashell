@@ -8,6 +8,7 @@ export default {
   create: "创建",
   rename: "重命名",
   copy: "复制",
+  dismiss: "知道了",
   search: "搜索",
   searchPlaceholder: "搜索...",
   new: "新建",

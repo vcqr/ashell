@@ -2,6 +2,12 @@ export default {
   title: "Settings",
   close: "Close",
   sections: "Settings sections",
+  groups: {
+    general: "General",
+    system: "System",
+    features: "Features",
+    data: "Data & Security",
+  },
   tabs: {
     general: "General",
     theme: "Theme",
@@ -32,6 +38,8 @@ export default {
     editingHint: "Currently editing: {name} theme. Changes apply to the active theme in real time.",
     resetCurrent: "Reset {name} colors only",
     resetAll: "Reset all colors",
+    resetCurrentConfirm: "Reset this color scheme to the built-in default? Custom changes will be lost.",
+    resetAllConfirm: "Reset both dark and light color schemes to the built-in defaults? Custom changes will be lost.",
     presets: "Theme Presets",
     presetsSourceHint: "Popular schemes from iterm2colorschemes.com. Click a card to apply it to the theme being edited",
     importTheme: "Import",
@@ -110,6 +118,7 @@ export default {
     clearHistory: "Clear command history",
     clearHistoryConfirm: "Clear all command history and learned commands?",
     resetDefaults: "Reset to defaults",
+    resetDefaultsConfirm: "Reset all terminal settings to their defaults?",
   },
   shortcuts: {
     title: "Shortcuts",
@@ -120,6 +129,7 @@ export default {
     cancel: "Cancel",
     reset: "Reset",
     resetAll: "Reset All",
+    resetAllConfirm: "Reset all shortcuts to their default bindings?",
     category: {
       tabs: "Tabs",
       search: "Search",

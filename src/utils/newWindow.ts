@@ -38,6 +38,9 @@ export async function openTabInNewWindow(tab: TerminalTab): Promise<void> {
     height: 700,
     decorations: false,
     center: true,
+    // 与主窗口（tauri.conf.json）保持一致：关闭 wry 原生拖放拦截，
+    // 否则 Windows 下 DOM drop 事件的多文件数据会被吞成 1 个
+    dragDropEnabled: false,
   })
 
   webview.once("tauri://error", (e) => {
@@ -84,6 +87,8 @@ export async function openSftpInNewWindow(opts: OpenSftpWindowOptions): Promise<
     minHeight: 480,
     decorations: false,
     center: true,
+    // SFTP 独立窗口同样走 HTML5 dnd 接收 OS 文件拖放，必须关闭原生拦截
+    dragDropEnabled: false,
   })
 
   webview.once("tauri://error", (e) => {
@@ -136,6 +141,8 @@ export async function openAiInNewWindow(opts: OpenAiWindowOptions): Promise<void
     minHeight: 480,
     decorations: false,
     center: true,
+    // 统一与主窗口一致，避免 wry 原生拖放拦截干扰 DOM 事件
+    dragDropEnabled: false,
   })
 
   webview.once("tauri://error", (e) => {

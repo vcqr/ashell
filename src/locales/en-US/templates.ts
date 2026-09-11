@@ -6,6 +6,7 @@ export default {
   close: "Close",
   edit: "Edit",
   delete: "Delete",
+  deleteConfirm: 'Delete template "{name}"?',
   searchPlaceholder: "Search title or command…",
   empty: "No templates yet",
   noMatch: "No matching templates",

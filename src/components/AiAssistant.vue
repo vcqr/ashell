@@ -18,6 +18,7 @@ import {
   NModal,
   NCard,
   NPopover,
+  useMessage,
 } from "naive-ui";
 import {
   SendOutline,
@@ -33,7 +34,9 @@ import {
   BookmarkOutline,
   TrashOutline,
   OpenOutline,
+  CopyOutline,
 } from "@vicons/ionicons5";
+import { writeText as tauriWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { useI18n } from "vue-i18n";
 import type { ChatMessage, ProcessStep } from "@/types";
 import { useApiStore } from "@/stores/api";
@@ -62,7 +65,26 @@ const apiStore = useApiStore();
 const aiStore = useAiStore();
 const aiConfig = useAiConfigStore();
 const phraseStore = usePhraseStore();
+const message = useMessage();
 const { t } = useI18n();
+
+/** 复制文本：Tauri 插件优先（免 WKWebView 授权提示），失败降级浏览器 API */
+async function copyText(text: string) {
+  if (!text) return;
+  try {
+    await tauriWriteText(text);
+    message.success(t("common.copySuccess"));
+    return;
+  } catch {
+    // ignore
+  }
+  try {
+    await navigator.clipboard?.writeText(text);
+    message.success(t("common.copySuccess"));
+  } catch {
+    message.error(t("common.copyFailed"));
+  }
+}
 
 // ── Model config ──
 //
@@ -215,7 +237,10 @@ const codeHighlightExtension = {
       language !== "plaintext"
         ? `<div class="code-lang">${language}</div>`
         : "";
-    return `${langLabel}<pre><code class="hljs language-${language}">${highlighted}</code></pre>`;
+    // 复制按钮用 span（DOMPurify FORBID_TAGS 含 button/svg），点击经 .chat-list
+    // 事件委托读取同块 code 的 textContent。⧉ = U+29C9。
+    const copyBtn = `<span class="code-copy-btn" data-copy-code title="${t("common.copy")}">⧉</span>`;
+    return `<div class="code-block">${langLabel}${copyBtn}<pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`;
   },
 };
 
@@ -704,6 +729,49 @@ function handleNewChat() {
   showConfirmDialog.value = true;
 }
 
+// ── 重新生成 ──
+//
+// sidecar 协议（stdin 行 = 用户消息 + __STOP__/__QUIT__）没有"重试上一轮"或
+// 历史注入能力，前端无法安全地截断重答（会与 sidecar 自持的上下文失同步）。
+// 因此语义为：保留历史，把最后一条真实用户提问原样重发一遍，让模型重新作答。
+
+const canRegenerate = computed(() => {
+  if (isTyping.value || isApprovalActive.value) return false;
+  if (currentSession.value?.sidecarPid === null || currentSession.value?.sidecarPid === undefined)
+    return false;
+  const isNoise = (m: ChatMessage) => {
+    const c = m.content.trim();
+    return !c || c === "y" || c === "n";
+  };
+  const msgs = messages.value.filter((m) => !m.isProcess && !isNoise(m));
+  if (msgs.length < 2) return false;
+  return msgs[msgs.length - 1]?.role === "assistant";
+});
+
+async function handleRegenerate() {
+  if (!canRegenerate.value) return;
+  const ssid = currentSsid.value;
+  if (!ssid) return;
+  const session = aiStore.sessions[ssid];
+  if (!session || session.sidecarPid === null) return;
+  const lastUser = [...session.messages]
+    .reverse()
+    .find((m) => {
+      const c = m.content.trim();
+      return m.role === "user" && c && c !== "y" && c !== "n";
+    });
+  if (!lastUser) return;
+  aiStore.pushMessage(ssid, {
+    role: "user",
+    content: lastUser.content,
+    time: nowStr(),
+  });
+  aiStore.patch(ssid, { isTyping: true });
+  const formattedContent = JSON.stringify(lastUser.content).trim().slice(1, -1);
+  await aiStore.writeTo(ssid, formattedContent + "\n");
+  scrollBottom();
+}
+
 async function confirmNewChat() {
   showConfirmDialog.value = false;
   const ssid = currentSsid.value;
@@ -724,6 +792,13 @@ function cancelNewChat() {
 
 function onLinkClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
+  // 代码块复制按钮（v-html 渲染，只能事件委托）
+  const copyBtn = target.closest("[data-copy-code]");
+  if (copyBtn) {
+    const code = copyBtn.closest(".code-block")?.querySelector("code");
+    if (code?.textContent) void copyText(code.textContent);
+    return;
+  }
   const link = target.closest("a");
   if (link && link.href) {
     const href = link.href;
@@ -964,6 +1039,14 @@ defineExpose({
                       <StarOutline v-else />
                     </NIcon>
                   </button>
+                  <button
+                    v-else-if="m.role === 'assistant' && m.content"
+                    class="fav-btn"
+                    :title="t('common.copy')"
+                    @click="copyText(m.content)"
+                  >
+                    <NIcon :size="11"><CopyOutline /></NIcon>
+                  </button>
                 </div>
               </div>
               <NAvatar
@@ -1003,6 +1086,15 @@ defineExpose({
           class="composer-bar"
           :class="{ 'no-border': isApprovalActive }"
         >
+          <NButton
+            v-if="canRegenerate"
+            size="tiny"
+            quaternary
+            :title="t('ai.regenerate')"
+            @click="handleRegenerate"
+          >
+            <NIcon :size="13"><RefreshOutline /></NIcon>
+          </NButton>
           <NDropdown
             trigger="click"
             placement="top-start"
@@ -1346,7 +1438,8 @@ defineExpose({
   padding: 0;
 }
 
-.msg.user .bubble:hover .fav-btn {
+.msg.user .bubble:hover .fav-btn,
+.msg.assistant .bubble:hover .fav-btn {
   opacity: 1;
 }
 
@@ -1684,6 +1777,37 @@ defineExpose({
   font-size: 11px;
   color: var(--ashell-text-subtle);
   margin-bottom: 4px;
+}
+
+/* 代码块容器 + 悬停复现的复制按钮（span 实现，见 codeHighlightExtension） */
+.markdown-body :deep(.code-block) {
+  position: relative;
+}
+
+.markdown-body :deep(.code-copy-btn) {
+  position: absolute;
+  top: 22px;
+  right: 6px;
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 4px;
+  color: var(--ashell-text-subtle);
+  background: var(--ashell-bg-elevated, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--ashell-border-soft, rgba(128, 128, 128, 0.25));
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  user-select: none;
+}
+
+.markdown-body :deep(.code-block:hover) .code-copy-btn {
+  opacity: 1;
+}
+
+.markdown-body :deep(.code-copy-btn:hover) {
+  color: var(--ashell-text-strong);
+  border-color: var(--ashell-border);
 }
 
 .markdown-body :deep(blockquote) {

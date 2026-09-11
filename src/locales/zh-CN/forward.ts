@@ -14,6 +14,11 @@ export default {
     dynamic: "动态转发 -D (本地 SOCKS5 代理)",
     dynamicLabel: "(SOCKS5 动态)",
   },
+  status: {
+    running: "运行中",
+    failed: "已失败",
+    stopped: "已停止",
+  },
   columns: {
     kind: "类型",
     bind: "绑定",

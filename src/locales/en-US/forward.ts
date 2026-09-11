@@ -14,6 +14,11 @@ export default {
     dynamic: "Dynamic forward -D (local SOCKS5 proxy)",
     dynamicLabel: "(SOCKS5 dynamic)",
   },
+  status: {
+    running: "Running",
+    failed: "Failed",
+    stopped: "Stopped",
+  },
   columns: {
     kind: "Type",
     bind: "Bind",

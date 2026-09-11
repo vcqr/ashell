@@ -1,7 +1,26 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { NModal, NCard, NButton, NIcon } from "naive-ui";
-import { CloseOutline } from "@vicons/ionicons5";
+import { computed, ref, type Component } from "vue";
+import {
+  NModal,
+  NCard,
+  NButton,
+  NIcon,
+} from "naive-ui";
+import {
+  CloseOutline,
+  OptionsOutline,
+  ColorPaletteOutline,
+  TerminalOutline,
+  KeyOutline,
+  BrowsersOutline,
+  FileTrayFullOutline,
+  AppsOutline,
+  RocketOutline,
+  SparklesOutline,
+  ShieldCheckmarkOutline,
+  CloudOutline,
+  InformationCircleOutline,
+} from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
 import GeneralSection from "./GeneralSection.vue";
 import ThemeSection from "./ThemeSection.vue";
@@ -47,6 +66,46 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const activeTab = ref<SettingsTab>("general");
 
+/** 左侧导航按功能域分组：外观/终端/快捷键归"通用"，窗口/托盘/图标/启动归
+ *  "系统"，AI 单列，安全/备份归"数据"，关于收尾（无组标题）。 */
+const navGroups = computed<
+  { label: string; items: { key: SettingsTab; icon: Component }[] }[]
+>(() => [
+  {
+    label: t("settings.groups.general"),
+    items: [
+      { key: "general", icon: OptionsOutline },
+      { key: "theme", icon: ColorPaletteOutline },
+      { key: "terminal", icon: TerminalOutline },
+      { key: "shortcuts", icon: KeyOutline },
+    ],
+  },
+  {
+    label: t("settings.groups.system"),
+    items: [
+      { key: "window", icon: BrowsersOutline },
+      { key: "tray", icon: FileTrayFullOutline },
+      { key: "icons", icon: AppsOutline },
+      { key: "startup", icon: RocketOutline },
+    ],
+  },
+  {
+    label: t("settings.groups.features"),
+    items: [{ key: "ai", icon: SparklesOutline }],
+  },
+  {
+    label: t("settings.groups.data"),
+    items: [
+      { key: "security", icon: ShieldCheckmarkOutline },
+      { key: "backup", icon: CloudOutline },
+    ],
+  },
+  {
+    label: "",
+    items: [{ key: "about", icon: InformationCircleOutline }],
+  },
+]);
+
 function close() {
   emit("update:open", false);
 }
@@ -55,7 +114,7 @@ function close() {
 <template>
   <NModal :show="open" :mask-closable="false" @update:show="(v: boolean) => emit('update:open', v)">
     <NCard
-      style="width: min(900px, 88vw); height: min(680px, 84vh)"
+      style="width: min(1060px, 94vw); height: min(800px, 92vh)"
       :title="t('settings.title')"
       size="medium"
       :bordered="false"
@@ -79,102 +138,24 @@ function close() {
 
       <div class="settings-layout">
         <nav class="settings-tabs" :aria-label="t('settings.sections')">
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'general' }"
-            type="button"
-            @click="activeTab = 'general'"
-          >
-            {{ t("settings.tabs.general") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'theme' }"
-            type="button"
-            @click="activeTab = 'theme'"
-          >
-            {{ t("settings.tabs.theme") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'terminal' }"
-            type="button"
-            @click="activeTab = 'terminal'"
-          >
-            {{ t("settings.tabs.terminal") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'shortcuts' }"
-            type="button"
-            @click="activeTab = 'shortcuts'"
-          >
-            {{ t("settings.tabs.shortcuts") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'window' }"
-            type="button"
-            @click="activeTab = 'window'"
-          >
-            {{ t("settings.tabs.window") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'tray' }"
-            type="button"
-            @click="activeTab = 'tray'"
-          >
-            {{ t("settings.tabs.tray") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'icons' }"
-            type="button"
-            @click="activeTab = 'icons'"
-          >
-            {{ t("settings.tabs.icons") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'startup' }"
-            type="button"
-            @click="activeTab = 'startup'"
-          >
-            {{ t("settings.tabs.startup") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'ai' }"
-            type="button"
-            @click="activeTab = 'ai'"
-          >
-            {{ t("settings.tabs.ai") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'security' }"
-            type="button"
-            @click="activeTab = 'security'"
-          >
-            {{ t("settings.tabs.security") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'backup' }"
-            type="button"
-            @click="activeTab = 'backup'"
-          >
-            {{ t("settings.tabs.backup") }}
-          </button>
-          <button
-            class="settings-tab"
-            :class="{ active: activeTab === 'about' }"
-            type="button"
-            @click="activeTab = 'about'"
-          >
-            {{ t("settings.tabs.about") }}
-          </button>
+          <template v-for="group in navGroups" :key="group.label || 'tail'">
+            <div v-if="group.label" class="settings-group-label">
+              {{ group.label }}
+            </div>
+            <button
+              v-for="item in group.items"
+              :key="item.key"
+              class="settings-tab"
+              :class="{ active: activeTab === item.key }"
+              type="button"
+              @click="activeTab = item.key"
+            >
+              <NIcon :size="15" class="settings-tab-icon">
+                <component :is="item.icon" />
+              </NIcon>
+              {{ t(`settings.tabs.${item.key}`) }}
+            </button>
+          </template>
         </nav>
 
         <div class="settings-content">
@@ -211,13 +192,26 @@ function close() {
 }
 
 .settings-tabs {
-  width: 160px;
+  width: 168px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   padding-right: 12px;
   border-right: 1px solid var(--ashell-border-soft);
+  overflow-y: auto;
+}
+
+.settings-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--ashell-text-subtle);
+  padding: 9px 12px 4px;
+  user-select: none;
+}
+.settings-group-label:first-child {
+  padding-top: 2px;
 }
 
 .settings-tab {
@@ -229,11 +223,19 @@ function close() {
   cursor: pointer;
   font: inherit;
   font-size: 14px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   transition:
     background 0.15s ease,
     color 0.15s ease;
+}
+
+.settings-tab-icon {
+  flex-shrink: 0;
+  opacity: 0.75;
 }
 
 .settings-tab:hover {
@@ -244,6 +246,9 @@ function close() {
 .settings-tab.active {
   background: var(--ashell-active);
   color: var(--ashell-text-strong);
+}
+.settings-tab.active .settings-tab-icon {
+  opacity: 1;
 }
 
 .settings-content {

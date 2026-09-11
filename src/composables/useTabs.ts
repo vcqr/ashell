@@ -176,6 +176,7 @@ export function useTabs() {
           key: t.key,
           title: t.title,
           kind: t.kind ?? "ssh",
+          status: t.status,
         })),
       );
     },

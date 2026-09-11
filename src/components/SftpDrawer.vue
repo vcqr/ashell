@@ -500,6 +500,9 @@ function askSudoPassword(next: boolean, errMsg: string) {
 
 /* ---------- data loading ---------- */
 
+/** 目录加载失败的持久错误态：横幅 + 重试入口，错误不随 toast 消失 */
+const loadError = ref<string | null>(null)
+
 /** 拉取目录。history: push=常规导航（压后退栈、清前进栈）；
  *  back/forward=历史导航（对向栈承接当前位置）。 */
 async function load(path?: string, history: "push" | "back" | "forward" = "push") {
@@ -522,8 +525,11 @@ async function load(path?: string, history: "push" | "back" | "forward" = "push"
     clearRemoteSelection()
     cursorKey.value = null
     store.setPath(sid, currentPath.value)
+    loadError.value = null
   } catch (e) {
     message.error(t("sftp.message.loadFailed", { error: (e as Error).message }))
+    // 保留上次成功列表供继续查看，同时以横幅暴露错误（而非只弹一次 toast）
+    loadError.value = (e as Error).message
   } finally {
     loading.value = false
   }
@@ -1062,6 +1068,95 @@ async function confirmDownloadOverwrite(items: SftpFile[]): Promise<boolean> {
   })
 }
 
+/* ---------- 上传同名覆盖确认（三条上传通道共用） ---------- */
+
+/** 基于远程当前目录列表找同名冲突，返回冲突名 */
+function findUploadConflicts(names: string[]): string[] {
+  if (names.length === 0) return []
+  const set = new Set(names.map((n) => n.toLowerCase()))
+  return files.value
+    .filter((f) => set.has(f.file_name.toLowerCase()))
+    .map((f) => f.file_name)
+}
+
+/** 批量预检：一次列出全部同名冲突，整批覆盖或取消（传输开始前问完，
+ *  不在传输中途逐个弹窗打断） */
+function confirmUploadOverwriteBatch(conflicts: string[]): Promise<boolean> {
+  if (conflicts.length === 0) return Promise.resolve(true)
+  const content = `${conflicts.slice(0, 5).join(", ")}${
+    conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
+  }`
+  return new Promise<boolean>((resolve) => {
+    dialog.warning({
+      title:
+        conflicts.length > 1
+          ? t("sftp.dialog.overwriteBatchTitle", { count: conflicts.length })
+          : t("sftp.dialog.overwriteTitle"),
+      content,
+      positiveText: t("common.overwrite"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => resolve(true),
+      onNegativeClick: () => resolve(false),
+      onClose: () => resolve(false),
+      onMaskClick: () => resolve(false),
+    })
+  })
+}
+
+type OverwriteDecision = "overwrite" | "cancel"
+
+/** 队列式确认：NUpload 对多选文件逐个触发 customRequest，无法整批预检；
+ *  把同一批到达的冲突收敛成一次弹窗，选择应用到全部排队项。 */
+let overwriteAskQueue: Array<{
+  name: string
+  resolve: (d: OverwriteDecision) => void
+}> = []
+let overwriteAskTimer: number | null = null
+
+function askOverwriteQueued(name: string): Promise<OverwriteDecision> {
+  return new Promise((resolve) => {
+    overwriteAskQueue.push({ name, resolve })
+    if (overwriteAskTimer !== null) return
+    // 延迟到同一 tick 的整批入队后再一次问完（NUpload 逐文件触发 customRequest，
+    // 多个同名冲突只弹一次窗）
+    overwriteAskTimer = window.setTimeout(flushOverwriteAsk, 0)
+  })
+}
+
+function flushOverwriteAsk() {
+  overwriteAskTimer = null
+  if (overwriteAskQueue.length === 0) return
+  const batch = overwriteAskQueue
+  overwriteAskQueue = []
+  const names = batch.map((b) => b.name)
+  const content =
+    names.length === 1
+      ? t("sftp.dialog.overwriteConfirm", { name: names[0]! })
+      : `${names.slice(0, 5).join(", ")}${
+          names.length > 5 ? ` …(+${names.length - 5})` : ""
+        }`
+  const finish = (d: OverwriteDecision) => {
+    for (const b of batch) b.resolve(d)
+    // 弹窗期间可能又有新冲突入队，继续处理
+    if (overwriteAskQueue.length > 0) {
+      overwriteAskTimer = window.setTimeout(flushOverwriteAsk, 0)
+    }
+  }
+  dialog.warning({
+    title:
+      names.length > 1
+        ? t("sftp.dialog.overwriteBatchTitle", { count: names.length })
+        : t("sftp.dialog.overwriteTitle"),
+    content,
+    positiveText: t("common.overwrite"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: () => finish("overwrite"),
+    onNegativeClick: () => finish("cancel"),
+    onClose: () => finish("cancel"),
+    onMaskClick: () => finish("cancel"),
+  })
+}
+
 async function onDownload(file: SftpFile) {
   if (!props.sid) return
   if (file.file_type !== "file") {
@@ -1305,27 +1400,8 @@ async function onLocalUpload(sel: SftpFile[]) {
 
   // 文件同名覆盖确认：只问一次，列出冲突名
   if (upFiles.length > 0) {
-    const names = new Set(upFiles.map((f) => f.file_name.toLowerCase()))
-    const conflicts = files.value
-      .filter((f) => names.has(f.file_name.toLowerCase()))
-      .map((f) => f.file_name)
-    if (conflicts.length > 0) {
-      const preview = conflicts.slice(0, 5).join(", ")
-      const more = conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
-      const ok = await new Promise<boolean>((resolve) => {
-        dialog.warning({
-          title: t("sftp.dialog.overwriteTitle"),
-          content: `${preview}${more}`,
-          positiveText: t("common.overwrite"),
-          negativeText: t("common.cancel"),
-          onPositiveClick: () => resolve(true),
-          onNegativeClick: () => resolve(false),
-          onClose: () => resolve(false),
-          onMaskClick: () => resolve(false),
-        })
-      })
-      if (!ok) return
-    }
+    const conflicts = findUploadConflicts(upFiles.map((f) => f.file_name))
+    if (!(await confirmUploadOverwriteBatch(conflicts))) return
   }
 
   // 单个本地文件的直传任务（retry 复用同一任务对象）
@@ -1583,27 +1659,18 @@ function retryDownload(id: string) {
 
 /** 上传单个文件到当前目录（含同名覆盖确认、任务进度条、取消、失败重试）。
  *  按钮上传与 OS 拖放共用此通道。返回是否实际完成上传。 */
-async function uploadOneFile(file: File): Promise<boolean> {
+/** 单文件上传。overwritePrecheckDone=true 表示调用方已做过整批同名确认
+ *  （OS 拖放路径），跳过逐文件询问；按钮上传走 askOverwriteQueued 批量收敛。 */
+async function uploadOneFile(file: File, overwritePrecheckDone = false): Promise<boolean> {
   if (!props.sid) return false
   const sid = props.sid
   // 同名覆盖确认（与 demo 保持一致：基于当前目录已加载的文件列表判定）
   const exists = files.value.some(
     (f) => f.file_name.toLowerCase() === file.name.toLowerCase(),
   )
-  if (exists) {
-    const ok = await new Promise<boolean>((resolve) => {
-      dialog.warning({
-        title: t("sftp.dialog.overwriteTitle"),
-        content: t("sftp.dialog.overwriteConfirm", { name: file.name }),
-        positiveText: t("common.overwrite"),
-        negativeText: t("common.cancel"),
-        onPositiveClick: () => resolve(true),
-        onNegativeClick: () => resolve(false),
-        onClose: () => resolve(false),
-        onMaskClick: () => resolve(false),
-      })
-    })
-    if (!ok) return false
+  if (exists && !overwritePrecheckDone) {
+    const d = await askOverwriteQueued(file.name)
+    if (d === "cancel") return false
   }
   const taskId = genId()
   const remotePath = joinPath(currentPath.value, file.name)
@@ -1934,9 +2001,17 @@ async function onPanelDrop(e: DragEvent) {
   const topFiles: File[] = []
   const folders: OsDropFolder[] = []
 
+  // 关键：DataTransfer 的拖拽数据存储在 drop 事件任务结束后即失效，
+  // 不能"取一个 entry → await 读文件 → 再取下一个"（第二轮时 items 已清空，
+  // 永远只会拿到第一个文件）。必须在事件同步阶段把所有 entry 一次性取出，
+  // 之后再异步读取文件内容/目录树。
+  const dropEntries: FileSystemEntry[] = []
   for (let i = 0; i < dt.items.length; i++) {
     const entry = dt.items[i]?.webkitGetAsEntry?.()
-    if (!entry) continue
+    if (entry) dropEntries.push(entry)
+  }
+
+  for (const entry of dropEntries) {
     if (entry.isFile) {
       const file = await new Promise<File | null>((resolve) =>
         (entry as FileSystemFileEntry).file(resolve, () => resolve(null)),
@@ -1954,30 +2029,21 @@ async function onPanelDrop(e: DragEvent) {
     return
   }
 
-  // 顶层文件：与按钮上传完全同一条通道（含覆盖确认、进度、取消）
-  for (const f of topFiles) {
-    await uploadOneFile(f)
+  // 顶层文件与文件夹统一批量预检：一次确认覆盖全部同名冲突，
+  // 不再传输中途逐文件/逐文件夹弹窗打断（与 onLocalUpload 同一语义）
+  const conflicts = findUploadConflicts([
+    ...topFiles.map((f) => f.name),
+    ...folders.map((fo) => fo.name),
+  ])
+  if (conflicts.length > 0 && !(await confirmUploadOverwriteBatch(conflicts))) {
+    return
   }
-  // 文件夹：顶层同名确认后复用既有目录上传流程
+
+  // 顶层文件：与按钮上传完全同一条通道（进度、取消）；覆盖已在上方整批确认
+  for (const f of topFiles) {
+    await uploadOneFile(f, true)
+  }
   for (const folder of folders) {
-    const exists = files.value.some(
-      (f) => f.file_name.toLowerCase() === folder.name.toLowerCase(),
-    )
-    if (exists) {
-      const ok = await new Promise<boolean>((resolve) => {
-        dialog.warning({
-          title: t("sftp.dialog.uploadOverwriteTitle"),
-          content: t("sftp.dialog.uploadOverwriteConfirm", { name: folder.name }),
-          positiveText: t("common.overwrite"),
-          negativeText: t("common.cancel"),
-          onPositiveClick: () => resolve(true),
-          onNegativeClick: () => resolve(false),
-          onClose: () => resolve(false),
-          onMaskClick: () => resolve(false),
-        })
-      })
-      if (!ok) continue
-    }
     await uploadFolderEntries(folder.entries)
   }
   await load()
@@ -2098,7 +2164,8 @@ function dirFirst(a: SftpFile, b: SftpFile): number {
 function cmpDefault(a: SftpFile, b: SftpFile): number {
   const d = dirFirst(a, b)
   if (d !== 0) return d
-  return a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
+  const r = a.file_name.toLowerCase().localeCompare(b.file_name.toLowerCase())
+  return sortState.value.order === "descend" ? -r : r
 }
 
 function cmpSize(a: SftpFile, b: SftpFile): number {
@@ -2106,7 +2173,8 @@ function cmpSize(a: SftpFile, b: SftpFile): number {
   if (d !== 0) return d
   const sa = typeof a.size_bytes === "number" ? a.size_bytes : -1
   const sb = typeof b.size_bytes === "number" ? b.size_bytes : -1
-  return sa - sb
+  const r = sa - sb
+  return sortState.value.order === "descend" ? -r : r
 }
 
 function cmpMtime(a: SftpFile, b: SftpFile): number {
@@ -2117,7 +2185,8 @@ function cmpMtime(a: SftpFile, b: SftpFile): number {
   if (ma === null && mb === null) return 0
   if (ma === null) return 1
   if (mb === null) return -1
-  return ma - mb
+  const r = ma - mb
+  return sortState.value.order === "descend" ? -r : r
 }
 
 const sortState = ref<{
@@ -2157,7 +2226,8 @@ function onColumnResize(
   persistColWidths()
 }
 
-/** 按当前排序状态重排列表（descend 反转；无排序时回到默认目录优先+名字） */
+/** 按当前排序状态重排列表（descend 只反转键值比较，目录始终排在前面；
+ *  无排序时回到默认目录优先+名字。整体 reverse 会把目录一并沉底，不可用） */
 function applySort(list: SftpFile[]): SftpFile[] {
   const cmp =
     sortState.value.columnKey === "size"
@@ -2165,8 +2235,7 @@ function applySort(list: SftpFile[]): SftpFile[] {
       : sortState.value.columnKey === "mtime"
         ? cmpMtime
         : cmpDefault
-  const sorted = [...list].sort(cmp)
-  return sortState.value.order === "descend" ? sorted.reverse() : sorted
+  return [...list].sort(cmp)
 }
 
 function onRemoteSort(s: DataTableSortState | DataTableSortState[]) {
@@ -3280,6 +3349,18 @@ function openInStandaloneWindow() {
             </div>
           </div>
 
+          <div v-if="loadError" class="load-error-banner">
+            <span class="load-error-text" :title="loadError">
+              {{ t("sftp.message.loadFailed", { error: loadError }) }}
+            </span>
+            <NButton size="tiny" type="primary" secondary @click="refresh">
+              {{ t("sftp.localPane.retry") }}
+            </NButton>
+            <NButton size="tiny" quaternary @click="loadError = null">
+              {{ t("common.dismiss") }}
+            </NButton>
+          </div>
+
           <NSpin :show="loading" class="table-wrap" @click="onRemoteTableClick">
             <NDataTable
               size="small"
@@ -3908,6 +3989,29 @@ function openInStandaloneWindow() {
 
 .badge-btn :deep(.n-badge-sup) {
   pointer-events: none;
+}
+
+/* 目录加载失败横幅：错误不随 toast 消失，带重试入口 */
+.load-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(208, 48, 80, 0.35);
+  background: rgba(208, 48, 80, 0.08);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.load-error-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ashell-danger, #d03050);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .table-wrap {

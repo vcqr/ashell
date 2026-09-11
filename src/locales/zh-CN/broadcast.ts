@@ -17,4 +17,10 @@ export default {
     remoteWindow: " [其他窗口]",
     unnamed: "(未命名)",
   },
+  status: {
+    connected: "已连接",
+    connecting: "连接中",
+    closed: "已断开",
+    error: "连接错误",
+  },
 } as const

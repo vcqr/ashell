@@ -80,8 +80,11 @@ const lastSampleAt = ref<number>(0)
 /** 当前选中网卡 key */
 const selectedNic = ref<string>(ALL_KEY)
 
-let timer: ReturnType<typeof setInterval> | null = null
+let timer: ReturnType<typeof setTimeout> | null = null
 const POLL_INTERVAL = 1500
+/** 连续失败后的退避轮询间隔：瞬时故障自动恢复，面板不永久停摆 */
+const ERROR_POLL_INTERVAL = 5000
+let consecutiveErrors = 0
 
 const drawerTitle = computed(() => {
   const host = props.hostName ?? t("hostInfo.title")
@@ -273,28 +276,40 @@ async function refresh() {
     }
 
     lastSampleAt.value = now
+    consecutiveErrors = 0
   } catch (e) {
     const msg = e instanceof ApiError ? e.message : (e as Error).message
     error.value = msg
-    stopPolling()
+    consecutiveErrors++
   } finally {
     loading.value = false
     refreshing.value = false
+    // 成功回到常规节奏，失败退避慢速重试；面板已关/sid 已清则不再排程
+    if (props.open && props.sid) {
+      scheduleNext(consecutiveErrors > 0 ? ERROR_POLL_INTERVAL : POLL_INTERVAL)
+    }
   }
+}
+
+function scheduleNext(delay: number) {
+  if (timer !== null) clearTimeout(timer)
+  timer = setTimeout(() => {
+    timer = null
+    void refresh()
+  }, delay)
 }
 
 function startPolling() {
   stopPolling()
   if (!props.sid) return
+  consecutiveErrors = 0
+  // 立即拉一次；后续排程由 refresh 的 finally 链式驱动
   void refresh()
-  timer = setInterval(() => {
-    void refresh()
-  }, POLL_INTERVAL)
 }
 
 function stopPolling() {
   if (timer !== null) {
-    clearInterval(timer)
+    clearTimeout(timer)
     timer = null
   }
 }
@@ -448,7 +463,13 @@ const panelStyle = computed(() => ({
               :show-icon="false"
               class="error-alert"
             >
-              {{ error }}
+              <div class="error-alert-body">
+                <span class="error-alert-text">{{ error }}</span>
+                <NButton size="tiny" type="error" secondary :loading="refreshing" @click="manualRefresh">
+                  {{ t("hostInfo.errorRetry") }}
+                </NButton>
+              </div>
+              <div class="error-alert-hint">{{ t("hostInfo.errorHint") }}</div>
             </NAlert>
 
             <section class="card">
@@ -835,6 +856,25 @@ const panelStyle = computed(() => ({
 
 .error-alert {
   margin-bottom: 4px;
+}
+
+.error-alert-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.error-alert-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.error-alert-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.75;
+  line-height: 1.5;
 }
 
 .card {

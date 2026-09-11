@@ -22,6 +22,17 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const message = useMessage()
 
+/** file_type 枚举 → 本地化文案；未知类型（socket/fifo 等）回退原文 */
+const typeText = computed(() => {
+  const ft = props.file?.file_type ?? ""
+  const map: Record<string, string> = {
+    dir: t("sftp.dialog.typeFolder"),
+    file: t("sftp.dialog.typeFile"),
+    symlink: t("sftp.dialog.typeSymlink"),
+  }
+  return map[ft] ?? ft
+})
+
 /** 八进制权限串（3 位），九宫格与输入框的共同数据源 */
 const octal = ref("644")
 const userInput = ref("")
@@ -121,7 +132,7 @@ async function apply() {
         </div>
         <div class="info-row">
           <span class="k">{{ t("sftp.properties.type") }}</span>
-          <span class="v">{{ props.file.file_type }}</span>
+          <span class="v">{{ typeText }}</span>
         </div>
         <div class="info-row">
           <span class="k">{{ t("sftp.properties.size") }}</span>

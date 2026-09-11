@@ -38,6 +38,7 @@ interface AggTab {
   kind: string
   isLocal: boolean
   windowId: string
+  status?: string
 }
 
 const allTabs = computed<AggTab[]>(() =>
@@ -46,9 +47,26 @@ const allTabs = computed<AggTab[]>(() =>
       key: t.key,
       title: t.title,
       kind: t.kind ?? "ssh",
+      status: t.status,
     })),
   ),
 )
+
+/** 目标行的连接状态文案（tooltip 用）；未知状态返回空串不展示。 */
+function statusLabel(status?: string): string {
+  switch (status) {
+    case "connected":
+      return t("broadcast.status.connected")
+    case "connecting":
+      return t("broadcast.status.connecting")
+    case "closed":
+      return t("broadcast.status.closed")
+    case "error":
+      return t("broadcast.status.error")
+    default:
+      return ""
+  }
+}
 
 const sourceOptions = computed<SelectOption[]>(() => [
   {
@@ -198,6 +216,15 @@ function tabIcon(kind: string) {
                   <component :is="tabIcon(row.tab.kind)" />
                 </NIcon>
                 <span class="bp-tab-title">{{ row.tab.title || t("broadcast.tabLabel.unnamed") }}</span>
+                <NTooltip v-if="statusLabel(row.tab.status)" trigger="hover">
+                  <template #trigger>
+                    <span
+                      class="bp-status-dot"
+                      :class="`status-${row.tab.status}`"
+                    />
+                  </template>
+                  {{ statusLabel(row.tab.status) }}
+                </NTooltip>
                 <NTag
                   v-if="!row.tab.isLocal"
                   size="tiny"
@@ -335,6 +362,40 @@ function tabIcon(kind: string) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 目标 tab 连接状态灯：配色与 TabBar 的 tab-status-dot 一致 */
+.bp-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.bp-status-dot.status-connected {
+  background: #4ade80;
+}
+.bp-status-dot.status-connecting {
+  background: #f59e0b;
+  animation: bp-status-pulse 1.4s ease-in-out infinite;
+}
+.bp-status-dot.status-error {
+  background: #ef4444;
+  box-shadow: 0 0 5px rgba(239, 68, 68, 0.45);
+}
+.bp-status-dot.status-closed {
+  background: var(--ashell-text-subtle, rgba(255, 255, 255, 0.3));
+  opacity: 0.5;
+}
+
+@keyframes bp-status-pulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
 }
 
 .bp-source-tag {
