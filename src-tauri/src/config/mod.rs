@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context, Result};
-use rand::RngCore;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 /// 应用配置（启动后注入到全局状态）
@@ -107,7 +107,7 @@ fn load_or_generate_crypto_key() -> Result<[u8; 32]> {
                 // 钥匙串内容损坏：重新生成并覆盖
                 log::error!("钥匙串中的加密密钥已损坏，重新生成。此前加密的凭证将无法解密");
                 let mut key = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut key);
+                rand::rng().fill(&mut key);
                 if key_to_keyring(entry, &key) {
                     return Ok(key);
                 }
@@ -148,7 +148,7 @@ fn load_or_generate_crypto_key() -> Result<[u8; 32]> {
 
     // 3) 全新生成：优先写钥匙串，否则落盘
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::rng().fill(&mut key);
     let in_keyring = entry.as_ref().is_some_and(|e| key_to_keyring(e, &key));
     if !in_keyring {
         fs::write(&path, key).with_context(|| format!("写入 {:?} 失败", path))?;
@@ -164,7 +164,7 @@ fn load_or_generate_crypto_key() -> Result<[u8; 32]> {
 /// 生成随机 Token
 fn generate_token() -> String {
     let mut buf = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut buf);
+    rand::rng().fill(&mut buf);
     hex::encode(buf)
 }
 

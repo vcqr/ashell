@@ -171,13 +171,13 @@ pub async fn delete(pool: &DbPool, id: i64) -> AppResult<()> {
 
     // 软删除 hosts (gid IN all_ids)
     if !all_ids.is_empty() {
-        // 构造 IN 占位符
+        // 构造 IN 占位符；SQL 仅拼接 "?" 占位符，id 全部走 bind 参数
         let placeholders = all_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
             "UPDATE hosts SET is_del = 1, updated_at = datetime('now') WHERE is_del = 0 AND gid IN ({})",
             placeholders
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         for id in &all_ids {
             q = q.bind(id);
         }

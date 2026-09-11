@@ -5,7 +5,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use pbkdf2::pbkdf2_hmac;
-use rand::RngCore;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use s3::creds::Credentials;
 use s3::{Bucket, Region};
@@ -103,15 +103,15 @@ fn derive_key(password: &str, salt: &[u8]) -> [u8; 32] {
 fn encrypt_with_password(plaintext: &str, password: &str) -> AppResult<String> {
     let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut salt);
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    rand::rng().fill(&mut salt);
+    rand::rng().fill(&mut nonce_bytes);
 
     let key = derive_key(password, &salt);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(key));
+    let nonce = Nonce::from(nonce_bytes);
 
     let ciphertext = cipher
-        .encrypt(nonce, plaintext.as_bytes())
+        .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|e| AppError::Crypto(format!("aes encrypt: {e}")))?;
 
     Ok(serde_json::json!({
@@ -149,11 +149,12 @@ fn decrypt_with_password(encrypted: &str, password: &str) -> AppResult<String> {
         .map_err(|e| AppError::Internal(format!("decode ciphertext: {e}")))?;
 
     let key = derive_key(password, &salt);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(key));
+    let nonce = Nonce::try_from(nonce_bytes.as_slice())
+        .map_err(|_| AppError::Crypto("nonce must be 12 bytes (corrupt backup?)".into()))?;
 
     let plaintext = cipher
-        .decrypt(nonce, ciphertext.as_ref())
+        .decrypt(&nonce, ciphertext.as_ref())
         .map_err(|e| AppError::Crypto(format!("aes decrypt (wrong password?): {e}")))?;
 
     String::from_utf8(plaintext).map_err(|e| AppError::Internal(format!("utf8: {e}")))
@@ -347,9 +348,16 @@ pub async fn test_connection(cfg: &BackupConfig) -> AppResult<()> {
 
 // ── Table dump/restore ──
 
+/// SQL 标识符（表名/列名）校验：仅允许 ASCII 字母、数字、下划线，且不以数字开头
+fn is_sql_ident(s: &str) -> bool {
+    s.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 async fn dump_table(pool: &DbPool, table: &str) -> AppResult<Vec<serde_json::Value>> {
-    let sql = format!("SELECT * FROM {}", table);
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    // table 均来自本文件内的字面量调用点，无外部输入拼入
+    let sql = sqlx::AssertSqlSafe(format!("SELECT * FROM {table}"));
+    let rows = sqlx::query(sql).fetch_all(pool).await?;
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
         let mut obj = serde_json::Map::new();
@@ -414,7 +422,7 @@ async fn restore_table_tx(
     table: &str,
     rows: &[serde_json::Value],
 ) -> AppResult<()> {
-    sqlx::query(&format!("DELETE FROM {}", table))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
         .execute(&mut **tx)
         .await?;
 
@@ -424,6 +432,15 @@ async fn restore_table_tx(
             .ok_or_else(|| AppError::Internal("backup row is not an object".into()))?;
 
         let columns: Vec<String> = obj.keys().cloned().collect();
+        // 列名来自备份文件的 JSON key（外部数据），无法走 bind 参数，只能拼入 SQL——
+        // 统一校验为合法标识符，防止构造的备份文件注入
+        for col in &columns {
+            if !is_sql_ident(col) {
+                return Err(AppError::Internal(format!(
+                    "backup contains invalid column name: {col}"
+                )));
+            }
+        }
         let placeholders: Vec<&str> = columns.iter().map(|_| "?").collect();
         let sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
@@ -432,7 +449,7 @@ async fn restore_table_tx(
             placeholders.join(", ")
         );
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         for col in &columns {
             let val = &obj[col];
             match val {

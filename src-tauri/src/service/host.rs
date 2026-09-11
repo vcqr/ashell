@@ -210,19 +210,20 @@ pub async fn list_with_group(
         LEFT JOIN groups g ON g.id = h.gid AND g.is_del = 0
         WHERE h.is_del = 0
     "#;
+    // base 为字面量 SQL，拼接的只有过滤条件占位符，值全部走 bind 参数
     let rows = match gid {
         Some(g) => {
-            sqlx::query_as::<_, crate::models::HostWithGroup>(&format!(
+            sqlx::query_as::<_, crate::models::HostWithGroup>(sqlx::AssertSqlSafe(format!(
                 "{base} AND h.gid = ? ORDER BY h.id ASC"
-            ))
+            )))
             .bind(g)
             .fetch_all(pool)
             .await?
         }
         None => {
-            sqlx::query_as::<_, crate::models::HostWithGroup>(&format!(
+            sqlx::query_as::<_, crate::models::HostWithGroup>(sqlx::AssertSqlSafe(format!(
                 "{base} ORDER BY h.id ASC"
-            ))
+            )))
             .fetch_all(pool)
             .await?
         }
