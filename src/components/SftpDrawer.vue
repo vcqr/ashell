@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isTauri } from "@/utils/platform"
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NBadge,
@@ -2815,9 +2816,13 @@ const panelStyle = computed(() => {
 function onClose() {
   // 独立窗口模式下"关闭"语义是关掉整个窗口
   if (props.standalone) {
-    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
-      getCurrentWindow().close(),
-    )
+    if (isTauri) {
+      void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+        getCurrentWindow().close(),
+      )
+    } else {
+      window.close()
+    }
     return
   }
   emit("update:open", false)

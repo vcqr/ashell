@@ -23,7 +23,7 @@ import {
 } from "naive-ui"
 import { EyeOutline, EyeOffOutline } from "@vicons/ionicons5"
 import { useI18n } from "vue-i18n"
-import { invoke } from "@tauri-apps/api/core"
+import { uploadPrivateKey } from "@/utils/fileInterop"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
 import { getOpPasswordStatus, revealCredentials } from "@/api/security"
@@ -249,12 +249,13 @@ function emptyToNull(v: string | null | undefined): string | null {
 
 async function pickPrivateKeyFile() {
   try {
-    const path = await invoke<string | null>("pick_private_key_file")
+    // 桌面端文件对话框返回本地路径；Web 端上传内容换回服务端路径
+    const path = await uploadPrivateKey()
     if (path) {
       form.private_key_path = path
     }
   } catch {
-    // 用户取消或对话框错误，忽略
+    // 用户取消或上传失败，忽略
   }
 }
 

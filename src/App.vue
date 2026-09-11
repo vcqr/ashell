@@ -38,6 +38,8 @@ import TemplateDrawer from "@/components/TemplateDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
 import AiProvidersModal from "@/components/AiProvidersModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
+import LoginGate from "@/components/LoginGate.vue";
+import { isTauri } from "@/utils/platform";
 import { useApiStore } from "@/stores/api";
 import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
@@ -173,212 +175,214 @@ useGlobalShortcuts({
     <NMessageProvider>
       <NDialogProvider>
         <NNotificationProvider>
-          <UpdateChecker v-if="!soloSftp && !soloAi" />
-          <SftpWindow v-if="soloSftp" />
-          <AiWindow v-else-if="soloAi" />
-          <div
-            v-else
-            class="app-root"
-            :style="{
-              '--ashell-activity-w':
-                tabs.length > 0 && activityBarVisible ? '44px' : '0px',
-            }"
-          >
+          <LoginGate>
+            <UpdateChecker v-if="isTauri && !soloSftp && !soloAi" />
+            <SftpWindow v-if="soloSftp" />
+            <AiWindow v-else-if="soloAi" />
             <div
-              v-if="terminalStore.wallpaperUrl"
-              class="wallpaper-layer"
+              v-else
+              class="app-root"
               :style="{
-                backgroundImage: `url(${terminalStore.wallpaperUrl})`,
-                opacity: 'var(--ashell-wallpaper-opacity, 1)',
+                '--ashell-activity-w':
+                  tabs.length > 0 && activityBarVisible ? '44px' : '0px',
               }"
-            />
-            <header class="app-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
-              <WindowControls v-if="isMac" />
-              <div v-if="!isMac" class="brand" data-tauri-drag-region>
-                <div class="brand-logo">
-                  <img src="/icon.png" alt="AShell" />
-                </div>
-                <span class="brand-name">AShell</span>
-              </div>
-              <NButton
-                quaternary
-                circle
-                class="collapse-btn"
-                data-tauri-drag-region="false"
-                :title="hostsOpen ? t('app.hideHosts') : t('app.showHosts')"
-                @click="hostsOpen = !hostsOpen"
-              >
-                <template #icon>
-                  <NIcon :size="18"><MenuOutline /></NIcon>
-                </template>
-              </NButton>
-              <div class="header-divider" />
-              <div class="tabs-wrap" data-tauri-drag-region="false">
-                <TabBar
-                  :tabs="tabs"
-                  :active-key="activeTabKey"
-                  :get-session-content="getSessionContent"
-                  @update:active-key="(k: string) => (activeTabKey = k)"
-                  @close="closeTab"
-                  @new="onTabBarNew"
-                  @reorder="reorderTabs"
-                  @reconnect="reconnectTab"
-                  @disconnect="disconnectTab"
-                  @duplicate="duplicateTab"
-                  @rename="renameTab"
-                  @close-others="closeOtherTabs"
-                  @close-left="closeLeftTabs"
-                  @close-right="closeRightTabs"
-                  @open-in-new-window="openInNewWindow"
-                />
-              </div>
-              <nav class="drag-spacer" data-tauri-drag-region />
-              <NSpace
-                :size="8"
-                align="center"
-                class="header-actions"
-                data-tauri-drag-region="false"
-              >
-                <NTooltip v-if="tabs.length > 0">
-                  <template #trigger>
-                    <NButton
-                      circle
-                      quaternary
-                      :type="activityBarVisible ? 'primary' : 'default'"
-                      @click="activityBarVisible = !activityBarVisible"
-                    >
-                      <template #icon>
-                        <NIcon :size="18"><GridOutline /></NIcon>
-                      </template>
-                    </NButton>
-                  </template>
-                  {{ activityBarVisible ? t("app.hideSidebar") : t("app.showSidebar") }}
-                </NTooltip>
-                <NTooltip>
-                  <template #trigger>
-                    <NButton circle quaternary @click="aiProvidersOpen = true">
-                      <template #icon>
-                        <NIcon :size="18"><CubeOutline /></NIcon>
-                      </template>
-                    </NButton>
-                  </template>
-                  {{ t("settings.ai.provider.title") }}
-                </NTooltip>
-                <NTooltip>
-                  <template #trigger>
-                    <NButton circle quaternary @click="settingsOpen = true">
-                      <template #icon>
-                        <NIcon :size="18"><SettingsOutline /></NIcon>
-                      </template>
-                    </NButton>
-                  </template>
-                  {{ t("app.settings") }}
-                </NTooltip>
-              </NSpace>
-              <WindowControls v-if="!isMac" />
-            </header>
-
-            <div
-              class="app-content"
-              :style="{
-                top: 'var(--ashell-header-h)',
-                left: 0,
-                right: 'var(--ashell-activity-w, 0px)',
-                bottom: 0,
-              }"
-              @mousedown="closeHostsIfOpen"
             >
-              <TerminalView
-                v-for="tab in tabs"
-                v-show="tab.key === activeTabKey"
-                :key="tab.key"
-                :ref="(el) => setTerminalRef(tab.key, el)"
-                :tab="tab"
-                :active="tab.key === activeTabKey"
-                :auto-connect="
-                  !restoredTabKeys.has(tab.key) ||
-                  startupStore.autoConnectRememberedTabs
-                "
-                @sid-ready="onSidReady"
-                @status-change="onStatusChange"
-                @title-change="onTitleChange"
-                @send-to-ai="onSendToAi"
-                @close-tab="closeTab"
+              <div
+                v-if="terminalStore.wallpaperUrl"
+                class="wallpaper-layer"
+                :style="{
+                  backgroundImage: `url(${terminalStore.wallpaperUrl})`,
+                  opacity: 'var(--ashell-wallpaper-opacity, 1)',
+                }"
               />
-              <div v-if="tabs.length === 0" class="empty-state">
-                <NIcon :size="48" depth="3"><TerminalOutline /></NIcon>
-                <p>{{ t("app.emptyState.title") }}</p>
-                <NSpace :size="12">
-                  <NButton tertiary @click="hostsOpen = true">
-                    {{ t("app.emptyState.openHosts") }}
-                  </NButton>
-                  <NButton tertiary @click="openLocal()"> {{ t("app.emptyState.openLocal") }} </NButton>
+              <header class="app-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
+                <WindowControls v-if="isMac && isTauri" />
+                <div v-if="!isMac || !isTauri" class="brand" data-tauri-drag-region>
+                  <div class="brand-logo">
+                    <img src="/icon.png" alt="AShell" />
+                  </div>
+                  <span class="brand-name">AShell</span>
+                </div>
+                <NButton
+                  quaternary
+                  circle
+                  class="collapse-btn"
+                  data-tauri-drag-region="false"
+                  :title="hostsOpen ? t('app.hideHosts') : t('app.showHosts')"
+                  @click="hostsOpen = !hostsOpen"
+                >
+                  <template #icon>
+                    <NIcon :size="18"><MenuOutline /></NIcon>
+                  </template>
+                </NButton>
+                <div class="header-divider" />
+                <div class="tabs-wrap" data-tauri-drag-region="false">
+                  <TabBar
+                    :tabs="tabs"
+                    :active-key="activeTabKey"
+                    :get-session-content="getSessionContent"
+                    @update:active-key="(k: string) => (activeTabKey = k)"
+                    @close="closeTab"
+                    @new="onTabBarNew"
+                    @reorder="reorderTabs"
+                    @reconnect="reconnectTab"
+                    @disconnect="disconnectTab"
+                    @duplicate="duplicateTab"
+                    @rename="renameTab"
+                    @close-others="closeOtherTabs"
+                    @close-left="closeLeftTabs"
+                    @close-right="closeRightTabs"
+                    @open-in-new-window="openInNewWindow"
+                  />
+                </div>
+                <nav class="drag-spacer" data-tauri-drag-region />
+                <NSpace
+                  :size="8"
+                  align="center"
+                  class="header-actions"
+                  data-tauri-drag-region="false"
+                >
+                  <NTooltip v-if="tabs.length > 0">
+                    <template #trigger>
+                      <NButton
+                        circle
+                        quaternary
+                        :type="activityBarVisible ? 'primary' : 'default'"
+                        @click="activityBarVisible = !activityBarVisible"
+                      >
+                        <template #icon>
+                          <NIcon :size="18"><GridOutline /></NIcon>
+                        </template>
+                      </NButton>
+                    </template>
+                    {{ activityBarVisible ? t("app.hideSidebar") : t("app.showSidebar") }}
+                  </NTooltip>
+                  <NTooltip>
+                    <template #trigger>
+                      <NButton circle quaternary @click="aiProvidersOpen = true">
+                        <template #icon>
+                          <NIcon :size="18"><CubeOutline /></NIcon>
+                        </template>
+                      </NButton>
+                    </template>
+                    {{ t("settings.ai.provider.title") }}
+                  </NTooltip>
+                  <NTooltip>
+                    <template #trigger>
+                      <NButton circle quaternary @click="settingsOpen = true">
+                        <template #icon>
+                          <NIcon :size="18"><SettingsOutline /></NIcon>
+                        </template>
+                      </NButton>
+                    </template>
+                    {{ t("app.settings") }}
+                  </NTooltip>
                 </NSpace>
+                <WindowControls v-if="!isMac && isTauri" />
+              </header>
+
+              <div
+                class="app-content"
+                :style="{
+                  top: 'var(--ashell-header-h)',
+                  left: 0,
+                  right: 'var(--ashell-activity-w, 0px)',
+                  bottom: 0,
+                }"
+                @mousedown="closeHostsIfOpen"
+              >
+                <TerminalView
+                  v-for="tab in tabs"
+                  v-show="tab.key === activeTabKey"
+                  :key="tab.key"
+                  :ref="(el) => setTerminalRef(tab.key, el)"
+                  :tab="tab"
+                  :active="tab.key === activeTabKey"
+                  :auto-connect="
+                    !restoredTabKeys.has(tab.key) ||
+                    startupStore.autoConnectRememberedTabs
+                  "
+                  @sid-ready="onSidReady"
+                  @status-change="onStatusChange"
+                  @title-change="onTitleChange"
+                  @send-to-ai="onSendToAi"
+                  @close-tab="closeTab"
+                />
+                <div v-if="tabs.length === 0" class="empty-state">
+                  <NIcon :size="48" depth="3"><TerminalOutline /></NIcon>
+                  <p>{{ t("app.emptyState.title") }}</p>
+                  <NSpace :size="12">
+                    <NButton tertiary @click="hostsOpen = true">
+                      {{ t("app.emptyState.openHosts") }}
+                    </NButton>
+                    <NButton tertiary @click="openLocal()"> {{ t("app.emptyState.openLocal") }} </NButton>
+                  </NSpace>
+                </div>
               </div>
+
+              <ActivityBar
+                v-if="tabs.length > 0 && activityBarVisible"
+                :tabs="tabs"
+                :active-key="activeTabKey"
+                :sftp-open="sftpOpen"
+                :host-info-open="hostInfoOpen"
+                :forward-open="forwardOpen"
+                :ai-open="aiOpen"
+                :template-open="templateOpen"
+                :ai-enabled="startupStore.aiAssistantEnabled"
+                :has-active-session="!!activeSftpTab"
+                :has-terminal-session="!!activeTerminalTab"
+                :has-ai-session="!!activeAiTab"
+                @toggle-sftp="toggleSftp"
+                @toggle-host-info="toggleHostInfo"
+                @toggle-forward="toggleForward"
+                @toggle-ai="toggleAi"
+                @toggle-template="toggleTemplate"
+              />
+
+              <HostsDrawer v-model:open="hostsOpen" @open-host="openHost" />
+              <SftpDrawer
+                v-model:open="sftpOpen"
+                :sid="activeSftpTab?.sid ?? null"
+                :host-name="activeSftpTab?.title"
+                :host-addr="activeSftpTab?.hostInfo?.addr"
+                :host-id="activeSftpTab?.hostId ?? null"
+                @send-to-ai="onSftpSendToAi"
+                @open-terminal-here="onSftpOpenTerminalHere"
+              />
+              <HostInfoDrawer
+                v-model:open="hostInfoOpen"
+                :sid="activeSftpTab?.sid ?? null"
+                :host-name="activeSftpTab?.title"
+                :host-icon="activeSftpTab?.icon ?? null"
+                :host-info="activeSftpTab?.hostInfo"
+              />
+              <ForwardDrawer
+                v-model:open="forwardOpen"
+                :sid="activeSftpTab?.sid ?? null"
+                :host-name="activeSftpTab?.title"
+              />
+              <TemplateDrawer
+                v-model:open="templateOpen"
+                @run="sendCommandToActive"
+              />
+              <AiAssistant
+                v-if="startupStore.aiAssistantEnabled"
+                ref="aiAssistantRef"
+                v-model:open="aiOpen"
+                :sid="activeAiTab?.sid ?? null"
+                :host-name="activeAiTab?.title ?? null"
+              />
+
+              <SettingsModal
+                v-model:open="settingsOpen"
+                v-model:theme-mode="themeMode"
+                :resolved-theme="resolvedTheme"
+                :theme-title="themeTitle"
+              />
+              <AiProvidersModal v-model:open="aiProvidersOpen" />
             </div>
-
-            <ActivityBar
-              v-if="tabs.length > 0 && activityBarVisible"
-              :tabs="tabs"
-              :active-key="activeTabKey"
-              :sftp-open="sftpOpen"
-              :host-info-open="hostInfoOpen"
-              :forward-open="forwardOpen"
-              :ai-open="aiOpen"
-              :template-open="templateOpen"
-              :ai-enabled="startupStore.aiAssistantEnabled"
-              :has-active-session="!!activeSftpTab"
-              :has-terminal-session="!!activeTerminalTab"
-              :has-ai-session="!!activeAiTab"
-              @toggle-sftp="toggleSftp"
-              @toggle-host-info="toggleHostInfo"
-              @toggle-forward="toggleForward"
-              @toggle-ai="toggleAi"
-              @toggle-template="toggleTemplate"
-            />
-
-            <HostsDrawer v-model:open="hostsOpen" @open-host="openHost" />
-            <SftpDrawer
-              v-model:open="sftpOpen"
-              :sid="activeSftpTab?.sid ?? null"
-              :host-name="activeSftpTab?.title"
-              :host-addr="activeSftpTab?.hostInfo?.addr"
-              :host-id="activeSftpTab?.hostId ?? null"
-              @send-to-ai="onSftpSendToAi"
-              @open-terminal-here="onSftpOpenTerminalHere"
-            />
-            <HostInfoDrawer
-              v-model:open="hostInfoOpen"
-              :sid="activeSftpTab?.sid ?? null"
-              :host-name="activeSftpTab?.title"
-              :host-icon="activeSftpTab?.icon ?? null"
-              :host-info="activeSftpTab?.hostInfo"
-            />
-            <ForwardDrawer
-              v-model:open="forwardOpen"
-              :sid="activeSftpTab?.sid ?? null"
-              :host-name="activeSftpTab?.title"
-            />
-            <TemplateDrawer
-              v-model:open="templateOpen"
-              @run="sendCommandToActive"
-            />
-            <AiAssistant
-              v-if="startupStore.aiAssistantEnabled"
-              ref="aiAssistantRef"
-              v-model:open="aiOpen"
-              :sid="activeAiTab?.sid ?? null"
-              :host-name="activeAiTab?.title ?? null"
-            />
-
-            <SettingsModal
-              v-model:open="settingsOpen"
-              v-model:theme-mode="themeMode"
-              :resolved-theme="resolvedTheme"
-              :theme-title="themeTitle"
-            />
-            <AiProvidersModal v-model:open="aiProvidersOpen" />
-          </div>
+          </LoginGate>
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>

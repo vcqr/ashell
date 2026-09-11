@@ -123,6 +123,30 @@ npm run tauri build
 
 > `npm run tauri build` automatically runs `npm run sidecar:build` (compiles the unified AI sidecar binary) first, then `npm run build` (frontend type-check + Vite build) - no manual sidecar compilation needed.
 
+
+---
+
+## Web Server Mode (Browser Access)
+
+AShell can also run as a web server, letting you use SSH / SFTP / terminals and the AI assistant from a browser (same core business layer, dual-target build):
+
+```bash
+# 1. Build the frontend (served from the same origin)
+npm install && npm run build
+
+# 2. Build the web server binary
+cd src-tauri && cargo build --release --bin ashell-server --no-default-features
+
+# 3. Start (defaults to 127.0.0.1:8090; use 0.0.0.0 for external access)
+./target/release/ashell-server --bind 0.0.0.0:8090 --dist ../dist
+```
+
+- **Login**: open the server URL in a browser and sign in with the access token. Token priority: `--token` > `ASHELL_WEB_TOKEN` env var > `~/.ashell/web-token` (auto-generated and printed on first startup).
+- **Feature parity**: SSH / local terminals / Telnet / serial / SFTP / host management / port forwarding / AI assistant (sidecar output broadcast over WebSocket) all work; desktop-only features (tray, global hotkeys, auto-update, window effects) are hidden automatically.
+- **Security note**: single-user model. Put the server behind an HTTPS reverse proxy for external access; on headless machines use `--force-key-file` to skip the OS keychain (key stored at `~/.ashell/secret.key`, not interchangeable with the desktop keychain key).
+- The server shares the `~/.ashell/` data directory (including SQLite) with the desktop app — avoid running both at once.
+
+---
 ---
 
 ## License

@@ -2,6 +2,7 @@ import { onBeforeUnmount, ref } from "vue"
 import type { Terminal } from "@xterm/xterm"
 import { ProgressAddon, type IProgressState } from "@xterm/addon-progress"
 import { getCurrentWindow, ProgressBarStatus } from "@tauri-apps/api/window"
+import { isTauri } from "@/utils/platform"
 import { useTerminalStore } from "@/stores/terminal"
 import {
   incompleteEscapeStart,
@@ -54,7 +55,7 @@ export function useTerminalProgress({ getTerm, isActive }: TerminalProgressOptio
    * 抢占任务栏角标显示。
    */
   function applyTauriProgress(state: IProgressState) {
-    if (!isActive()) return
+    if (!isActive() || !isTauri) return
     const status = TAURI_PROGRESS_STATUS[state.state] ?? ProgressBarStatus.None
     void getCurrentWindow()
       .setProgressBar({ status, progress: state.value })
@@ -64,6 +65,7 @@ export function useTerminalProgress({ getTerm, isActive }: TerminalProgressOptio
   }
 
   function clearTauriProgress() {
+    if (!isTauri) return
     void getCurrentWindow()
       .setProgressBar({ status: ProgressBarStatus.None })
       .catch(() => {

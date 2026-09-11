@@ -2,7 +2,7 @@
 import { computed } from "vue"
 import { NButton, NModal, NTooltip } from "naive-ui"
 import { useI18n } from "vue-i18n"
-import { writeText as tauriWriteText } from "@tauri-apps/plugin-clipboard-manager"
+import { copyText } from "@/utils/clipboard"
 
 /**
  * SSH 主机密钥指纹确认弹窗（TOFU）。
@@ -77,7 +77,7 @@ const differingIdx = computed(() => {
 
 async function copyFp() {
   try {
-    await tauriWriteText(props.info.fingerprint)
+    await copyText(props.info.fingerprint)
     return
   } catch {
     // ignore

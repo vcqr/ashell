@@ -307,7 +307,7 @@ pub struct AiPathsConfig {
 }
 
 /// 读取 .env 中的路径配置。
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn read_ai_paths() -> Result<AiPathsConfig, String> {
     let path = env_path()?;
     if !path.exists() {
@@ -323,7 +323,7 @@ pub fn read_ai_paths() -> Result<AiPathsConfig, String> {
 }
 
 /// 写入路径配置到 .env（仅替换这两个 key，其它行原样保留）。
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn write_ai_paths(config: AiPathsConfig) -> Result<(), String> {
     let path = env_path()?;
     let existing = if path.exists() {
@@ -370,7 +370,7 @@ pub(crate) fn normalize_path(v: &str) -> String {
 /// 优先级：
 /// 1. `~/.ashell/ai/bin/`（用户手动放置的默认位置，与 sidecar 的路径回退一致）
 /// 2. where/which 命令搜索（Windows 下从候选中挑选可直接 spawn 的 .exe）
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn detect_claude_path() -> Option<String> {
     // 1. 用户手动放置的位置
     if let Ok(ai_dir) = crate::config::ai_dir() {
@@ -454,7 +454,7 @@ fn detect_claude_path_windows(candidates: &[&str]) -> Option<String> {
 /// - "anthropic": GET {base_url}/v1/models, header x-api-key + anthropic-version
 /// - "openai":    GET {base_url}/models, header Authorization: Bearer
 /// - "google":    GET https://generativelanguage.googleapis.com/v1beta/models?key=
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn fetch_models(
     base_url: String,
     api_key: String,

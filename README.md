@@ -130,6 +130,29 @@ npm run tauri build
 
 ---
 
+## Web 服务器模式（浏览器访问）
+
+除桌面应用外，AShell 可作为 Web 服务器运行，在浏览器中远程使用 SSH / SFTP / 终端与 AI 助手（同一套核心业务层，双目标构建）：
+
+```bash
+# 1. 构建前端产物（同源托管）
+npm install && npm run build
+
+# 2. 构建 Web 服务器二进制
+cd src-tauri && cargo build --release --bin ashell-server --no-default-features
+
+# 3. 启动（默认监听 127.0.0.1:8090，对外访问用 0.0.0.0）
+./target/release/ashell-server --bind 0.0.0.0:8090 --dist ../dist
+```
+
+- **登录**：浏览器打开服务地址，输入访问令牌登录。令牌优先级：`--token` > 环境变量 `ASHELL_WEB_TOKEN` > `~/.ashell/web-token`（首次启动自动生成并打印在控制台）。
+- **能力对齐**：SSH / 本地终端 / Telnet / 串口 / SFTP / 主机管理 / 端口转发 / AI 助手（sidecar 输出经 WebSocket 广播）全部可用；托盘、全局热键、自动更新、窗口效果等桌面能力自动隐藏。
+- **AI 助手**：Web 版同样支持（服务端拉起 sidecar 进程），需按桌面版方式准备 sidecar 二进制与 AI 供应商配置。
+- **安全提示**：单用户模型。对外暴露请置于 HTTPS 反代之后；无头环境可加 `--force-key-file` 跳过 OS 钥匙串（密钥走 `~/.ashell/secret.key`，注意与桌面版密钥不互通）。
+- 注意：与桌面版共用 `~/.ashell/` 数据目录（含 SQLite），请避免两者同时运行。
+
+---
+
 ## 自动更新配置（开发者）
 
 AShell 集成了 Tauri 2 Updater，通过 GitHub Releases 分发更新。首次启用需要完成以下一次性配置：

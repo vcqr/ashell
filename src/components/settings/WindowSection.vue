@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { NForm, NFormItem, NSlider, NSwitch, NText, NButton, NSpace, NDivider, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { invoke } from "@tauri-apps/api/core";
+import { pickImageFile } from "@/utils/fileInterop";
+import { isTauri } from "@/utils/platform";
 import { useTerminalStore } from "@/stores/terminal";
 
 const { t } = useI18n();
@@ -10,9 +11,16 @@ const message = useMessage();
 
 async function chooseWallpaper() {
   try {
-    const path = await invoke<string | null>("pick_image_file");
-    if (!path) return;
-    await termStore.setWallpaper(path);
+    if (isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const path = await invoke<string | null>("pick_image_file");
+      if (!path) return;
+      await termStore.setWallpaper(path);
+    } else {
+      const file = await pickImageFile();
+      if (!file) return;
+      await termStore.uploadWallpaper(file);
+    }
     message.success(t("settings.window.wallpaperSet"));
   } catch (e) {
     message.error(t("settings.window.wallpaperSetFailed", { error: String(e) }));

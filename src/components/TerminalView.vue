@@ -18,11 +18,8 @@ import {
   TimeOutline as HistoryIcon,
   BookOutline as DictIcon,
 } from "@vicons/ionicons5"
-import { openUrl } from "@tauri-apps/plugin-opener"
-import {
-  readText as tauriReadText,
-  writeText as tauriWriteText,
-} from "@tauri-apps/plugin-clipboard-manager"
+import { pasteText, copyText } from "@/utils/clipboard"
+import { openExternal } from "@/utils/platform"
 import { useI18n } from "vue-i18n"
 import { useApiStore } from "@/stores/api"
 import { useTerminalStore } from "@/stores/terminal"
@@ -408,10 +405,10 @@ async function readClipboard(): Promise<string> {
   // 这样 macOS WKWebView 不会弹"允许粘贴"系统提示，触摸板右键也能拿到内容
   // （WKWebView 下 navigator.clipboard.readText 对触摸板右键不算 user activation，会静默返回空串）。
   try {
-    const text = await tauriReadText()
+    const text = await pasteText()
     if (typeof text === "string") return text
   } catch {
-    // 插件不可用或权限被拒，降级到浏览器 API
+    // 剪贴板不可用或权限被拒
   }
   try {
     if (navigator.clipboard?.readText) {
@@ -426,7 +423,7 @@ async function readClipboard(): Promise<string> {
 async function writeClipboard(text: string) {
   if (!text) return
   try {
-    await tauriWriteText(text)
+    await copyText(text)
     return
   } catch {
     // ignore
@@ -716,11 +713,15 @@ function disposeWebgl() {
 
 function loadWebLinks() {
   if (!term || webLinksAddon) return
-  // 链接被点击时统一走 Tauri opener 插件 → 系统默认浏览器，
-  // 避免 Tauri/wry 默认 window.open 在当前 scope 下被静默吞掉。
+  // 链接被点击时统一经 openExternal：桌面走 Tauri opener → 系统默认浏览器，
+  // 避免 Tauri/wry 默认 window.open 在当前 scope 下被静默吞掉；Web 端开新标签页。
   webLinksAddon = new WebLinksAddon((event, uri) => {
     event.preventDefault()
-    void openUrl(uri).catch((err) => console.error(t("common.openLinkFailed"), err))
+    try {
+      openExternal(uri)
+    } catch (err) {
+      console.error(t("common.openLinkFailed"), err)
+    }
   })
   term.loadAddon(webLinksAddon)
 }

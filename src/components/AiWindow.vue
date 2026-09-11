@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isTauri } from "@/utils/platform"
 import { computed, ref } from "vue"
 import { useI18n } from "vue-i18n"
 import { NButton, NIcon } from "naive-ui"
@@ -42,6 +43,7 @@ async function onHeaderDblClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
   if (target?.closest('[data-tauri-drag-region="false"]')) return
   e.stopPropagation()
+  if (!isTauri) return
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
     await getCurrentWindow().toggleMaximize()
@@ -54,7 +56,7 @@ async function onHeaderDblClick(e: MouseEvent) {
 <template>
   <div class="aiwin-root">
     <header class="aiwin-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
-      <WindowControls v-if="isMac" />
+      <WindowControls v-if="isMac && isTauri" />
       <div class="brand" data-tauri-drag-region>
         <div class="brand-logo">
           <img src="/icon.png" alt="AShell" />
@@ -75,7 +77,7 @@ async function onHeaderDblClick(e: MouseEvent) {
           <NIcon><RefreshOutline /></NIcon>
         </template>
       </NButton>
-      <WindowControls v-if="!isMac" />
+      <WindowControls v-if="!isMac && isTauri" />
     </header>
     <AiAssistant
       v-if="ssid"

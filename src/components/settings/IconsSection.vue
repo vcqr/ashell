@@ -14,7 +14,7 @@ import {
   RefreshOutline,
   ImagesOutline,
 } from "@vicons/ionicons5";
-import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "@/utils/platform";
 import { useIconStore } from "@/stores/icons";
 
 const { t } = useI18n();
@@ -26,7 +26,10 @@ onMounted(() => {
 });
 
 async function openDir() {
+  // 仅桌面形态提供（Web 端无"打开本机目录"能力，按钮已隐藏）
+  if (!isTauri) return;
   try {
+    const { invoke } = await import("@tauri-apps/api/core");
     await invoke("open_icons_dir");
   } catch (e) {
     message.error(t("settings.icons.openDirFailed", { error: String(e) }));
@@ -51,7 +54,7 @@ async function refresh() {
     </div>
 
     <NSpace size="small">
-      <NButton size="small" @click="openDir">
+      <NButton v-if="isTauri" size="small" @click="openDir">
         <template #icon>
           <NIcon><FolderOpenOutline /></NIcon>
         </template>

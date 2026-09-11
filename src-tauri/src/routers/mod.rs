@@ -40,11 +40,19 @@ impl<B> MakeSpan<B> for RequestMakeSpan {
 const UPLOAD_LIMIT: usize = 100 * 1024 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
-    // 健康检查（不鉴权）
-    let public = Router::new().route(
-        "/health",
-        get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
-    );
+    // 健康检查（不鉴权）；附带版本号供 Web 端“关于”页替代 getVersion
+    let public = Router::new()
+        .route(
+            "/health",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "status": "ok",
+                    "version": env!("CARGO_PKG_VERSION"),
+                }))
+            }),
+        )
+        // Web 版登录（免鉴权）：校验访问令牌，签发 Bearer token
+        .route("/api/auth/login", post(handlers::auth::login));
 
     // 业务路由（需鉴权）
     let api = Router::new()
@@ -207,6 +215,41 @@ pub fn build_router(state: AppState) -> Router {
             "/api/ai-phrases/{id}",
             axum::routing::delete(handlers::phrase::delete),
         )
+        // AI sidecar 进程管理（Web 形态替代 spawn/write/kill 等 Tauri commands）
+        .route(
+            "/api/ai/sidecar/spawn",
+            post(handlers::ai_sidecar::spawn),
+        )
+        .route("/api/ai/sidecar/write", post(handlers::ai_sidecar::write))
+        .route("/api/ai/sidecar/kill", post(handlers::ai_sidecar::kill))
+        .route("/api/ai/sidecar/{ssid}", get(handlers::ai_sidecar::status))
+        .route(
+            "/api/ai/sidecar/{ssid}/stream",
+            get(handlers::ai_sidecar::stream),
+        )
+        // AI 配置/路径（Web 形态替代 read_ai_paths / write_ai_paths / detect_claude_path / fetch_models / get_ai_dir）
+        .route("/api/ai/dir", get(handlers::webapi::ai_dir))
+        .route(
+            "/api/ai/paths",
+            get(handlers::webapi::ai_paths_get).post(handlers::webapi::ai_paths_set),
+        )
+        .route(
+            "/api/ai/detect-claude-path",
+            post(handlers::webapi::ai_detect_claude),
+        )
+        .route("/api/ai/fetch-models", post(handlers::webapi::ai_fetch_models))
+        // Web 端私钥上传（浏览器拿不到本地文件绝对路径，改为传内容落服务端）
+        .route("/api/keys/upload", post(handlers::webapi::key_upload))
+        // 系统字体（Web 形态替代 list_system_fonts 命令）
+        .route("/api/system/fonts", get(handlers::webapi::system_fonts))
+        // 壁纸（Web 形态替代 wallpaper 命令组 + asset protocol）
+        .route(
+            "/api/wallpaper",
+            get(handlers::webapi::wallpaper_get)
+                .post(handlers::webapi::wallpaper_set)
+                .delete(handlers::webapi::wallpaper_clear),
+        )
+        .route("/api/wallpaper/file", get(handlers::webapi::wallpaper_file))
         // 模板命令
         .route(
             "/api/command-templates",

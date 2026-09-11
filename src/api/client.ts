@@ -7,7 +7,7 @@ import type {
   GenericAbortSignal,
   ResponseType,
 } from "axios"
-import { invoke } from "@tauri-apps/api/core"
+import { isWeb } from "@/utils/platform"
 import type { ApiInfo } from "@/types"
 
 /** 后端统一返回包装 */
@@ -28,12 +28,55 @@ export class ApiError extends Error {
   }
 }
 
+// ── Web 端访问令牌（localStorage 持久，登录成功后由 LoginGate 写入）──
+
+const TOKEN_KEY = "ashell:token"
+
+export function getStoredToken(): string {
+  if (!isWeb) return ""
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? ""
+  } catch {
+    return ""
+  }
+}
+
+export function setStoredToken(token: string): void {
+  if (!isWeb) return
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+export function clearStoredToken(): void {
+  setStoredToken("")
+}
+
 let apiInfoPromise: Promise<ApiInfo> | null = null
+
+/** Web 同源部署：API 地址即页面来源，token 取 localStorage */
+function getWebApiInfo(): ApiInfo {
+  return {
+    addr: window.location.host,
+    token: getStoredToken(),
+    base_url: window.location.origin,
+    ws_url: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`,
+  }
+}
 
 /** 获取并缓存 ApiInfo（懒加载，启动后第一次调用阻塞等待 backend ready） */
 export async function getApiInfo(): Promise<ApiInfo> {
+  if (isWeb) {
+    // Web 形态无启动竞态：同源地址直接可得，token 在登录后页面刷新时重置
+    apiInfoPromise = Promise.resolve(getWebApiInfo())
+    return apiInfoPromise
+  }
   if (!apiInfoPromise) {
     apiInfoPromise = (async () => {
+      const { invoke } = await import("@tauri-apps/api/core")
       let lastErr: unknown = null
       for (let i = 0; i < 30; i++) {
         try {
@@ -65,7 +108,9 @@ export function getAxios(): AxiosInstance {
     if (!config.baseURL) config.baseURL = info.base_url
     const headers = AxiosHeaders.from(config.headers ?? {})
     if (!headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${info.token}`)
+      // 桌面端用后端下发的 token；Web 端每次取 localStorage（登录态可能被替换）
+      const token = isWeb ? getStoredToken() : info.token
+      if (token) headers.set("Authorization", `Bearer ${token}`)
     }
     config.headers = headers
     return config
@@ -81,6 +126,12 @@ export function getAxios(): AxiosInstance {
         )
       }
       const status = err.response?.status
+      // Web 端登录态失效（有令牌但被拒）：清掉本地令牌回到登录页
+      // （整页重载以重置全部状态）。未登录时的 401 属预期，静默交给调用方。
+      if (isWeb && status === 401 && getStoredToken()) {
+        clearStoredToken()
+        window.location.reload()
+      }
       const data = err.response?.data as
         | { code?: number; message?: string }
         | undefined
@@ -186,7 +237,8 @@ export async function buildWsUrl(
 ): Promise<string> {
   const info = await getApiInfo()
   const sp = new URLSearchParams()
-  sp.append("token", info.token)
+  // 桌面端用后端下发的 token；Web 端用登录令牌
+  sp.append("token", isWeb ? getStoredToken() : info.token)
   for (const [k, v] of Object.entries(query)) {
     if (v === undefined || v === null) continue
     sp.append(k, String(v))

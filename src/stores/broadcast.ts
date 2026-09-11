@@ -1,6 +1,6 @@
 import { defineStore } from "pinia"
 import { computed, ref } from "vue"
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event"
+import { busEmit, busListen, type UnlistenFn } from "@/utils/eventBus"
 
 /**
  * 多 Tab 广播输入状态（支持跨窗口）。
@@ -62,30 +62,30 @@ export const useBroadcastStore = defineStore("broadcast", () => {
   async function init(wid: string) {
     windowId.value = wid
 
-    unlistenState = await listen<BroadcastStatePayload>(
+    unlistenState = await busListen<BroadcastStatePayload>(
       "ashell:broadcast-state",
-      (e) => {
-        if (e.payload.origin === wid) return
+      (payload) => {
+        if (payload.origin === wid) return
         suppressStateSync = true
-        enabled.value = e.payload.enabled
-        sourceKey.value = e.payload.sourceKey
-        targetKeys.value = new Set(e.payload.targetKeys)
-        appendCR.value = e.payload.appendCR
+        enabled.value = payload.enabled
+        sourceKey.value = payload.sourceKey
+        targetKeys.value = new Set(payload.targetKeys)
+        appendCR.value = payload.appendCR
         suppressStateSync = false
       },
     )
 
-    unlistenInput = await listen<BroadcastInputPayload>(
+    unlistenInput = await busListen<BroadcastInputPayload>(
       "ashell:broadcast-input",
-      (e) => {
-        if (e.payload.origin === wid) return
-        for (const gkey of e.payload.targetKeys) {
+      (payload) => {
+        if (payload.origin === wid) return
+        for (const gkey of payload.targetKeys) {
           const [w, tabKey] = splitGlobalKey(gkey)
           if (w !== wid) continue
           const sender = inputSenders.get(tabKey)
           if (!sender) continue
           try {
-            sender(e.payload.data)
+            sender(payload.data)
           } catch {
             // ignore
           }
@@ -93,15 +93,15 @@ export const useBroadcastStore = defineStore("broadcast", () => {
       },
     )
 
-    unlistenTabs = await listen<TabsAnnouncementPayload>(
+    unlistenTabs = await busListen<TabsAnnouncementPayload>(
       "ashell:broadcast-tabs",
-      (e) => {
-        if (e.payload.origin === wid) return
+      (payload) => {
+        if (payload.origin === wid) return
         const next = new Map(remoteTabs.value)
-        if (e.payload.tabs.length === 0) {
-          next.delete(e.payload.origin)
+        if (payload.tabs.length === 0) {
+          next.delete(payload.origin)
         } else {
-          next.set(e.payload.origin, e.payload.tabs)
+          next.set(payload.origin, payload.tabs)
         }
         remoteTabs.value = next
       },
@@ -122,7 +122,7 @@ export const useBroadcastStore = defineStore("broadcast", () => {
    * 同时更新 localTabSnapshot 供 getRemoteTabSnapshot 使用。
    */
   function announceTabs(tabs: RemoteTabInfo[]) {
-    void emit("ashell:broadcast-tabs", {
+    busEmit("ashell:broadcast-tabs", {
       origin: windowId.value,
       tabs,
     } satisfies TabsAnnouncementPayload)
@@ -179,7 +179,7 @@ export const useBroadcastStore = defineStore("broadcast", () => {
   /** 状态变更后广播给其他窗口。 */
   function syncState() {
     if (suppressStateSync) return
-    void emit("ashell:broadcast-state", {
+    busEmit("ashell:broadcast-state", {
       origin: windowId.value,
       enabled: enabled.value,
       sourceKey: sourceKey.value,
@@ -278,7 +278,7 @@ export const useBroadcastStore = defineStore("broadcast", () => {
 
     // 跨窗口 target：通过 Tauri event 转发
     if (crossWindowTargets.length > 0) {
-      void emit("ashell:broadcast-input", {
+      busEmit("ashell:broadcast-input", {
         origin: windowId.value,
         data,
         targetKeys: crossWindowTargets,

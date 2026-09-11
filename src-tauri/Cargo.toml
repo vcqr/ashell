@@ -17,18 +17,46 @@ edition = "2021"
 name = "ashell_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# 双目标构建：
+#   cargo build --bin ashell                              # 桌面版（Tauri 壳，default features）
+#   cargo build --bin ashell-server --no-default-features # Web 服务器版（复用同一套核心业务层）
+[[bin]]
+name = "ashell"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "ashell-server"
+path = "src/bin/ashell-server.rs"
+
+[features]
+default = ["desktop"]
+# Tauri 壳及其插件仅在桌面目标启用；Web server 只依赖纯 Rust 业务层
+desktop = [
+    "dep:tauri",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-clipboard-manager",
+    "dep:tauri-plugin-updater",
+    "dep:tauri-plugin-process",
+    "dep:tauri-plugin-autostart",
+    "dep:tauri-plugin-global-shortcut",
+    "dep:windows",
+    "dep:webview2-com",
+]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "image-png", "tray-icon"] }
+# 桌面壳（web server 不启用；tauri-plugin-opener 供 local_fs 在两形态下打开/显示文件，保持必选）
+tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "image-png", "tray-icon"], optional = true }
 tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-clipboard-manager = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
-tauri-plugin-autostart = "2"
-tauri-plugin-global-shortcut = "2"
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-clipboard-manager = { version = "2", optional = true }
+tauri-plugin-updater = { version = "2", optional = true }
+tauri-plugin-process = { version = "2", optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
+tauri-plugin-global-shortcut = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -111,8 +139,9 @@ windows-sys = { version = "0", features = ["Win32_System_Threading", "Win32_Foun
 # 版本必须与 tauri 内置 wry 的 webview2-com 完全一致，保证 COM 接口类型同源，否则 cast() 编译不过——
 # 这两项不能单独升级：tauri 2.11.5 → wry 0.55 → webview2-com 0.38 / windows 0.61。
 # wry 0.57 起才用 webview2-com 0.39 / windows 0.62，等 tauri 发版跟进后再同步改这里。
-windows = "0.61"
-webview2-com = "0.38"
+# 仅桌面目标使用（lib.rs disable_browser_accelerators），随 desktop feature 开关
+windows = { version = "0.61", optional = true }
+webview2-com = { version = "0.38", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

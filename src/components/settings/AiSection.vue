@@ -19,7 +19,8 @@ import {
   CheckmarkCircleOutline,
   CloseCircleOutline,
 } from "@vicons/ionicons5";
-import { invoke } from "@tauri-apps/api/core";
+import { request } from "@/api/client";
+import { isTauri } from "@/utils/platform";
 import { useI18n } from "vue-i18n";
 import { useAiConfigStore } from "@/stores/aiConfig";
 import { useStartupStore } from "@/stores/startup";
@@ -83,8 +84,14 @@ const detectionAttempted = ref(false);
 
 async function loadClaudePath() {
   try {
-    const config = await invoke<{ claudePath: string }>("read_ai_paths");
-    claudePath.value = config.claudePath;
+    if (isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const config = await invoke<{ claudePath: string }>("read_ai_paths");
+      claudePath.value = config.claudePath;
+    } else {
+      const config = await request<{ claudePath: string }>("/api/ai/paths");
+      claudePath.value = config?.claudePath ?? "";
+    }
   } catch {
     // ignore
   }
@@ -94,7 +101,12 @@ async function detectClaude() {
   detectionAttempted.value = true;
   detecting.value = true;
   try {
-    detectedPath.value = await invoke<string | null>("detect_claude_path");
+    detectedPath.value = isTauri
+      ? await (async () => {
+          const { invoke } = await import("@tauri-apps/api/core");
+          return invoke<string | null>("detect_claude_path");
+        })()
+      : (await request<{ path: string | null }>("/api/ai/detect-claude-path", { method: "POST" }))?.path ?? null;
   } catch {
     detectedPath.value = null;
   } finally {
@@ -111,9 +123,13 @@ async function applyDetectedPath() {
 
 async function saveClaudePath() {
   try {
-    await invoke("write_ai_paths", {
-      config: { sidecarPath: "", claudePath: claudePath.value.trim() },
-    });
+    const payload = { sidecarPath: "", claudePath: claudePath.value.trim() };
+    if (isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("write_ai_paths", { config: payload });
+    } else {
+      await request("/api/ai/paths", { method: "POST", json: payload });
+    }
   } catch (e) {
     message.error(t("settings.ai.saveFailed", { error: String(e) }));
   }

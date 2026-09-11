@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { buildWsUrl, request } from '@/api/client'
+import { isTauri } from '@/utils/platform'
 import type { ChatMessage, ProcessStep } from '@/types'
 
 /** 单个 ssid 对应的 AI 会话状态 */
@@ -15,11 +15,20 @@ export interface AiSession {
   sidecarPid: number | null
   /** 当前正在累积的"中间过程"消息 id；为 null 表示当前无活跃过程块 */
   currentProcessMsgId: number | null
-  /** stdout 监听句柄 */
+  /** stdout 监听句柄（Web 端为关闭 sidecar 流 WS 的函数） */
   unlistenStdout: UnlistenFn | null
-  /** stderr 监听句柄 */
+  /** stderr 监听句柄（Web 端为关闭 sidecar 流 WS 的函数） */
   unlistenStderr: UnlistenFn | null
 }
+
+/** Web 端 sidecar 输出流行 */
+interface SidecarStreamMessage {
+  stream: 'stdout' | 'stderr' | 'lagged'
+  line?: string
+  dropped?: number
+}
+
+type UnlistenFn = () => void
 
 function emptySession(ssid: string): AiSession {
   return {
@@ -148,8 +157,35 @@ export const useAiStore = defineStore('ai', () => {
   }
 
   /**
+   * 打开 Web 端 sidecar 输出流 WS，返回关闭函数。
+   * stdout 行回调 onStdout；stderr/lagged 仅记日志（与桌面端 UI 行为一致）。
+   */
+  async function openSidecarStream(
+    ssid: string,
+    onStdout: (line: string) => void,
+  ): Promise<UnlistenFn> {
+    const url = await buildWsUrl(`/api/ai/sidecar/${encodeURIComponent(ssid)}/stream`)
+    const ws = new WebSocket(url)
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data as string) as SidecarStreamMessage
+        if (msg.stream === 'stdout' && typeof msg.line === 'string') {
+          onStdout(msg.line)
+        } else if (msg.stream === 'lagged') {
+          console.warn(`[AI store] sidecar stream lagged, dropped ${msg.dropped} lines`)
+        }
+      } catch {
+        // 非 JSON 帧忽略
+      }
+    }
+    return () => {
+      ws.close()
+    }
+  }
+
+  /**
    * 启动指定 ssid 的 sidecar；若已运行先 kill 旧进程。
-   * 同时按 ssid 注册 stdout/stderr 监听器。
+   * 同时按 ssid 注册 stdout/stderr 监听器（桌面 Tauri event / Web WS 广播）。
    */
   async function spawnFor(
     ssid: string,
@@ -168,24 +204,48 @@ export const useAiStore = defineStore('ai', () => {
     }
 
     try {
-      const pid = await invoke<number>('spawn_sidecar', {
-        ssid,
-        workspace: args.workspace,
-        token: args.token,
-        addr: args.addr,
-        sidecarType: args.sidecarType || 'claude',
-      })
+      let pid: number
+      let unlistenStdout: UnlistenFn
+      let unlistenStderr: UnlistenFn
 
-      const unlistenStdout = await listen<string>(
-        `sidecar-stdout-${ssid}`,
-        (event) => onStdout(event.payload),
-      )
-      const unlistenStderr = await listen<string>(
-        `sidecar-stderr-${ssid}`,
-        () => {
-          /* stderr ignored in UI */
-        },
-      )
+      if (isTauri) {
+        const { invoke } = await import('@tauri-apps/api/core')
+        const { listen } = await import('@tauri-apps/api/event')
+        pid = await invoke<number>('spawn_sidecar', {
+          ssid,
+          workspace: args.workspace,
+          token: args.token,
+          addr: args.addr,
+          sidecarType: args.sidecarType || 'claude',
+        })
+        unlistenStdout = await listen<string>(
+          `sidecar-stdout-${ssid}`,
+          (event) => onStdout(event.payload),
+        )
+        unlistenStderr = await listen<string>(
+          `sidecar-stderr-${ssid}`,
+          () => {
+            /* stderr ignored in UI */
+          },
+        )
+      } else {
+        // Web 端：进程存活于服务端，输出经 /stream WS 广播
+        const res = await request<{ pid: number }>('/api/ai/sidecar/spawn', {
+          method: 'POST',
+          json: {
+            ssid,
+            workspace: args.workspace,
+            token: args.token,
+            addr: args.addr,
+            sidecarType: args.sidecarType || 'claude',
+          },
+        })
+        pid = res?.pid ?? 0
+        unlistenStdout = await openSidecarStream(ssid, onStdout)
+        unlistenStderr = () => {
+          /* 与 stdout 共用一条 WS，由 unlistenStdout 统一关闭 */
+        }
+      }
 
       patch(ssid, {
         sidecarPid: pid,
@@ -223,10 +283,10 @@ export const useAiStore = defineStore('ai', () => {
   /**
    * 附着到后端已在运行的 sidecar（不 spawn）。
    *
-   * 独立 AI 窗口 / 多窗口共享同一 ssid 的场景：spawn_sidecar 会先 kill
-   * 同 ssid 的旧进程，直接调会打断别的窗口正在进行的对话。这里先查
-   * has_sidecar，进程存在时只注册 stdout/stderr 监听（Tauri emit 本身
-   * 广播到所有窗口，多窗口各自监听互不干扰）并回填 pid。
+   * 独立 AI 窗口 / 多窗口共享同一 ssid 的场景：spawn 会先 kill 同 ssid 的
+   * 旧进程，直接调会打断别的窗口正在进行的对话。这里先查运行状态，进程
+   * 存在时只订阅输出流（桌面 Tauri emit 广播到所有窗口 / Web WS 广播，
+   * 多窗口各自订阅互不干扰）并回填 pid。
    *
    * 返回附着到的 pid；后端无该 ssid 的进程时返回 null（调用方走 spawn）。
    */
@@ -236,39 +296,65 @@ export const useAiStore = defineStore('ai', () => {
   ): Promise<number | null> {
     if (!ssid) return null
 
-    let running = false
-    try {
-      running = await invoke<boolean>('has_sidecar', { ssid })
-    } catch {
-      return null
+    const s0 = ensure(ssid)
+    if (s0.unlistenStdout) {
+      s0.unlistenStdout()
     }
-    if (!running) return null
-
-    const s = ensure(ssid)
-    if (s.unlistenStdout) {
-      s.unlistenStdout()
-    }
-    if (s.unlistenStderr) {
-      s.unlistenStderr()
+    if (s0.unlistenStderr) {
+      s0.unlistenStderr()
     }
 
     try {
-      const unlistenStdout = await listen<string>(
-        `sidecar-stdout-${ssid}`,
-        (event) => onStdout(event.payload),
-      )
-      const unlistenStderr = await listen<string>(
-        `sidecar-stderr-${ssid}`,
-        () => {
-          /* stderr ignored in UI */
-        },
-      )
+      let running = false
+      let unlistenStdout: UnlistenFn
+      let unlistenStderr: UnlistenFn
+
+      if (isTauri) {
+        const { invoke } = await import('@tauri-apps/api/core')
+        const { listen } = await import('@tauri-apps/api/event')
+        running = await invoke<boolean>('has_sidecar', { ssid })
+        if (!running) return null
+        unlistenStdout = await listen<string>(
+          `sidecar-stdout-${ssid}`,
+          (event) => onStdout(event.payload),
+        )
+        unlistenStderr = await listen<string>(
+          `sidecar-stderr-${ssid}`,
+          () => {
+            /* stderr ignored in UI */
+          },
+        )
+      } else {
+        // Web 端：状态查询 + WS 订阅输出流
+        const status = await request<{ running: boolean; pid: number | null }>(
+          `/api/ai/sidecar/${encodeURIComponent(ssid)}`,
+        )
+        running = status?.running ?? false
+        if (!running) return null
+        unlistenStdout = await openSidecarStream(ssid, onStdout)
+        unlistenStderr = () => {
+          /* 与 stdout 共用一条 WS */
+        }
+      }
 
       let pid: number | null = null
       try {
-        pid = await invoke<number | null>('get_sidecar_pid', { ssid })
+        if (isTauri) {
+          const { invoke } = await import('@tauri-apps/api/core')
+          pid = await invoke<number | null>('get_sidecar_pid', { ssid })
+        }
       } catch {
         pid = null
+      }
+      if (!isTauri) {
+        try {
+          const status = await request<{ pid: number | null }>(
+            `/api/ai/sidecar/${encodeURIComponent(ssid)}`,
+          )
+          pid = status?.pid ?? null
+        } catch {
+          pid = null
+        }
       }
 
       patch(ssid, {
@@ -296,7 +382,15 @@ export const useAiStore = defineStore('ai', () => {
 
     if (s.sidecarPid !== null) {
       try {
-        await invoke('kill_sidecar', { ssid })
+        if (isTauri) {
+          const { invoke } = await import('@tauri-apps/api/core')
+          await invoke('kill_sidecar', { ssid })
+        } else {
+          await request('/api/ai/sidecar/kill', {
+            method: 'POST',
+            json: { ssid },
+          })
+        }
       } catch (error) {
         console.error('[AI store] kill failed:', error)
       }
@@ -310,7 +404,15 @@ export const useAiStore = defineStore('ai', () => {
   /** 仅向指定 ssid 的 sidecar 写数据（前端 sendMessage / approval / __QUIT__ 都走这里） */
   async function writeTo(ssid: string, data: string) {
     if (!ssid) return
-    await invoke('write_to_sidecar', { ssid, data })
+    if (isTauri) {
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('write_to_sidecar', { ssid, data })
+      return
+    }
+    await request('/api/ai/sidecar/write', {
+      method: 'POST',
+      json: { ssid, data },
+    })
   }
 
   return {

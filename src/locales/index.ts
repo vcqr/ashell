@@ -13,6 +13,7 @@ import zhCNForward from "./zh-CN/forward"
 import zhCNAi from "./zh-CN/ai"
 import zhCNBroadcast from "./zh-CN/broadcast"
 import zhCNTemplates from "./zh-CN/templates"
+import zhCNAuth from "./zh-CN/auth"
 
 import enUSCommon from "./en-US/common"
 import enUSApp from "./en-US/app"
@@ -25,6 +26,7 @@ import enUSForward from "./en-US/forward"
 import enUSAi from "./en-US/ai"
 import enUSBroadcast from "./en-US/broadcast"
 import enUSTemplates from "./en-US/templates"
+import enUSAuth from "./en-US/auth"
 
 export type AppLocale = "zh-CN" | "en-US"
 export type LocalePreference = AppLocale | "auto"
@@ -44,6 +46,7 @@ const messages = {
     ai: zhCNAi,
     broadcast: zhCNBroadcast,
     templates: zhCNTemplates,
+    auth: zhCNAuth,
   },
   "en-US": {
     common: enUSCommon,
@@ -57,6 +60,7 @@ const messages = {
     ai: enUSAi,
     broadcast: enUSBroadcast,
     templates: enUSTemplates,
+    auth: enUSAuth,
   },
 }
 

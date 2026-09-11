@@ -1,5 +1,10 @@
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow"
+import { isTauri } from "@/utils/platform"
 import type { ChatMessage, TerminalTab } from "@/types"
+
+/** Web 端弹出新浏览器窗口；桌面端由 WebviewWindow 实现 */
+function openPopup(url: string, title: string, width: number, height: number): void {
+  window.open(url, title, `width=${width},height=${height},noopener`)
+}
 
 let seq = 0
 
@@ -31,6 +36,12 @@ export async function openTabInNewWindow(tab: TerminalTab): Promise<void> {
   params.set("title", tab.title)
   const url = `${base}?${params.toString()}`
 
+  if (!isTauri) {
+    openPopup(url, tab.title, 1000, 700)
+    return
+  }
+
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow")
   const webview = new WebviewWindow(label, {
     url,
     title: tab.title,
@@ -78,6 +89,12 @@ export async function openSftpInNewWindow(opts: OpenSftpWindowOptions): Promise<
   params.set("title", opts.title)
   const url = `${base}?${params.toString()}`
 
+  if (!isTauri) {
+    openPopup(url, `SFTP - ${opts.title ?? "SFTP"}`, 1100, 720)
+    return
+  }
+
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow")
   const webview = new WebviewWindow(label, {
     url,
     title: opts.title ? `SFTP - ${opts.title}` : "SFTP",
@@ -132,6 +149,12 @@ export async function openAiInNewWindow(opts: OpenAiWindowOptions): Promise<void
   if (opts.title) params.set("title", opts.title)
   const url = `${base}?${params.toString()}`
 
+  if (!isTauri) {
+    openPopup(url, `AI - ${opts.title ?? "AI"}`, 480, 720)
+    return
+  }
+
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow")
   const webview = new WebviewWindow(label, {
     url,
     title: opts.title ? `AI - ${opts.title}` : "AI",

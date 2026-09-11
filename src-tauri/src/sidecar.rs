@@ -3,12 +3,25 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+use serde::Serialize;
+use tokio::sync::broadcast;
+
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
+
 #[cfg(unix)]
 use std::os::unix::io::FromRawFd;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use tauri::Emitter;
+/// sidecar 单行输出事件。桌面端经 Tauri event 推送；Web 端经
+/// `/api/ai/sidecar/{ssid}/stream` WebSocket 广播（见 [`broadcast`] 通道）。
+#[derive(Debug, Clone, Serialize)]
+pub struct SidecarEvent {
+    /// "stdout" | "stderr"
+    pub stream: &'static str,
+    pub line: String,
+}
 
 /// 单个 sidecar 进程的运行时句柄
 struct SidecarProcess {
@@ -16,6 +29,9 @@ struct SidecarProcess {
     stdin: Box<dyn Write + Send>,
     #[allow(dead_code)]
     child: Child,
+    /// stdout/stderr 行广播通道。桌面端仅作兼容载体（无订阅者时 send 返回 Err，忽略）；
+    /// Web 端 WS handler 经 `subscribe_events` 拿 Receiver 转发给浏览器。
+    events: broadcast::Sender<SidecarEvent>,
 }
 
 impl SidecarProcess {
@@ -39,7 +55,14 @@ where
     Ok(f(map))
 }
 
-/// 启动 sidecar 进程（按 ssid 索引，每个 SSH 终端一个独立进程）
+/// 桌面形态的 Tauri 事件桥类型；Web 形态下无 Tauri 运行时，用单元类型占位，
+/// 使 spawn_sidecar_impl 在两种 target 下签名一致（bridge 恒为 None）。
+#[cfg(feature = "desktop")]
+pub type AppEventBridge = tauri::AppHandle;
+#[cfg(not(feature = "desktop"))]
+pub type AppEventBridge = ();
+
+/// 启动 sidecar 进程（按 ssid 索引，每个 SSH 终端一个独立进程）。
 ///
 /// 位置参数顺序：`<workspace> <ssid> <token> <addr> <engine>`
 /// 第 5 个参数把引擎类型下发给统一二进制 sidecar-ai；旧版二进制会忽略它。
@@ -47,6 +70,7 @@ where
 /// - 同一 ssid 重复 spawn 会先 kill 旧进程（用户主动「新对话」场景）
 /// - ssid 为空字符串时返回错误（无终端时不允许启动）
 /// - sidecar_type 决定旧版二进制回退名（"claude" / "pi"），None 默认 "claude"
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn spawn_sidecar(
     app: tauri::AppHandle,
@@ -56,6 +80,28 @@ pub fn spawn_sidecar(
     addr: String,
     sidecar_type: Option<String>,
 ) -> Result<u32, String> {
+    spawn_sidecar_impl(&ssid, &workspace, &token, &addr, sidecar_type, Some(&app))
+}
+
+/// Web/HTTP 形态 spawn 入口：无 Tauri 事件桥，输出仅走 broadcast → WS 广播。
+pub fn spawn_sidecar_web(
+    ssid: String,
+    workspace: String,
+    token: String,
+    addr: String,
+    sidecar_type: Option<String>,
+) -> Result<u32, String> {
+    spawn_sidecar_impl(&ssid, &workspace, &token, &addr, sidecar_type, None)
+}
+
+fn spawn_sidecar_impl(
+    ssid: &str,
+    workspace: &str,
+    token: &str,
+    addr: &str,
+    sidecar_type: Option<String>,
+    bridge: Option<&AppEventBridge>,
+) -> Result<u32, String> {
     if ssid.is_empty() {
         return Err("ssid is required to spawn sidecar".to_string());
     }
@@ -64,20 +110,20 @@ pub fn spawn_sidecar(
         sidecar_type.unwrap_or_else(|| crate::sidecar_factory::TYPE_CLAUDE.to_string());
 
     // Windows 路径反斜杠在 sidecar（Node）中易被当作转义字符，统一成正斜杠
-    let workspace = crate::ai_env::normalize_path(&workspace);
+    let workspace = crate::ai_env::normalize_path(workspace);
 
     tracing::info!(
         "[SIDECAR] spawn_sidecar params: ssid={}, sidecar_type={}, workspace={}, token={}..., addr={}",
         ssid,
         sidecar_type,
         workspace,
-        if token.len() > 8 { &token[..8] } else { &token },
+        if token.len() > 8 { &token[..8] } else { token },
         addr,
     );
 
     // 若已有同 ssid 的进程在运行，先终止
     with_map(|map| {
-        if let Some(mut p) = map.remove(&ssid) {
+        if let Some(mut p) = map.remove(ssid) {
             tracing::info!("[SIDECAR ssid={}] Killing existing PID {}", ssid, p.pid);
             let _ = p.child.kill();
             let _ = p.child.wait();
@@ -118,9 +164,9 @@ pub fn spawn_sidecar(
         let child = unsafe {
             Command::new(&binary_path)
                 .arg(&workspace)
-                .arg(&ssid)
-                .arg(&token)
-                .arg(&addr)
+                .arg(ssid)
+                .arg(token)
+                .arg(addr)
                 .arg(&sidecar_type)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -150,9 +196,9 @@ pub fn spawn_sidecar(
 
         let mut child = Command::new(&binary_path)
             .arg(&workspace)
-            .arg(&ssid)
-            .arg(&token)
-            .arg(&addr)
+            .arg(ssid)
+            .arg(token)
+            .arg(addr)
             .arg(&sidecar_type)
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::piped())
@@ -165,21 +211,38 @@ pub fn spawn_sidecar(
         (child, Box::new(stdin) as Box<dyn Write + Send>)
     };
 
-    let stdout_event = format!("sidecar-stdout-{}", ssid);
-    let stderr_event = format!("sidecar-stderr-{}", ssid);
+    // 输出广播通道：容量给足缓冲，避免 AI 高速输出时 reader 阻塞
+    let (events_tx, _) = broadcast::channel::<SidecarEvent>(1024);
 
-    // stdout -> 转发到前端 via Tauri event（事件名带 ssid）
+    // 桌面端克隆事件桥进 reader 线程（AppHandle 不可跨 'static 借用）
+    #[cfg(feature = "desktop")]
+    let bridge_owned = bridge.cloned();
+    // Web 形态无 Tauri 事件桥，参数仅用于统一签名
+    #[cfg(not(feature = "desktop"))]
+    let _ = bridge;
+
+    // stdout -> 桌面端转发到前端 via Tauri event；Web 端经 broadcast 由 WS 转发
     if let Some(stdout) = child.stdout.take() {
-        let app_handle = app.clone();
-        let ssid_for_log = ssid.clone();
-        let event_name = stdout_event.clone();
+        #[cfg(feature = "desktop")]
+        let event_name = format!("sidecar-stdout-{}", ssid);
+        #[cfg(feature = "desktop")]
+        let app_handle = bridge_owned.clone();
+        let ssid_for_log = ssid.to_string();
+        let events = events_tx.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 match line {
                     Ok(text) => {
                         tracing::info!("[SIDECAR ssid={} STDOUT] {}", ssid_for_log, text);
-                        let _ = app_handle.emit(&event_name, &text);
+                        #[cfg(feature = "desktop")]
+                        if let Some(app) = &app_handle {
+                            let _ = app.emit(&event_name, &text);
+                        }
+                        let _ = events.send(SidecarEvent {
+                            stream: "stdout",
+                            line: text,
+                        });
                     }
                     Err(e) => {
                         tracing::error!("[SIDECAR ssid={} STDOUT ERROR] {}", ssid_for_log, e);
@@ -194,18 +257,28 @@ pub fn spawn_sidecar(
         });
     }
 
-    // stderr -> 转发到前端 via Tauri event（事件名带 ssid）
+    // stderr -> 桌面端转发到前端 via Tauri event；Web 端经 broadcast 由 WS 转发
     if let Some(stderr) = child.stderr.take() {
-        let app_handle = app.clone();
-        let ssid_for_log = ssid.clone();
-        let event_name = stderr_event.clone();
+        #[cfg(feature = "desktop")]
+        let event_name = format!("sidecar-stderr-{}", ssid);
+        #[cfg(feature = "desktop")]
+        let app_handle = bridge_owned.clone();
+        let ssid_for_log = ssid.to_string();
+        let events = events_tx.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines() {
                 match line {
                     Ok(text) => {
                         tracing::warn!("[SIDECAR ssid={} STDERR] {}", ssid_for_log, text);
-                        let _ = app_handle.emit(&event_name, &text);
+                        #[cfg(feature = "desktop")]
+                        if let Some(app) = &app_handle {
+                            let _ = app.emit(&event_name, &text);
+                        }
+                        let _ = events.send(SidecarEvent {
+                            stream: "stderr",
+                            line: text,
+                        });
                     }
                     Err(e) => {
                         tracing::error!("[SIDECAR ssid={} STDERR ERROR] {}", ssid_for_log, e);
@@ -223,7 +296,15 @@ pub fn spawn_sidecar(
     let pid = child.id();
 
     with_map(|map| {
-        map.insert(ssid.clone(), SidecarProcess { pid, stdin, child });
+        map.insert(
+            ssid.to_string(),
+            SidecarProcess {
+                pid,
+                stdin,
+                child,
+                events: events_tx,
+            },
+        );
     })?;
 
     tracing::info!("[SIDECAR ssid={}] Started with PID: {}", ssid, pid);
@@ -231,10 +312,31 @@ pub fn spawn_sidecar(
     Ok(pid)
 }
 
+/// 订阅指定 ssid 的输出事件（Web WS handler 用）。
+/// 进程不存在时返回 None。
+pub fn subscribe_events(ssid: &str) -> Option<broadcast::Receiver<SidecarEvent>> {
+    let guard = SIDECAR_MAP.lock().ok()?;
+    guard
+        .as_ref()?
+        .get(ssid)
+        .map(|p| p.events.subscribe())
+}
+
 /// 向指定 ssid 的 sidecar 进程写入数据
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn write_to_sidecar(ssid: String, data: String) -> Result<(), String> {
-    with_map(|map| match map.get_mut(&ssid) {
+    write_sidecar_data(&ssid, &data)
+}
+
+/// Web 版写入
+#[cfg(not(feature = "desktop"))]
+pub fn write_to_sidecar(ssid: String, data: String) -> Result<(), String> {
+    write_sidecar_data(&ssid, &data)
+}
+
+fn write_sidecar_data(ssid: &str, data: &str) -> Result<(), String> {
+    with_map(|map| match map.get_mut(ssid) {
         Some(p) => {
             tracing::info!(
                 "[SIDECAR ssid={}] Writing {} bytes to PID {}",
@@ -249,10 +351,21 @@ pub fn write_to_sidecar(ssid: String, data: String) -> Result<(), String> {
 }
 
 /// 终止指定 ssid 的 sidecar 进程
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn kill_sidecar(ssid: String) -> Result<(), String> {
+    kill_sidecar_process(&ssid)
+}
+
+/// Web 版终止
+#[cfg(not(feature = "desktop"))]
+pub fn kill_sidecar(ssid: String) -> Result<(), String> {
+    kill_sidecar_process(&ssid)
+}
+
+fn kill_sidecar_process(ssid: &str) -> Result<(), String> {
     with_map(|map| {
-        if let Some(mut p) = map.remove(&ssid) {
+        if let Some(mut p) = map.remove(ssid) {
             tracing::info!("[SIDECAR ssid={}] Killing PID {}", ssid, p.pid);
             let _ = p.stdin.flush();
             let _ = p.child.kill();
@@ -265,21 +378,41 @@ pub fn kill_sidecar(ssid: String) -> Result<(), String> {
 }
 
 /// 获取指定 ssid 的 sidecar 进程 PID
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_sidecar_pid(ssid: String) -> Option<u32> {
+    get_sidecar_pid_impl(&ssid)
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn get_sidecar_pid(ssid: String) -> Option<u32> {
+    get_sidecar_pid_impl(&ssid)
+}
+
+fn get_sidecar_pid_impl(ssid: &str) -> Option<u32> {
     SIDECAR_MAP
         .lock()
         .ok()
-        .and_then(|guard| guard.as_ref()?.get(&ssid).map(|p| p.pid))
+        .and_then(|guard| guard.as_ref()?.get(ssid).map(|p| p.pid))
 }
 
 /// 判断指定 ssid 是否有 sidecar 在运行
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn has_sidecar(ssid: String) -> bool {
+    has_sidecar_impl(&ssid)
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn has_sidecar(ssid: String) -> bool {
+    has_sidecar_impl(&ssid)
+}
+
+fn has_sidecar_impl(ssid: &str) -> bool {
     SIDECAR_MAP
         .lock()
         .ok()
-        .and_then(|guard| guard.as_ref().map(|map| map.contains_key(&ssid)))
+        .and_then(|guard| guard.as_ref().map(|map| map.contains_key(ssid)))
         .unwrap_or(false)
 }
 

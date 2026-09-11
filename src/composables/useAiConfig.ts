@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { request } from "@/api/client";
+import { isTauri } from "@/utils/platform";
 
 export type SidecarType = "claude" | "pi";
 
@@ -68,5 +69,12 @@ export async function fetchModelList(
   apiKey: string,
   apiType: string,
 ): Promise<string[]> {
-  return invoke<string[]>("fetch_models", { baseUrl, apiKey, apiType });
+  if (isTauri) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<string[]>("fetch_models", { baseUrl, apiKey, apiType });
+  }
+  return request<string[]>("/api/ai/fetch-models", {
+    method: "POST",
+    json: { baseUrl, apiKey, apiType },
+  });
 }

@@ -1,6 +1,7 @@
 import { defineStore } from "pinia"
 import { ref } from "vue"
 import { invoke } from "@tauri-apps/api/core"
+import { isTauri } from "@/utils/platform"
 
 /** 后端 ~/.ashell/hotkey.json 的镜像（全局热键注册在 Rust 侧，与前端生命周期无关）。 */
 export interface HotkeySettings {
@@ -14,6 +15,7 @@ export const useHotkeyStore = defineStore("hotkey", () => {
   const loaded = ref(false)
 
   async function load() {
+    if (!isTauri) return
     try {
       const s = await invoke<HotkeySettings>("hotkey_get_settings")
       enabled.value = s.enabled
@@ -29,6 +31,12 @@ export const useHotkeyStore = defineStore("hotkey", () => {
     nextEnabled: boolean,
     nextAccelerator: string,
   ): Promise<string | null> {
+    if (!isTauri) {
+      enabled.value = nextEnabled
+      accelerator.value = nextAccelerator
+      loaded.value = true
+      return null
+    }
     try {
       const s = await invoke<HotkeySettings>("hotkey_set_settings", {
         enabled: nextEnabled,
@@ -44,6 +52,7 @@ export const useHotkeyStore = defineStore("hotkey", () => {
 
   /** 录制期间临时注销当前热键（否则它会把用户按下的同名组合在 OS 层吃掉） */
   async function suspend() {
+    if (!isTauri) return
     try {
       await invoke("hotkey_suspend")
     } catch {
@@ -53,6 +62,7 @@ export const useHotkeyStore = defineStore("hotkey", () => {
 
   /** 录制取消后按持久化设置恢复注册 */
   async function resume() {
+    if (!isTauri) return
     try {
       await invoke("hotkey_resume")
     } catch {

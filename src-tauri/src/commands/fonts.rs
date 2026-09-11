@@ -1,6 +1,6 @@
 /// 枚举系统已安装字体（去重 + 字典序）。
 /// 失败或为空时返回空数组，前端会回退到内置预设。
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn list_system_fonts() -> Vec<String> {
     use font_kit::source::SystemSource;
     use std::collections::BTreeSet;

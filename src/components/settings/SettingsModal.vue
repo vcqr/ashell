@@ -22,6 +22,7 @@ import {
   InformationCircleOutline,
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
+import { isTauri } from "@/utils/platform";
 import GeneralSection from "./GeneralSection.vue";
 import ThemeSection from "./ThemeSection.vue";
 import TerminalSection from "./TerminalSection.vue";
@@ -82,9 +83,10 @@ const navGroups = computed<
   },
   {
     label: t("settings.groups.system"),
+    // Web 端无系统托盘，隐藏托盘设置页
     items: [
       { key: "window", icon: BrowsersOutline },
-      { key: "tray", icon: FileTrayFullOutline },
+      ...(isTauri ? [{ key: "tray" as SettingsTab, icon: FileTrayFullOutline }] : []),
       { key: "icons", icon: AppsOutline },
       { key: "startup", icon: RocketOutline },
     ],

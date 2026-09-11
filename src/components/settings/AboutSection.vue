@@ -18,8 +18,7 @@ import {
 } from "@vicons/ionicons5";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternal, isTauri } from "@/utils/platform";
 import { useUpdater } from "@/composables/useUpdater";
 
 const { t } = useI18n();
@@ -51,14 +50,26 @@ const renderedReleaseNotes = computed(() => {
 
 onMounted(async () => {
   try {
-    version.value = await getVersion();
+    if (isTauri) {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      version.value = await getVersion();
+    } else {
+      // Web 版从后端 /health 拿版本号
+      const resp = await fetch("/health");
+      const health = (await resp.json()) as { version?: string };
+      version.value = health?.version ?? t("common.unknown");
+    }
   } catch {
     version.value = t("common.unknown");
   }
 });
 
 function open(url: string) {
-  openUrl(url).catch((err) => console.error(t("common.openLinkFailed"), err));
+  try {
+    openExternal(url);
+  } catch (err) {
+    console.error(t("common.openLinkFailed"), err);
+  }
 }
 
 async function handleCheck() {

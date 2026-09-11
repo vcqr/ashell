@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { storeToRefs } from "pinia";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import type { UnlistenFn } from "@/utils/eventBus";
+import { busListen } from "@/utils/eventBus";
+import { request } from "@/api/client";
+import { openExternal, isTauri } from "@/utils/platform";
 import { marked, type Token, type Tokens } from "marked";
 import hljs from "highlight.js";
 import DOMPurify from "dompurify";
@@ -36,7 +37,7 @@ import {
   OpenOutline,
   CopyOutline,
 } from "@vicons/ionicons5";
-import { writeText as tauriWriteText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyText as copyToClipboard } from "@/utils/clipboard";
 import { useI18n } from "vue-i18n";
 import type { ChatMessage, ProcessStep } from "@/types";
 import { useApiStore } from "@/stores/api";
@@ -72,7 +73,7 @@ const { t } = useI18n();
 async function copyText(text: string) {
   if (!text) return;
   try {
-    await tauriWriteText(text);
+    await copyToClipboard(text);
     message.success(t("common.copySuccess"));
     return;
   } catch {
@@ -326,9 +327,13 @@ function scrollBottom() {
 function close() {
   // 独立窗口模式下"关闭"语义是关掉整个窗口
   if (props.standalone) {
-    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
-      getCurrentWindow().close(),
-    )
+    if (isTauri) {
+      void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+        getCurrentWindow().close(),
+      )
+    } else {
+      window.close()
+    }
     return
   }
   emit("update:open", false)
@@ -415,7 +420,12 @@ async function ensureSidecarFor(ssid: string) {
   );
   if (attachedPid !== null) return;
 
-  const workspace = await invoke<string>("get_ai_dir");
+  const workspace = isTauri
+    ? await (async () => {
+        const { invoke } = await import("@tauri-apps/api/core");
+        return invoke<string>("get_ai_dir");
+      })()
+    : (await request<{ path: string }>("/api/ai/dir"))?.path ?? "";
   const token = await getToken();
   const addr = await getApiAddr();
 
@@ -805,7 +815,11 @@ function onLinkClick(e: MouseEvent) {
     const isExternal = !href.startsWith(window.location.origin);
     if (isExternal) {
       e.preventDefault();
-      openUrl(href).catch((err) => console.error(t("common.openLinkFailed"), err));
+      try {
+        openExternal(href);
+      } catch (err) {
+        console.error(t("common.openLinkFailed"), err);
+      }
     }
   }
 }
@@ -818,14 +832,17 @@ onMounted(async () => {
 
   restoreHandoverHistory();
 
-  unlistenApiMessage = await listen<string>("api-message", (event) => {
-    const ssid = currentSsid.value;
-    if (!ssid) return;
-    const session = aiStore.sessions[ssid];
-    if (!session || session.sidecarPid === null) return;
-    const msg = t("ai.notification", { msg: event.payload });
-    pushAssistantMessage(ssid, msg);
-  });
+  // api-message 仅桌面 Tauri 形态产生；Web 端无对应事件源
+  if (isTauri) {
+    unlistenApiMessage = await busListen<string>("api-message", (event) => {
+      const ssid = currentSsid.value;
+      if (!ssid) return;
+      const session = aiStore.sessions[ssid];
+      if (!session || session.sidecarPid === null) return;
+      const msg = t("ai.notification", { msg: event });
+      pushAssistantMessage(ssid, msg);
+    });
+  }
 
   if (currentSsid.value) {
     await ensureSidecarFor(currentSsid.value);

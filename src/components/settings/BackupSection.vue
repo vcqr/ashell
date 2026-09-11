@@ -23,7 +23,7 @@ import {
   RefreshOutline,
 } from "@vicons/ionicons5";
 import { useI18n } from "vue-i18n";
-import { invoke } from "@tauri-apps/api/core";
+import { openTextFile, saveTextFile } from "@/utils/fileInterop";
 import {
   getBackupConfig,
   saveBackupConfig,
@@ -210,10 +210,7 @@ async function handleExport() {
     const result = await exportBackup(commandHistory, password);
     const now = new Date();
     const ts = now.toISOString().replace(/[:.]/g, "").slice(0, -1);
-    const savedPath = await invoke<string | null>("save_text_file", {
-      defaultFilename: `ashell-backup-${ts}.json`,
-      content: result.content,
-    });
+    const savedPath = await saveTextFile(`ashell-backup-${ts}.json`, result.content);
     if (savedPath) {
       message.success(t("settings.backup.exportSuccess"));
     }
@@ -226,7 +223,7 @@ async function handleExport() {
 
 async function handleImport() {
   try {
-    const content = await invoke<string | null>("open_text_file");
+    const content = await openTextFile();
     if (!content) return;
     const password = await requestPassword(
       t("settings.backup.pwdImportTitle"),

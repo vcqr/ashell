@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isTauri } from "@/utils/platform"
 import { computed } from "vue"
 import WindowControls from "@/components/WindowControls.vue"
 import SftpDrawer from "@/components/SftpDrawer.vue"
@@ -35,6 +36,7 @@ async function onHeaderDblClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
   if (target?.closest('[data-tauri-drag-region="false"]')) return
   e.stopPropagation()
+  if (!isTauri) return
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
     await getCurrentWindow().toggleMaximize()
@@ -47,7 +49,7 @@ async function onHeaderDblClick(e: MouseEvent) {
 <template>
   <div class="sftpwin-root">
     <header class="sftpwin-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
-      <WindowControls v-if="isMac" />
+      <WindowControls v-if="isMac && isTauri" />
       <div class="brand" data-tauri-drag-region>
         <div class="brand-logo">
           <img src="/icon.png" alt="AShell" />
@@ -55,7 +57,7 @@ async function onHeaderDblClick(e: MouseEvent) {
         <span class="brand-name">{{ drawerTitle }}</span>
       </div>
       <nav class="drag-spacer" data-tauri-drag-region />
-      <WindowControls v-if="!isMac" />
+      <WindowControls v-if="!isMac && isTauri" />
     </header>
     <SftpDrawer
       standalone

@@ -1,6 +1,7 @@
 import { ref } from "vue";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { isTauri } from "@/utils/platform";
 
 export type UpdateState =
   | "idle"
@@ -26,6 +27,7 @@ export function useUpdater() {
     silent?: boolean;
   }): Promise<boolean> {
     const silent = opts?.silent ?? false;
+    if (!isTauri) return false; // Web 版无应用内更新
     updateState.value = "checking";
     pendingUpdate = null;
     try {

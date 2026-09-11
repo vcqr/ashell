@@ -4,6 +4,7 @@ import { useAiStore } from "@/stores/ai";
 import { useBroadcastStore } from "@/stores/broadcast";
 import { useStartupStore } from "@/stores/startup";
 import { useHostStore } from "@/stores/hosts";
+import { isTauri } from "@/utils/platform";
 import { useTerminalStore } from "@/stores/terminal";
 import { openTabInNewWindow } from "@/utils/newWindow";
 
@@ -460,9 +461,13 @@ export function useTabs() {
       if (action === "closeTab" || action === "closeWindow") {
         closeTab(tabKey);
         if (action === "closeWindow" && tabs.value.length === 0) {
-          void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
-            getCurrentWindow().close(),
-          );
+          if (isTauri) {
+            void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+              getCurrentWindow().close(),
+            );
+          } else {
+            window.close();
+          }
         }
       }
     }

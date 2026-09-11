@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { saveTextFile } from '@/utils/fileInterop'
 import { useI18n } from 'vue-i18n'
 import {
   NButton,
@@ -505,10 +505,7 @@ async function exportSession(key: string, title: string) {
   const ts = new Date().toISOString().replace(/[-:T]/g, '').replace(/\..+$/, '')
   const defaultFilename = `${safeTitle}-${ts}.txt`
   try {
-    const saved = await invoke<string | null>('save_text_file', {
-      defaultFilename,
-      content,
-    })
+    const saved = await saveTextFile(defaultFilename, content)
     if (saved) {
       message.success(t('terminal.tabBar.savedTo', { path: saved }))
     }

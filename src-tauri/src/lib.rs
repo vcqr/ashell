@@ -1,36 +1,53 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+//
+// 双目标：本 crate 同时服务桌面壳（bin/ashell，desktop feature）与 Web 服务器
+// （bin/ashell-server，--no-default-features）。核心业务层（config/handlers/
+// middleware/models/routers/service/sidecar 等）为纯 Rust 实现，两种形态共用；
+// tray/hotkey/commands 中的原生对话框等桌面专属模块用 cfg(feature) 门控。
 
 mod ai_env;
 mod commands;
 mod config;
 mod errors;
 mod handlers;
+#[cfg(feature = "desktop")]
 mod hotkey;
 mod middleware;
 mod models;
 mod routers;
+pub mod server;
 mod service;
 mod sidecar;
 mod sidecar_factory;
+#[cfg(feature = "desktop")]
 mod tray;
 
+#[cfg(feature = "desktop")]
 use std::net::SocketAddr;
+#[cfg(feature = "desktop")]
 use std::sync::Arc;
 
+#[cfg(feature = "desktop")]
 use serde::Serialize;
+#[cfg(feature = "desktop")]
 use tauri::{
     image::Image,
     menu::{AboutMetadataBuilder, MenuBuilder, SubmenuBuilder},
     Manager, State,
 };
+#[cfg(feature = "desktop")]
 use tokio::net::TcpListener;
+#[cfg(feature = "desktop")]
 use tokio::sync::OnceCell;
 
+#[cfg(feature = "desktop")]
 use crate::config::AppConfig;
+#[cfg(feature = "desktop")]
 use crate::service::AppState;
 
 /// 暴露给前端的 API 信息
 #[derive(Debug, Clone, Serialize)]
+#[cfg(feature = "desktop")]
 pub struct ApiInfo {
     pub addr: String,
     pub token: String,
@@ -39,10 +56,12 @@ pub struct ApiInfo {
 }
 
 /// 应用全局上下文（在 Tauri setup 中初始化并 manage 给全局）
+#[cfg(feature = "desktop")]
 pub struct AppCtx {
     pub api: OnceCell<ApiInfo>,
 }
 
+#[cfg(feature = "desktop")]
 impl AppCtx {
     pub fn new() -> Self {
         Self {
@@ -52,6 +71,7 @@ impl AppCtx {
 }
 
 /// 前端通过 invoke("get_api_info") 取得 API 地址与 Token
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_api_info(ctx: State<'_, AppCtx>) -> Result<ApiInfo, String> {
     ctx.api
@@ -63,7 +83,7 @@ fn get_api_info(ctx: State<'_, AppCtx>) -> Result<ApiInfo, String> {
 /// 关闭 WebView2 的浏览器快捷键（F5 刷新 / F11 全屏 / Ctrl+F 查找 / Ctrl+P 打印等）。
 /// 终端应用里误触 F5 会整页重载、丢失全部 UI 状态；同时这些键被 WebView2 拦截后
 /// 前端永远收不到，无法录制成全局热键。仅 Windows 有此机制（macOS/Linux 无）。
-#[cfg(windows)]
+#[cfg(all(windows, feature = "desktop"))]
 fn disable_browser_accelerators(win: &tauri::WebviewWindow) {
     let result = win.with_webview(|webview| {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
@@ -89,6 +109,7 @@ fn disable_browser_accelerators(win: &tauri::WebviewWindow) {
 
 /// 在系统默认文件管理器中打开 ~/.ashell/icons 目录。
 /// 路径完全由后端控制（用户无法传任意路径），所以无需 opener scope 配置。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn open_icons_dir() -> Result<(), String> {
     let dir = config::icons_dir().map_err(|e| e.to_string())?;
@@ -97,12 +118,14 @@ fn open_icons_dir() -> Result<(), String> {
 
 /// 返回 ~/.ashell/ai 目录的绝对路径（AI sidecar 工作目录）。
 /// 用于前端在 spawn_sidecar 时传入 workspace 参数。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_ai_dir() -> Result<String, String> {
     let dir = config::ai_dir().map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().into_owned())
 }
 
+#[cfg(feature = "desktop")]
 async fn start_api_server() -> anyhow::Result<ApiInfo> {
     // 1) 初始化配置
     let mut cfg: AppConfig = config::init()?;
@@ -154,6 +177,7 @@ async fn start_api_server() -> anyhow::Result<ApiInfo> {
     Ok(info)
 }
 
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志

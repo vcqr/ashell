@@ -1,7 +1,8 @@
 import { defineStore } from "pinia"
 import { reactive, ref, watch } from "vue"
 import type { ITheme } from "@xterm/xterm"
-import { invoke, convertFileSrc } from "@tauri-apps/api/core"
+import { getStoredToken, request } from "@/api/client"
+import { isTauri } from "@/utils/platform"
 import {
   defaultTerminalTheme,
   mergeTerminalTheme,
@@ -299,6 +300,7 @@ export const useTerminalStore = defineStore("terminal", () => {
    * - blur === true：Acrylic 亚克力，color alpha 跟随 opacity
    */
   async function applyWindowEffect() {
+    if (!isTauri) return
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window")
       const win = getCurrentWindow()
@@ -339,7 +341,12 @@ export const useTerminalStore = defineStore("terminal", () => {
     if (systemFontsLoading.value) return systemFonts.value
     systemFontsLoading.value = true
     try {
-      const list = await invoke<string[]>("list_system_fonts")
+      const list = isTauri
+        ? await (async () => {
+            const { invoke } = await import("@tauri-apps/api/core")
+            return invoke<string[]>("list_system_fonts")
+          })()
+        : await request<string[]>("/api/system/fonts")
       systemFonts.value = Array.isArray(list) ? list : []
       systemFontsLoaded = true
     } catch {
@@ -523,8 +530,19 @@ export const useTerminalStore = defineStore("terminal", () => {
   /** 窗口背景壁纸 URL（asset protocol），null = 无壁纸 */
   const wallpaperUrl = ref<string | null>(null)
 
+  /** Web 端壁纸图片 URL：带 token 的后端静态路由（替代 asset protocol） */
+  function webWallpaperUrl(): string {
+    return `/api/wallpaper/file?token=${encodeURIComponent(getStoredToken())}&t=${Date.now()}`
+  }
+
   async function loadWallpaper() {
     try {
+      if (!isTauri) {
+        const info = await request<{ path: string | null }>("/api/wallpaper")
+        wallpaperUrl.value = info?.path ? webWallpaperUrl() : null
+        return
+      }
+      const { invoke, convertFileSrc } = await import("@tauri-apps/api/core")
       const path = await invoke<string | null>("get_wallpaper")
       wallpaperUrl.value = path ? convertFileSrc(path) : null
     } catch {
@@ -532,13 +550,32 @@ export const useTerminalStore = defineStore("terminal", () => {
     }
   }
 
+  /** 桌面端：设置本地图片路径为壁纸（文件对话框拿路径）；Web 端走 uploadWallpaper */
   async function setWallpaper(path: string) {
+    const { invoke, convertFileSrc } = await import("@tauri-apps/api/core")
     const filePath = await invoke<string>("set_wallpaper", { sourcePath: path })
     wallpaperUrl.value = convertFileSrc(filePath)
   }
 
+  /** Web 端：multipart 上传图片内容设置壁纸 */
+  async function uploadWallpaper(file: File) {
+    const form = new FormData()
+    form.append("file", file)
+    await request<{ path: string }>("/api/wallpaper", {
+      method: "POST",
+      body: form,
+      timeout: 0,
+    })
+    wallpaperUrl.value = webWallpaperUrl()
+  }
+
   async function clearWallpaper() {
-    await invoke("clear_wallpaper")
+    if (isTauri) {
+      const { invoke } = await import("@tauri-apps/api/core")
+      await invoke("clear_wallpaper")
+    } else {
+      await request("/api/wallpaper", { method: "DELETE" })
+    }
     wallpaperUrl.value = null
   }
 
@@ -571,6 +608,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     wallpaperUrl,
     loadWallpaper,
     setWallpaper,
+    uploadWallpaper,
     clearWallpaper,
     systemFonts,
     systemFontsLoading,

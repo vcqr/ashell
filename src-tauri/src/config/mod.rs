@@ -66,6 +66,12 @@ pub fn wallpaper_dir() -> Result<PathBuf> {
 
 /// 钥匙串条目；平台无可用凭据存储（或初始化失败）时返回 None，走文件降级
 fn keyring_entry() -> Option<keyring::Entry> {
+    // ashell-server 无头部署（容器/CI/免钥匙串授权弹窗）可设置此环境变量
+    // 强制走文件密钥；桌面端请勿设置，否则与已有钥匙串密钥产生两套体系
+    if std::env::var_os("ASHHELL_FORCE_KEY_FILE").is_some() {
+        log::info!("ASHHELL_FORCE_KEY_FILE 已设置，跳过 OS 钥匙串，使用文件密钥");
+        return None;
+    }
     match keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
         Ok(entry) => Some(entry),
         Err(e) => {
