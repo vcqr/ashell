@@ -236,6 +236,22 @@ function goHome() {
   void load(undefined)
 }
 
+/* ---------- 工具行（表格上方常用操作，与远程栏 .toolbar 对位） ---------- */
+
+/** "粘贴"按钮提示：剪贴板有多项时带上数量 */
+const pasteTitle = computed(() => {
+  const clip = localClipboard.value
+  if (!clip || clip.files.length <= 1) return t("sftp.ctxMenu.paste")
+  return t("sftp.ctxMenu.pasteMulti", { count: clip.files.length })
+})
+
+/** 工具行"移到回收站"：作用于当前选择集
+ *  （removeTargets 对选中行返回整组，传首个选中项即可） */
+function trashSelection() {
+  const first = selectedFiles.value[0]
+  if (first) confirmTrashLocal(first)
+}
+
 function enterDir(file: SftpFile) {
   if (file.file_type === "dir") {
     void load(file.full_path)
@@ -1062,29 +1078,6 @@ onMounted(() => {
         size="small"
         quaternary
         circle
-        :title="t('sftp.localPane.goRoots')"
-        :type="viewingRoots ? 'primary' : 'default'"
-        @click="goRoots"
-      >
-        <template #icon>
-          <NIcon><HddRegular /></NIcon>
-        </template>
-      </NButton>
-      <NButton
-        size="small"
-        quaternary
-        circle
-        :title="t('sftp.localPane.goHome')"
-        @click="goHome"
-      >
-        <template #icon>
-          <NIcon><HomeOutline /></NIcon>
-        </template>
-      </NButton>
-      <NButton
-        size="small"
-        quaternary
-        circle
         :title="t('sftp.goUp')"
         :disabled="!canGoUp()"
         @click="goUp"
@@ -1151,6 +1144,95 @@ onMounted(() => {
       >
         <template #icon>
           <NIcon><CloseOutline /></NIcon>
+        </template>
+      </NButton>
+    </div>
+
+    <!-- 工具行：与远程栏 .toolbar 同规格（按钮行高 + 底距 + 分隔线），
+         双栏时两栏表格顶边对齐；此电脑/主目录自地址栏前下移至此 -->
+    <div class="toolbar">
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="t('sftp.localPane.goRoots')"
+        :type="viewingRoots ? 'primary' : 'default'"
+        @click="goRoots"
+      >
+        <template #icon>
+          <NIcon><HddRegular /></NIcon>
+        </template>
+      </NButton>
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="t('sftp.localPane.goHome')"
+        @click="goHome"
+      >
+        <template #icon>
+          <NIcon><HomeOutline /></NIcon>
+        </template>
+      </NButton>
+      <span class="toolbar-divider" />
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="t('sftp.ctxMenu.newFolder')"
+        :disabled="viewingRoots"
+        @click="openLocalMkdir"
+      >
+        <template #icon>
+          <NIcon><Folder /></NIcon>
+        </template>
+      </NButton>
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="t('sftp.ctxMenu.newFile')"
+        :disabled="viewingRoots"
+        @click="openLocalTouch"
+      >
+        <template #icon>
+          <NIcon><FileRegular /></NIcon>
+        </template>
+      </NButton>
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="pasteTitle"
+        :disabled="viewingRoots || !localClipboard"
+        @click="pasteLocal"
+      >
+        <template #icon>
+          <NIcon><CopyOutline /></NIcon>
+        </template>
+      </NButton>
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="t('sftp.transferBar.up')"
+        :disabled="viewingRoots || selectedFiles.length === 0"
+        @click="emit('upload-selection')"
+      >
+        <template #icon>
+          <NIcon><CloudUploadOutline /></NIcon>
+        </template>
+      </NButton>
+      <NButton
+        size="small"
+        quaternary
+        circle
+        :title="t('sftp.localPane.ctxTrash')"
+        :disabled="viewingRoots || selectedFiles.length === 0"
+        @click="trashSelection"
+      >
+        <template #icon>
+          <NIcon><TrashOutline /></NIcon>
         </template>
       </NButton>
     </div>
@@ -1232,7 +1314,8 @@ onMounted(() => {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  gap: 6px;
+  /* 与远程栏 .remote-pane 同距：两栏各行的垂直节奏一致，表格顶边对齐 */
+  gap: 10px;
 }
 
 .pane-label {
@@ -1249,13 +1332,39 @@ onMounted(() => {
   align-items: center;
   flex-wrap: nowrap;
   gap: 6px;
-  padding: 2px 0;
+  /* 与远程栏 .path-bar 同款（4px 上下内距），保证地址栏行高等高 */
+  padding: 4px 0;
   min-width: 0;
   flex-shrink: 0;
 }
 
 .path-bar > .n-button {
   flex-shrink: 0;
+}
+
+/* 工具行：与远程栏 SftpDrawer 的 .toolbar 同规格
+   （28px 按钮行 + 10px 底距 + 1px 分隔线），双栏表格顶边对齐 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ashell-border-soft);
+}
+
+.toolbar > .n-button {
+  flex-shrink: 0;
+}
+
+/* 导航（此电脑/主目录）与文件操作按钮之间的细分隔 */
+.toolbar-divider {
+  flex: 0 0 1px;
+  width: 1px;
+  height: 16px;
+  background: var(--ashell-border-soft);
 }
 
 .address-bar {
