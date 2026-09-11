@@ -84,7 +84,6 @@ export default {
   },
   transferBar: {
     up: "Upload the selected local file(s)/folder(s) to the current remote directory",
-    down: "Download the selected remote file(s)/folder(s) to the current local directory",
     dragGhost: "{count} item(s) → local",
   },
   columns: {

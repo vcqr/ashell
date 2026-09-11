@@ -58,6 +58,7 @@ import { useSftpStore } from "@/stores/sftp"
 import type { OsDropFolder, SftpFile, TransferTask } from "@/types"
 import { formatUnix } from "@/utils/time"
 import { humanSize } from "@/utils/humanSize"
+import { FILE_TYPE_COLORS, sftpFileIcon } from "@/utils/fileIcon"
 import { useFileDrag } from "@/composables/useFileDrag"
 import { useMultiSelect } from "@/composables/useMultiSelect"
 
@@ -374,25 +375,14 @@ function onTableAreaClick(e: MouseEvent) {
 }
 
 function fileIcon(row: SftpFile) {
-  return h(
-    NIcon,
-    {
-      size: 16,
-      class: "file-icon",
-      style: {
-        color:
-          row.file_type === "dir"
-            ? "var(--ashell-accent, #7c5cff)"
-            : undefined,
-      },
-    },
-    () =>
-      viewingRoots.value
-        ? h(HddRegular)
-        : row.file_type === "dir"
-          ? h(Folder)
-          : h(FileRegular),
-  )
+  if (viewingRoots.value) {
+    return h(
+      NIcon,
+      { size: 16, class: "file-icon", color: FILE_TYPE_COLORS.dir },
+      () => h(HddRegular),
+    )
+  }
+  return sftpFileIcon(row)
 }
 
 const columns = computed<DataTableColumns<SftpFile>>(() => [

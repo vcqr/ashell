@@ -80,7 +80,6 @@ export default {
   },
   transferBar: {
     up: "上传选中的本地文件/目录到远程当前目录",
-    down: "下载远程选中的文件/目录到本地当前目录",
     dragGhost: "{count} 项 → 本地",
   },
   columns: {

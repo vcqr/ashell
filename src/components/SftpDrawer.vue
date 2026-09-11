@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import type { Component } from "vue"
 import {
   NBadge,
   NButton,
@@ -28,8 +27,6 @@ import type {
 } from "naive-ui"
 import {
   ArrowUpOutline,
-  ArrowBackOutline,
-  ArrowForwardOutline,
   BookmarksOutline,
   ChevronBackOutline,
   ChevronForwardOutline,
@@ -58,21 +55,6 @@ import {
   TimeOutline,
   TrashOutline,
 } from "@vicons/ionicons5"
-import {
-  FileRegular,
-  FileAlt,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileExcel,
-  FileImage,
-  FilePdf,
-  FilePowerpoint,
-  FileVideo,
-  FileWord,
-  Folder,
-  Link,
-} from "@vicons/fa"
 import {
   downloadStream,
   duplicate as duplicateApi,
@@ -103,6 +85,7 @@ import SftpDownloadList from "@/components/sftp/SftpDownloadList.vue"
 import FileEditor from "@/components/sftp/FileEditor.vue"
 import FilePreview from "@/components/sftp/FilePreview.vue"
 import LocalPane from "@/components/sftp/LocalPane.vue"
+import { sftpFileIcon } from "@/utils/fileIcon"
 import { isPreviewable } from "@/utils/fileType"
 import {
   downloadToLocal,
@@ -2092,66 +2075,6 @@ function readAllDirectoryEntries(reader: FileSystemDirectoryReader): Promise<Fil
 
 /* ---------- 表格列 ---------- */
 
-/** 文件类型配色：用于文件图标 */
-const FILE_TYPE_COLORS = {
-  dir: "#f1c27d",
-  symlink: "#7c5cff",
-  file: "#9aa0a6",
-}
-
-function extOf(name: string): string {
-  const i = name.lastIndexOf(".")
-  return i >= 0 ? name.slice(i + 1).toLowerCase() : ""
-}
-
-/** 扩展名 -> [图标组件, 颜色]。按类别归组（压缩包/代码/媒体/办公文档），
- *  未命中的回落到通用文件图标。 */
-type ExtIconEntry = [Component, string]
-const EXT_ICON_MAP: Record<string, ExtIconEntry> = (() => {
-  const map: Record<string, ExtIconEntry> = {}
-  const put = (icon: Component, color: string, exts: string[]) => {
-    for (const e of exts) map[e] = [icon, color]
-  }
-  put(FileImage, "#6bc1ff", [
-    "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "ico", "avif", "tiff",
-  ])
-  put(FileVideo, "#d97fc0", [
-    "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg",
-  ])
-  put(FileAudio, "#b48cff", ["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus"])
-  put(FileArchive, "#e8a15a", [
-    "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "iso", "zst",
-  ])
-  put(FileCode, "#5fd0a5", [
-    "js", "mjs", "cjs", "ts", "tsx", "jsx", "vue", "py", "rs", "go", "java",
-    "c", "h", "cpp", "hpp", "cs", "rb", "php", "swift", "kt", "sh", "bat",
-    "ps1", "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss",
-    "less", "sql", "lua", "pl",
-  ])
-  put(FileAlt, "#8a93a6", [
-    "ini", "conf", "cfg", "env", "lock", "service", "log", "diff", "patch",
-  ])
-  put(FilePdf, "#ef6b6b", ["pdf"])
-  put(FileWord, "#5e9bff", ["doc", "docx", "rtf", "odt"])
-  put(FileExcel, "#58b368", ["xls", "xlsx", "ods", "csv", "tsv"])
-  put(FilePowerpoint, "#f0824c", ["ppt", "pptx", "odp"])
-  return map
-})()
-
-function fileIcon(file: SftpFile) {
-  if (file.file_type === "dir") {
-    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.dir }, { default: () => h(Folder) })
-  }
-  if (file.file_type === "symlink") {
-    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.symlink }, { default: () => h(Link) })
-  }
-  const hit = EXT_ICON_MAP[extOf(file.file_name)]
-  if (hit) {
-    return h(NIcon, { size: 16, color: hit[1] }, { default: () => h(hit[0]) })
-  }
-  return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.file }, { default: () => h(FileRegular) })
-}
-
 function dirFirst(a: SftpFile, b: SftpFile): number {
   const da = a.file_type === "dir" ? 0 : 1
   const db = b.file_type === "dir" ? 0 : 1
@@ -2275,7 +2198,7 @@ const columns = computed<DataTableColumns<SftpFile>>(() => [
     sortOrder: sortState.value.columnKey === "file_name" ? sortState.value.order : false,
     render(row) {
       return h("div", { class: "name-cell" }, [
-        fileIcon(row),
+        sftpFileIcon(row),
         h("span", { class: "name-text", title: row.full_path }, [
           row.file_name,
           row.file_type === "symlink" && row.link_path
@@ -2745,17 +2668,10 @@ const remoteDrag = useFileDrag({
   },
 })
 
-/** 中间条 -> ：上传本地栏选中条目（文件直传/目录递归由 onLocalUpload 分流） */
+/** 本地栏右键「上传选中项」：上传本地栏选中条目（文件直传/目录递归由 onLocalUpload 分流） */
 function transferUp() {
   if (localSelectedFiles.value.length === 0) return
   void onLocalUpload(localSelectedFiles.value)
-}
-
-/** 中间条 <- ：下载远程选中条目到本地栏当前目录（文件直落/目录整树，
- *  分流与同名确认由 downloadEntries 处理） */
-function transferDown() {
-  if (remoteSelectedFiles.value.length === 0) return
-  void downloadEntries(remoteSelectedFiles.value)
 }
 
 function activeWidthKey(): string {
@@ -3039,40 +2955,6 @@ function openInStandaloneWindow() {
             </template>
             <template #2>
               <div class="remote-side">
-          <div v-if="dualPane" class="transfer-bar">
-            <NTooltip placement="left">
-              <template #trigger>
-                <NButton
-                  size="small"
-                  secondary
-                  :disabled="!props.sid || localSelectedFiles.length === 0"
-                  @click="transferUp"
-                >
-                  <template #icon>
-                    <NIcon><ArrowForwardOutline /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              {{ t("sftp.transferBar.up") }}
-            </NTooltip>
-            <NTooltip placement="left">
-              <template #trigger>
-                <NButton
-                  size="small"
-                  secondary
-                  :disabled="
-                    !props.sid || !localDir || remoteSelectedFiles.length === 0
-                  "
-                  @click="transferDown"
-                >
-                  <template #icon>
-                    <NIcon><ArrowBackOutline /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              {{ t("sftp.transferBar.down") }}
-            </NTooltip>
-          </div>
           <div class="remote-pane" data-drop-zone="remote">
           <div class="path-bar">
             <span v-if="dualPane" class="pane-label">{{ t("sftp.remotePaneTitle") }}</span>
@@ -3724,14 +3606,15 @@ function openInStandaloneWindow() {
   min-width: 0;
 }
 
-/* pane-2 内横向容器：中间条（仅双栏渲染）+ 远程栏 */
+/* pane-2 内横向容器：远程栏 */
 .remote-side {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
 }
 
-/* 分隔条：命中区向两侧加宽便于抓取，悬停/拖动高亮主题色 */
+/* 分隔条：命中区向两侧加宽便于抓取；常态只是居中 1px 细线（与全局
+   边框同色），悬停/拖动时加粗为主题色圆条，避免大色块破坏整体风格 */
 .dual-split :deep(.n-split__resize-trigger-wrapper) {
   position: relative;
 }
@@ -3746,32 +3629,33 @@ function openInStandaloneWindow() {
 }
 
 .dual-split :deep(.n-split__resize-trigger) {
-  border-radius: 2px;
-  /* 竖向虚线把手：居中 1px 宽点列，常态可见、暗示可拖拽 */
-  background-image: repeating-linear-gradient(
-    to bottom,
-    var(--ashell-text-subtle, rgba(128, 128, 128, 0.5)) 0 2px,
-    transparent 2px 6px
-  );
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 1px 100%;
+  position: relative;
+  background: transparent;
+}
+
+.dual-split :deep(.n-split__resize-trigger)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: var(--ashell-border, rgba(255, 255, 255, 0.08));
+  transition: width 0.15s ease, background-color 0.15s ease;
 }
 
 .dual-split :deep(.n-split__resize-trigger:hover),
 .dual-split :deep(.n-split__resize-trigger--hover) {
-  background-color: var(--ashell-accent, #7c5cff);
-  background-image: none;
+  background: transparent;
 }
 
-.transfer-bar {
-  flex: 0 0 44px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 0 2px;
+.dual-split :deep(.n-split__resize-trigger:hover)::before,
+.dual-split :deep(.n-split__resize-trigger--hover)::before {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--ashell-primary, #7c5cff);
 }
 
 .drag-ghost {
