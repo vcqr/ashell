@@ -2812,6 +2812,34 @@ function persistSplitSize() {
   }
 }
 
+/* ---------- 分隔条 ref 自愈兜底 ----------
+ * naive-ui 2.45 Split 的内部 resizeTriggerElRef 在长时间运行的 dev 会话中
+ * 偶发被写成非 DOM 值：点下分隔条即抛
+ * "resizeTriggerEl.getBoundingClientRect is not a function"，拖动从此失效。
+ * 在捕获阶段（先于 Split 自身的 onMousedown 执行）检查该 ref，发现异常则
+ * 修复为真实分隔条元素，库内逻辑随即拿到合法元素继续工作；ref 正常时零副作用。
+ * __vueParentComponent 仅 dev / 带 devtools 的构建存在，缺失时本函数自动空转。 */
+function onSplitMouseDownCapture(e: MouseEvent) {
+  const target = e.target
+  if (!(target instanceof HTMLElement)) return
+  const wrapper = target.closest(".n-split__resize-trigger-wrapper")
+  if (!(wrapper instanceof HTMLElement)) return
+  type SplitInternal = {
+    setupState?: Record<string, unknown>
+    refs?: Record<string, unknown>
+  }
+  const inst = (wrapper as HTMLElement & { __vueParentComponent?: SplitInternal })
+    .__vueParentComponent
+  if (!inst) return
+  const { setupState, refs } = inst
+  if (!setupState || !("resizeTriggerElRef" in setupState)) return
+  const cur = setupState.resizeTriggerElRef as HTMLElement | null | undefined
+  if (cur && typeof cur.getBoundingClientRect === "function") return
+  // setupState 经 proxyRefs 代理，赋值直接写入 setup 内部 ref 的 .value
+  setupState.resizeTriggerElRef = wrapper
+  if (refs) refs.resizeTriggerElRef = wrapper
+}
+
 const width = ref<number>(0)
 const resizing = ref(false)
 
@@ -2988,6 +3016,7 @@ function openInStandaloneWindow() {
             :min="SPLIT_MIN"
             :max="SPLIT_MAX"
             :resize-trigger-size="5"
+            @mousedown.capture="onSplitMouseDownCapture"
             @update:size="onSplitSizeUpdate"
             @drag-end="persistSplitSize"
           >
