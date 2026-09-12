@@ -16,6 +16,11 @@ on:
       - "v*"
   workflow_dispatch:
 
+# 连续推送时取消过期构建，只保留最新一次
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   IMAGE: ghcr.io/${{ github.repository }}-server
 
