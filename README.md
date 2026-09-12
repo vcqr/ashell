@@ -136,7 +136,7 @@ npm run tauri build
 
 ### 方式一：Docker 部署（推荐）
 
-CI 在每次推送 `main` / 打 `v*` 标签时自动构建 `linux/amd64` + `linux/arm64` 双架构镜像发布到 GHCR：
+CI 在推送 `v*` 版本标签（或手动触发 workflow）时自动构建 `linux/amd64` + `linux/arm64` 双架构镜像发布到 GHCR（标签：`{版本}`、`{主}.{次}`、`latest`）：
 
 ```bash
 # 拉取并运行（数据目录 ~/.ashell 挂载进容器，首次启动自动生成登录令牌）

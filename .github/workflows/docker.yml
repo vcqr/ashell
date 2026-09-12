@@ -1,6 +1,8 @@
 name: docker
 
 # 构建 ashell-server 多架构（linux/amd64 + linux/arm64）Docker 镜像并发布到 GHCR。
+# 触发：推送 v* 标签（发布版本）或手动 workflow_dispatch。
+# 产物标签：{version}、{major}.{minor}、latest
 # 与 scripts/build-server-image.sh 同一套产物流程：
 #   前端 dist + ashell-server（cross musl 静态）+ sidecar app-ai（bun musl）
 # → 极简 COPY 镜像（docker/Dockerfile）
@@ -10,8 +12,6 @@ name: docker
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -142,10 +142,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
             type=semver,pattern={{version}}
-            type=sha
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
       - name: 合并多架构 manifest 并推送
         working-directory: /tmp/digests
         run: |

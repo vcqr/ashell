@@ -32,3 +32,4 @@ demo/
 docker/ashell-server
 docker/app-ai
 docker/dist
+tmp/

@@ -132,7 +132,7 @@ Besides the desktop app, AShell can run as a web server, bringing SSH / SFTP / t
 
 ### Option 1: Docker (Recommended)
 
-CI builds and publishes a multi-arch (`linux/amd64` + `linux/arm64`) image to GHCR on every push to `main` and every `v*` tag:
+CI builds and publishes a multi-arch (`linux/amd64` + `linux/arm64`) image to GHCR on every `v*` release tag (or manual workflow dispatch), tagged `{version}`, `{major}.{minor}` and `latest`:
 
 ```bash
 # Run (host ~/.ashell is mounted as the data directory; the login token is
