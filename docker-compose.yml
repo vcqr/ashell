@@ -14,6 +14,8 @@
 
 services:
   ashell-server:
+    # 免本地交叉编译：改用 CI 发布的多架构镜像（推送 tag / main 自动构建）
+    # image: ghcr.io/vcqr/ashell-server:latest
     build: ./docker
     image: ashell-server:latest
     container_name: ashell-server

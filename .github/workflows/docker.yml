@@ -1,0 +1,136 @@
+name: docker
+
+# 构建 ashell-server 多架构（linux/amd64 + linux/arm64）Docker 镜像并发布到 GHCR。
+# 与 scripts/build-server-image.sh 同一套产物流程：
+#   前端 dist + ashell-server（cross musl 静态）+ sidecar app-ai（bun musl）
+# → 极简 COPY 镜像（docker/Dockerfile）
+#
+# 使用发布的镜像（免本地交叉编译）：
+#   docker run -d -p 8090:8090 -v ~/.ashell:/data/.ashell ghcr.io/vcqr/ashell-server:latest
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}-server
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x86_64：交叉容器为本机架构，原生速度
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            bun-target: bun-linux-x64-musl
+            platform: linux/amd64
+          # arm64：GitHub 公共仓库免费 ARM runner，原生速度（非 QEMU 模拟）
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            bun-target: bun-linux-aarch64-musl
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 前端构建
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: 交叉编译 AI sidecar（bun 单文件）
+        uses: oven-sh/setup-bun@v2
+      - working-directory: sidecar-ai
+        run: |
+          [ -d node_modules ] || bun install
+          bun build --compile --target=${{ matrix.bun-target }} ./src/index.ts --outfile ../docker/app-ai
+
+      - name: 交叉编译 ashell-server（musl 静态）
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+      - working-directory: src-tauri
+        run: cross build --release --bin ashell-server --no-default-features --target ${{ matrix.target }}
+
+      - name: 组装镜像构建上下文
+        run: |
+          mkdir -p docker
+          cp src-tauri/target/${{ matrix.target }}/release/ashell-server docker/ashell-server
+          rm -rf docker/dist && cp -R dist docker/dist
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          platforms: ${{ matrix.platform }}
+          push: true
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true
+
+      - name: 导出 digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.target }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha
+      - name: 合并多架构 manifest 并推送
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+      - name: 检查镜像
+        run: docker buildx imagetools inspect "${{ env.IMAGE }}:${{ steps.meta.outputs.version }}"
