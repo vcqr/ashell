@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "ashell"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",
@@ -249,7 +249,7 @@ dependencies = [
  "libc",
  "log",
  "once_cell",
- "pbkdf2 0.13.0",
+ "pbkdf2 0.12.2",
  "portable-pty",
  "rand 0.10.2",
  "reqwest 0.13.5",
@@ -260,7 +260,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serialport",
- "sha2 0.11.0",
+ "sha2 0.10.9",
  "sqlx",
  "subtle",
  "tauri",
@@ -284,7 +284,7 @@ dependencies = [
  "uuid",
  "webview2-com",
  "windows 0.61.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
