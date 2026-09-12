@@ -29,6 +29,9 @@ services:
       # RUST_LOG: debug
     volumes:
       - ashell-data:/data/.ashell
+      # 前端只读挂载：改前端后跑 scripts/sync-frontend.sh，刷新浏览器即生效，
+      # 无需重建镜像（镜像内仍 COPY 一份 dist，供全新部署开箱即用）
+      - ./docker/dist:/app/dist:ro
     # Linux 服务器上若卷属主非 uid 1000，放开下面一行并替换为实际 uid/gid：
     # user: "1000:1000"
 
