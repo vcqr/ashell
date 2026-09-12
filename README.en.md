@@ -128,37 +128,74 @@ npm run tauri build
 
 ## Web Server Mode (Browser Access)
 
-AShell can also run as a web server, letting you use SSH / SFTP / terminals and the AI assistant from a browser (same core business layer, dual-target build):
+Besides the desktop app, AShell can run as a web server, bringing SSH / SFTP / terminals and the AI assistant to your browser (same core business layer, dual-target build).
+
+### Option 1: Docker (Recommended)
+
+CI builds and publishes a multi-arch (`linux/amd64` + `linux/arm64`) image to GHCR on every push to `main` and every `v*` tag:
 
 ```bash
-# 1. Build the frontend (served from the same origin)
-npm install && npm run build
+# Run (host ~/.ashell is mounted as the data directory; the login token is
+# auto-generated on first start)
+docker run -d --name ashell-server \
+  -p 8090:8090 \
+  -v ~/.ashell:/data/.ashell \
+  ghcr.io/vcqr/ashell-server:latest
 
-# 2. Build the web server binary (run locally)
-cd src-tauri && cargo build --release --bin ashell-server --no-default-features
-
-# 3. Start (defaults to 127.0.0.1:8090; use 0.0.0.0 for external access)
-./target/release/ashell-server --bind 0.0.0.0:8090 --dist ../dist
-```
-
-**Docker deployment** (cross-compiled musl static binary + minimal COPY image):
-
-```bash
-# Cross-compile & assemble the image (see the script header for first-time setup)
-./scripts/build-server-image.sh
-
-# Start (host ~/.ashell is mounted as the container data directory)
+# Or use compose (see docker-compose.yml in the repo for all options)
 docker compose up -d
 ```
 
-- **Login**: open the server URL in a browser and sign in with the access token. Token priority: `--token` > `ASHELL_WEB_TOKEN` env var > `~/.ashell/web-token` (auto-generated and printed on first startup).
-- **Feature parity**: SSH / local terminals / Telnet / serial / SFTP / host management / port forwarding / AI assistant (sidecar output broadcast over WebSocket) all work; desktop-only features (tray, global hotkeys, auto-update, window effects) are hidden automatically.
-- **Security note**: single-user model. Put the server behind an HTTPS reverse proxy for external access; on headless machines use `--force-key-file` to skip the OS keychain (key stored at `~/.ashell/secret.key`, not interchangeable with the desktop keychain key).
-- The server shares the `~/.ashell/` data directory (including SQLite) with the desktop app — avoid running both at once.
+> The GHCR package is private by default: `docker login ghcr.io` before pulling, or flip the package visibility to Public on the repo's Packages page.
+
+Open `http://<host>:8090` in a browser and sign in with the access token. Token priority (highest first):
+
+1. `ASHELL_WEB_TOKEN` env var / `--token` argument
+2. `web-token` file in the data directory (auto-generated and printed in the log when neither is set; persists across restarts)
+
+```bash
+docker exec ashell-server cat /data/.ashell/web-token
+```
+
+### Option 2: Build the Image Locally
+
+```bash
+# Cross-compile musl static binaries (ashell-server + AI sidecar) and assemble
+# the minimal image. One-time tool: cargo install --git https://github.com/cross-rs/cross --locked cross
+# For x86_64 servers: TARGET=x86_64-unknown-linux-musl ./scripts/build-server-image.sh
+./scripts/build-server-image.sh
+
+docker compose up -d
+```
+
+The image is a minimal COPY-style build (alpine + static binaries + frontend, zero
+compilation inside the container), with bash, terminfo and the AI sidecar (app-ai)
+built in; the data directory runs as non-root (uid 1000).
+
+### Option 3: Run the Binary Directly
+
+```bash
+npm install && npm run build                        # frontend
+cd src-tauri && cargo build --release --bin ashell-server --no-default-features
+./target/release/ashell-server --bind 0.0.0.0:8090 --dist ../dist
+```
+
+### Development Iteration
+
+```bash
+./scripts/sync-frontend.sh        # frontend-only changes: build + sync, just refresh the browser
+./scripts/build-server-image.sh   # Rust / sidecar changes: full image rebuild
+docker compose up -d --build
+```
+
+### Notes
+
+- **Feature parity**: SSH / local terminals / Telnet / serial / SFTP / host management / port forwarding / AI assistant all work; desktop-only features (tray, global hotkeys, auto-update) are hidden automatically. The browser security model cannot intercept hard-reserved keys like Ctrl/Cmd+W/T/N — leaving the page shows a confirmation instead; use `chrome --app=http://<host>:8090` for a near-native experience.
+- **Data & keys**: everything (SQLite, encryption key `secret.key`, AI config) lives in the mounted data directory — backing it up backs up everything. Containers always use the file key (`ASHELL_FORCE_KEY_FILE=1`, baked into the image); running on a host can use the OS keychain, or add `--force-key-file` to force the file key.
+- **Security**: single-user model; put the server behind an HTTPS reverse proxy for external access.
+- **Caution**: don't run the server and the desktop app at the same time when they share a data directory (SQLite).
 
 ---
----
-
 ## License
 
 MIT
