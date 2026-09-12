@@ -9,8 +9,18 @@
 
 FROM alpine:latest
 
-# 静态二进制无额外 so 依赖；ca-certificates 供 S3 备份 / AI 模型列表等 HTTPS 出站
-RUN apk add --no-cache ca-certificates
+# 静态二进制无额外 so 依赖；
+# - ca-certificates：S3 备份 / AI 模型列表等 HTTPS 出站
+# - bash + terminfo：容器内"新建本地终端"可用（busybox ash 之外的真实 shell，
+#   以及 xterm-256color 等 TERM 条目，供容器内 TUI 程序正常渲染）
+# /data 预创建并归属 ashell：首次挂载命名卷时继承该属主，非 root 可写
+RUN apk add --no-cache ca-certificates bash ncurses-terminfo-base \
+    && adduser -D -u 1000 ashell \
+    && mkdir -p /data/.ashell \
+    && chown -R ashell:ashell /data
+
+# auto 模式首选 shell（存在性校验失败时后端会沿候选链回退）
+ENV SHELL=/bin/bash
 
 COPY ashell-server /app/ashell-server
 COPY dist /app/dist
@@ -25,6 +35,7 @@ ENV HOME=/data \
 WORKDIR /app
 VOLUME ["/data"]
 EXPOSE 8090
+USER ashell
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8090/health || exit 1
 ENTRYPOINT ["/app/ashell-server"]

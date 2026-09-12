@@ -98,19 +98,43 @@ fn resolve_command(shell: Option<&str>) -> CommandBuilder {
             c.arg("-i");
             c
         };
+        // 依候选顺序返回第一个真实存在的 shell；全部缺失时退回 /bin/sh
+        // （alpine 等 minimal 环境只有 busybox ash，避免硬编码路径导致 spawn 失败）
+        let first_existing = |paths: &[&str]| -> String {
+            paths
+                .iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "/bin/sh".into())
+        };
+
         match pick.unwrap_or("auto") {
             "auto" => {
-                let s = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+                // SHELL 指向的 shell 不存在时（容器/无头环境常见）走候选链
+                let shell_env = std::env::var("SHELL")
+                    .ok()
+                    .filter(|s| std::path::Path::new(s).exists());
+                let s = shell_env.unwrap_or_else(|| {
+                    first_existing(&["/bin/bash", "/bin/zsh", "/usr/bin/fish", "/bin/sh"])
+                });
                 make_login_interactive(&s)
             }
-            "bash" => make_login_interactive("/bin/bash"),
-            "zsh" => make_login_interactive("/bin/zsh"),
+            "bash" => make_login_interactive(&first_existing(&["/bin/bash", "/usr/bin/bash"])),
+            "zsh" => make_login_interactive(&first_existing(&["/bin/zsh", "/usr/bin/zsh"])),
             "sh" => {
                 // sh 没有 -l/-i 的稳定语义，直接起裸 sh
                 CommandBuilder::new("/bin/sh")
             }
-            "fish" => make_login_interactive("/usr/bin/fish"),
-            other => make_login_interactive(other),
+            "fish" => make_login_interactive(&first_existing(&["/usr/bin/fish", "/bin/fish"])),
+            other => {
+                if std::path::Path::new(other).exists() {
+                    make_login_interactive(other)
+                } else {
+                    log::warn!("shell {other} 不存在，回退系统默认候选");
+                    let s = first_existing(&["/bin/bash", "/bin/zsh", "/bin/sh"]);
+                    make_login_interactive(&s)
+                }
+            }
         }
     }
 }
