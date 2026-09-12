@@ -15,6 +15,7 @@ import {
   GitNetworkOutline,
   SyncOutline,
   CloudDownloadOutline,
+  CubeOutline,
 } from "@vicons/ionicons5";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -26,6 +27,7 @@ const message = useMessage();
 
 const GITHUB_URL = "https://github.com/vcqr/ashell";
 const GITEE_URL = "https://gitee.com/vcqr/ashell";
+const DOCKER_URL = "https://github.com/vcqr/ashell/pkgs/container/ashell-server";
 
 const version = ref<string>("");
 
@@ -130,6 +132,14 @@ function handleReleaseNotesClick(e: MouseEvent) {
             <NIcon><GitNetworkOutline /></NIcon>
           </template>
           {{ GITEE_URL }}
+        </NButton>
+      </NDescriptionsItem>
+      <NDescriptionsItem :label="t('settings.about.docker')">
+        <NButton text type="primary" @click="open(DOCKER_URL)">
+          <template #icon>
+            <NIcon><CubeOutline /></NIcon>
+          </template>
+          {{ DOCKER_URL }}
         </NButton>
       </NDescriptionsItem>
     </NDescriptions>

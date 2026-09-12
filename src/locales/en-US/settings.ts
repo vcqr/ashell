@@ -315,11 +315,12 @@ export default {
   },
   about: {
     title: "About ASHELL",
-    intro: "ASHELL is a modern cross-platform terminal / SSH client built with Tauri 2 + Vue 3. It integrates SSH terminal, SFTP file management, host system info, port forwarding, and AI assistant. Host credentials are encrypted locally with AES-256-GCM. It supports multi-tab, custom icons and themes, and focuses on making daily operations more efficient.",
+    intro: "ASHELL is a modern cross-platform terminal / SSH client built with Tauri 2 + Vue 3. It integrates SSH terminal, SFTP file management, host system info, port forwarding, and AI assistant. Host credentials are encrypted locally with AES-256-GCM. It supports multi-tab, custom icons and themes, and focuses on making daily operations more efficient. The same core is also available as a web server (Docker deployment) so all features can be used remotely from a browser.",
     appName: "Application",
     version: "Version",
     github: "GitHub",
     gitee: "Gitee",
+    docker: "Docker Image",
     loadingVersion: "Loading…",
     checkUpdate: "Check for Updates",
     checking: "Checking…",

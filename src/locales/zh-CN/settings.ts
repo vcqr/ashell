@@ -314,11 +314,12 @@ export default {
   },
   about: {
     title: "关于 ASHELL",
-    intro: "ASHELL 是一款基于 Tauri 2 + Vue 3 构建的现代化跨平台终端 / SSH 客户端。集成 SSH 终端、SFTP 文件管理、主机系统信息、端口转发与 AI 助手于一体，主机凭证以 AES-256-GCM 本地加密存储，支持多 Tab、自定义图标与主题，专注于让日常运维更高效流畅。",
+    intro: "ASHELL 是一款基于 Tauri 2 + Vue 3 构建的现代化跨平台终端 / SSH 客户端。集成 SSH 终端、SFTP 文件管理、主机系统信息、端口转发与 AI 助手于一体，主机凭证以 AES-256-GCM 本地加密存储，支持多 Tab、自定义图标与主题，专注于让日常运维更高效流畅。同一套核心也提供 Web 服务器形态（支持 Docker 部署），可在浏览器中远程使用全部功能。",
     appName: "应用名称",
     version: "版本",
     github: "GitHub",
     gitee: "Gitee",
+    docker: "Docker 镜像",
     loadingVersion: "加载中…",
     checkUpdate: "检查更新",
     checking: "检查中…",
