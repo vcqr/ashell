@@ -1,0 +1,17 @@
+# cross 交叉编译配置（https://github.com/cross-rs/cross）
+#
+# 用法：
+#   cross build --release --bin ashell-server --no-default-features \
+#               --target aarch64-unknown-linux-musl
+#
+# aws-lc-sys（russh/rustls 的加密原语）编译 C 源码需要 cmake 与 perl；
+# 目标镜像内置 musl-gcc，但缺这两样，pre-build 补装。
+[target.aarch64-unknown-linux-musl]
+pre-build = [
+    "apt-get update && apt-get install -y cmake perl pkg-config",
+]
+
+[target.x86_64-unknown-linux-musl]
+pre-build = [
+    "apt-get update && apt-get install -y cmake perl pkg-config",
+]

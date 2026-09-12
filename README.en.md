@@ -134,11 +134,21 @@ AShell can also run as a web server, letting you use SSH / SFTP / terminals and 
 # 1. Build the frontend (served from the same origin)
 npm install && npm run build
 
-# 2. Build the web server binary
+# 2. Build the web server binary (run locally)
 cd src-tauri && cargo build --release --bin ashell-server --no-default-features
 
 # 3. Start (defaults to 127.0.0.1:8090; use 0.0.0.0 for external access)
 ./target/release/ashell-server --bind 0.0.0.0:8090 --dist ../dist
+```
+
+**Docker deployment** (cross-compiled musl static binary + minimal COPY image):
+
+```bash
+# Cross-compile & assemble the image (see the script header for first-time setup)
+./scripts/build-server-image.sh
+
+# Start (host ~/.ashell is mounted as the container data directory)
+docker compose up -d
 ```
 
 - **Login**: open the server URL in a browser and sign in with the access token. Token priority: `--token` > `ASHELL_WEB_TOKEN` env var > `~/.ashell/web-token` (auto-generated and printed on first startup).

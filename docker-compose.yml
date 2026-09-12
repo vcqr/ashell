@@ -1,0 +1,30 @@
+# AShell Web Server
+#
+#   ./scripts/build-server-image.sh   # 交叉编译 + 组装镜像（详见脚本注释）
+#   docker compose up -d
+#
+# 浏览器访问 http://<宿主机IP>:8090 ，用 ~/.ashell/web-token 中的令牌登录
+#
+# 数据目录：宿主 ~/.ashell 直接挂载为容器数据目录（与桌面版同目录，
+# 注意勿同时运行桌面版，避免 SQLite 争用）。
+# 加密密钥 = 该目录下的 secret.key：备份它即可完整迁移全部加密数据。
+
+services:
+  ashell-server:
+    build: ./docker
+    image: ashell-server:latest
+    container_name: ashell-server
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      # 容器无 OS 钥匙串/DBus，强制使用文件密钥（镜像内已内置，此处显式声明）
+      ASHELL_FORCE_KEY_FILE: "1"
+      # 可选：固定登录令牌（缺省自动生成并持久化到挂载目录的 web-token）
+      # ASHELL_WEB_TOKEN: "change-me"
+      # 可选：日志级别（默认 info）
+      # RUST_LOG: debug
+    volumes:
+      - ~/.ashell:/data/.ashell
+    # Linux 服务器上若挂载目录属主非 uid 1000，放开下面一行并替换为实际 uid/gid：
+    # user: "1000:1000"

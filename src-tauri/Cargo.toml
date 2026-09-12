@@ -34,6 +34,7 @@ default = ["desktop"]
 # Tauri 壳及其插件仅在桌面目标启用；Web server 只依赖纯 Rust 业务层
 desktop = [
     "dep:tauri",
+    "dep:tauri-plugin-opener",
     "dep:tauri-plugin-dialog",
     "dep:tauri-plugin-clipboard-manager",
     "dep:tauri-plugin-updater",
@@ -42,15 +43,19 @@ desktop = [
     "dep:tauri-plugin-global-shortcut",
     "dep:windows",
     "dep:webview2-com",
+    "dep:font-kit",
+    "reqwest/native-tls",
 ]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# 桌面壳（web server 不启用；tauri-plugin-opener 供 local_fs 在两形态下打开/显示文件，保持必选）
+# 桌面壳（web server 不启用）。opener 仅供桌面 JS 侧 openUrl 插件使用；
+# Rust 侧打开/定位文件走 opener.rs（std 命令实现），server 目标在 Linux 上
+# 不再被 tauri→GTK/GLib 依赖链拖累
 tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "image-png", "tray-icon"], optional = true }
-tauri-plugin-opener = "2"
+tauri-plugin-opener = { version = "2", optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-clipboard-manager = { version = "2", optional = true }
 tauri-plugin-updater = { version = "2", optional = true }
@@ -111,12 +116,14 @@ subtle = "2"
 # OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service)
 keyring = { version = "4", features = ["v1"] }
 
-# System font enumeration
-font-kit = "0.14"
+# System font enumeration (desktop only; Web form browsers render with client fonts)
+font-kit = { version = "0.14", optional = true }
 
 # HTTP client (fetch model list from provider APIs)
-# 0.13 起 query() 方法独立成 query feature，需显式开启
-reqwest = { version = "0.13", default-features = false, features = ["json", "query", "native-tls"] }
+# 0.13 起 query() 方法独立成 query feature，需显式开启。
+# rustls-tls 进基础依赖：server 目标（--no-default-features，musl 容器）无 OpenSSL 可用，
+# 走纯 rust 的 rustls；desktop 追加 native-tls 后 reqwest 默认后端仍是 native-tls，行为不变
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
 
 # S3-compatible object storage (backup/restore)
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }

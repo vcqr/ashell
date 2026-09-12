@@ -480,8 +480,7 @@ pub async fn move_to(src_path: &str, dst_dir: &str) -> AppResult<()> {
 pub async fn reveal(path: &str) -> AppResult<()> {
     let p = validate_absolute(path)?;
     tokio::task::spawn_blocking(move || {
-        tauri_plugin_opener::reveal_item_in_dir(&p)
-            .map_err(|e| AppError::Internal(format!("reveal: {e}")))
+        crate::opener::reveal_item(&p).map_err(|e| AppError::Internal(format!("reveal: {e}")))
     })
     .await
     .map_err(|e| AppError::Internal(format!("join reveal task: {e}")))?
@@ -491,8 +490,7 @@ pub async fn reveal(path: &str) -> AppResult<()> {
 pub async fn open(path: &str) -> AppResult<()> {
     let p = validate_absolute(path)?;
     tokio::task::spawn_blocking(move || {
-        tauri_plugin_opener::open_path(&p, None::<&str>)
-            .map_err(|e| AppError::Internal(format!("open: {e}")))
+        crate::opener::open_path(&p).map_err(|e| AppError::Internal(format!("open: {e}")))
     })
     .await
     .map_err(|e| AppError::Internal(format!("join open task: {e}")))?

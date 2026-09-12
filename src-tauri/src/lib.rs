@@ -14,6 +14,7 @@ mod handlers;
 mod hotkey;
 mod middleware;
 mod models;
+mod opener;
 mod routers;
 pub mod server;
 mod service;
@@ -113,7 +114,7 @@ fn disable_browser_accelerators(win: &tauri::WebviewWindow) {
 #[tauri::command]
 fn open_icons_dir() -> Result<(), String> {
     let dir = config::icons_dir().map_err(|e| e.to_string())?;
-    tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| e.to_string())
+    opener::open_path(&dir)
 }
 
 /// 返回 ~/.ashell/ai 目录的绝对路径（AI sidecar 工作目录）。

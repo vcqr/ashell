@@ -138,11 +138,21 @@ npm run tauri build
 # 1. 构建前端产物（同源托管）
 npm install && npm run build
 
-# 2. 构建 Web 服务器二进制
+# 2. 构建 Web 服务器二进制（本机运行）
 cd src-tauri && cargo build --release --bin ashell-server --no-default-features
 
 # 3. 启动（默认监听 127.0.0.1:8090，对外访问用 0.0.0.0）
 ./target/release/ashell-server --bind 0.0.0.0:8090 --dist ../dist
+```
+
+**Docker 部署**（交叉编译 musl 静态二进制 + 极简 COPY 镜像）：
+
+```bash
+# 交叉编译 + 组装镜像（首次需安装 cross，详见脚本注释）
+./scripts/build-server-image.sh
+
+# 启动（宿主 ~/.ashell 挂载为容器数据目录）
+docker compose up -d
 ```
 
 - **登录**：浏览器打开服务地址，输入访问令牌登录。令牌优先级：`--token` > 环境变量 `ASHELL_WEB_TOKEN` > `~/.ashell/web-token`（首次启动自动生成并打印在控制台）。
