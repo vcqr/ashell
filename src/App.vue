@@ -40,6 +40,8 @@ import AiProvidersModal from "@/components/AiProvidersModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
 import LoginGate from "@/components/LoginGate.vue";
 import { isTauri } from "@/utils/platform";
+import { useKeybindingStore } from "@/stores/keybindings";
+import { onBeforeUnmount } from "vue";
 import { useApiStore } from "@/stores/api";
 import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
@@ -168,6 +170,62 @@ useGlobalShortcuts({
   toggleTemplate,
   toggleActivityBar,
 });
+
+// ── Web 形态浏览器保护 ──
+if (!isTauri) {
+  const keybindingStore = useKeybindingStore();
+
+  // 1) 有活跃终端会话时，刷新/关闭弹浏览器原生确认（含 Ctrl+W / Cmd+R 触发的场景，
+  //    两者无法从 keydown 层面阻止，beforeunload 是唯一防线）
+  const onBeforeUnload = (e: BeforeUnloadEvent) => {
+    if (
+      tabs.value.some((t) => t.status === "connected" || t.status === "connecting")
+    ) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  };
+  window.addEventListener("beforeunload", onBeforeUnload);
+
+  // 2) 终端常用但浏览器会抢的组合键：捕获阶段取消浏览器默认行为。
+  //    preventDefault 不会阻断事件传播，xterm 与应用自身快捷键照常收到按键。
+  //    浏览器硬保留（无法拦截）的 Ctrl/Cmd+W/T/N 由上面的 beforeunload 兜底。
+  const GUARD_KEYS = new Set([
+    "s", // 保存页面（终端流控 XOFF）
+    "p", // 打印
+    "o", // 打开文件
+    "d", // 书签（终端 EOF/注销）
+    "u", // 查看源码（终端删除到行首）
+    "r", // 刷新（终端反向搜索；误触刷新会丢全部会话）
+    "g", // 快速查找
+    "k", // 搜索栏（终端删除到行尾）
+    "b", // 书签栏（tmux 前缀）
+    "h", // 历史记录（终端退格）
+    "f", // 页内查找（应用有终端搜索）
+    "j", // 下载列表
+    "t", // 新标签（部分浏览器可拦截）
+    "n", // 新窗口（同上）
+    "w", // 关标签（Firefox 可拦截，Chrome 由 beforeunload 兜底）
+  ]);
+  const GUARD_FKEYS = new Set(["F1", "F3", "F5", "F6", "F7", "F10"]);
+  const onGuardKey = (e: KeyboardEvent) => {
+    if (keybindingStore.recording) return;
+    if (e.shiftKey) return; // Shift 组合多为浏览器窗口功能，终端场景少用
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (
+      (e.ctrlKey || e.metaKey || e.altKey) &&
+      (GUARD_KEYS.has(key) || (e.ctrlKey && GUARD_FKEYS.has(key)))
+    ) {
+      e.preventDefault();
+    }
+  };
+  window.addEventListener("keydown", onGuardKey, { capture: true });
+
+  onBeforeUnmount(() => {
+    window.removeEventListener("beforeunload", onBeforeUnload);
+    window.removeEventListener("keydown", onGuardKey, { capture: true });
+  });
+}
 </script>
 
 <template>

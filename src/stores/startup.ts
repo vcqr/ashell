@@ -1,5 +1,6 @@
 import { defineStore } from "pinia"
 import { ref, watch } from "vue"
+import { isWeb } from "@/utils/platform"
 
 /** 启动行为偏好。 */
 export interface StartupConfig {
@@ -23,7 +24,9 @@ const DEFAULT_CONFIG: StartupConfig = {
   openLocalOnStart: false,
   defaultShell: "auto",
   restoreTabs: true,
-  autoConnectRememberedTabs: false,
+  // Web 形态浏览器刷新即断连，默认恢复 Tab 后自动重连以还原工作现场；
+  // 桌面端会话随窗口存活，保持手动重连默认
+  autoConnectRememberedTabs: isWeb,
   aiAssistantEnabled: true,
   localInitCommand: "",
 }
