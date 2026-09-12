@@ -18,21 +18,31 @@ cd "$(dirname "$0")/.."
 
 TARGET="${TARGET:-aarch64-unknown-linux-musl}"
 
-echo "==> 1/4 前端构建（dist/）"
+echo "==> 1/5 前端构建（dist/）"
 npm run build
 
-echo "==> 2/4 交叉编译 ${TARGET}（musl 静态链接）"
+echo "==> 2/5 交叉编译 ${TARGET}（musl 静态链接）"
 cd src-tauri
 cross build --release --bin ashell-server --no-default-features --target "$TARGET"
 cd ..
 
-echo "==> 3/4 组装 docker/ 构建上下文"
+# sidecar（AI 引擎，bun 单文件可执行）同样交叉编译；musl 目标 alpine 直接可跑
+case "$TARGET" in
+  aarch64-unknown-linux-musl) BUN_TARGET="bun-linux-aarch64-musl" ;;
+  x86_64-unknown-linux-musl)  BUN_TARGET="bun-linux-x64-musl" ;;
+  *) echo "不支持的 TARGET: $TARGET"; exit 1 ;;
+esac
+echo "==> 3/5 交叉编译 sidecar（${BUN_TARGET}）"
+( cd sidecar-ai && [ -d node_modules ] || bun install \
+  && bun build --compile --target="$BUN_TARGET" ./src/index.ts --outfile ../docker/app-ai )
+
+echo "==> 4/5 组装 docker/ 构建上下文"
 mkdir -p docker
 cp "src-tauri/target/$TARGET/release/ashell-server" docker/ashell-server
 rm -rf docker/dist
 cp -R dist docker/dist
 
-echo "==> 4/4 构建镜像"
+echo "==> 5/5 构建镜像"
 docker build -f docker/Dockerfile -t ashell-server:latest docker/
 
 echo "完成：ashell-server:latest"

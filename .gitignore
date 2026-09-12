@@ -30,4 +30,5 @@ demo/
 
 # docker 运行时镜像构建产物（scripts/build-server-image.sh 生成）
 docker/ashell-server
+docker/app-ai
 docker/dist

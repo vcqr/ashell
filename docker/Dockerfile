@@ -13,8 +13,9 @@ FROM alpine:latest
 # - ca-certificates：S3 备份 / AI 模型列表等 HTTPS 出站
 # - bash + terminfo：容器内"新建本地终端"可用（busybox ash 之外的真实 shell，
 #   以及 xterm-256color 等 TERM 条目，供容器内 TUI 程序正常渲染）
+# - libstdc++/libgcc：bun 编译的 AI sidecar（app-ai，musl 动态链接）所需
 # /data 预创建并归属 ashell：首次挂载命名卷时继承该属主，非 root 可写
-RUN apk add --no-cache ca-certificates bash ncurses-terminfo-base \
+RUN apk add --no-cache ca-certificates bash ncurses-terminfo-base libstdc++ libgcc \
     && adduser -D -u 1000 ashell \
     && mkdir -p /data/.ashell \
     && chown -R ashell:ashell /data
@@ -23,6 +24,9 @@ RUN apk add --no-cache ca-certificates bash ncurses-terminfo-base \
 ENV SHELL=/bin/bash
 
 COPY ashell-server /app/ashell-server
+# AI sidecar（bun 单文件可执行，引擎全内嵌）；sidecar_factory 按可执行文件同目录查找
+COPY app-ai /app/app-ai
+RUN chmod +x /app/app-ai
 COPY dist /app/dist
 
 # HOME 指向挂载点父目录：app_dir() = $HOME/.ashell = /data/.ashell，
