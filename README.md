@@ -180,7 +180,7 @@ terminfo、AI sidecar（app-ai）；数据目录默认非 root（uid 1000）运�
 
 ```bash
 npm install && npm run build                        # 前端产物
-cd src-tauri && cargo build --release --bin ashell-server --no-default-features
+cd src-tauri && cargo build --release --bin ashell-server --no-default-features --features server
 ./target/release/ashell-server --bind 0.0.0.0:8090 --dist ../dist
 ```
 

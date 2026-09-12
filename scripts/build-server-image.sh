@@ -23,7 +23,7 @@ npm run build
 
 echo "==> 2/5 交叉编译 ${TARGET}（musl 静态链接）"
 cd src-tauri
-cross build --release --bin ashell-server --no-default-features --target "$TARGET"
+cross build --release --bin ashell-server --no-default-features --features server --target "$TARGET"
 cd ..
 
 # sidecar（AI 引擎，bun 单文件可执行）同样交叉编译；musl 目标 alpine 直接可跑

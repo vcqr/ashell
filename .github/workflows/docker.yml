@@ -85,7 +85,7 @@ jobs:
           CC_AARCH64_UNKNOWN_LINUX_MUSL: musl-gcc
           AR_X86_64_UNKNOWN_LINUX_MUSL: musl-ar
           AR_AARCH64_UNKNOWN_LINUX_MUSL: musl-ar
-        run: cargo build --release --bin ashell-server --no-default-features --target ${{ matrix.target }}
+        run: cargo build --release --bin ashell-server --no-default-features --features server --target ${{ matrix.target }}
 
       - name: 组装镜像构建上下文
         run: |

@@ -30,9 +30,14 @@ required-features = ["desktop"]
 [[bin]]
 name = "ashell-server"
 path = "src/bin/ashell-server.rs"
+# 需要 server feature 才构建：桌面构建（tauri build）不产出 server 二进制，
+# 与桌面产物物理隔离，避免 target/release 里两个 exe 被混淆
+required-features = ["server"]
 
 [features]
 default = ["desktop"]
+# Web 服务器形态（ashell-server 二进制）；交叉编译/CI 构建时传 --features server
+server = []
 # Tauri 壳及其插件仅在桌面目标启用；Web server 只依赖纯 Rust 业务层
 desktop = [
     "dep:tauri",
