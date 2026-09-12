@@ -141,7 +141,10 @@ serialport = { version = "4", default-features = false }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0", features = ["Win32_System_Threading", "Win32_Foundation"] }
+# 必须钉住 0.61（HANDLE 为指针类型，is_null 可用）：裸 "0" 会在共享 Cargo.lock
+# 被 server 目标（--no-default-features）重解析时降级到 0.45（HANDLE=isize），
+# 导致 Windows 桌面构建 is_null 报错
+windows-sys = { version = "0.61", features = ["Win32_System_Threading", "Win32_Foundation"] }
 # 关闭 WebView2 浏览器快捷键（F5 刷新等）：既防误触重载，也让 F 键能录制成全局热键。
 # 版本必须与 tauri 内置 wry 的 webview2-com 完全一致，保证 COM 接口类型同源，否则 cast() 编译不过——
 # 这两项不能单独升级：tauri 2.11.5 → wry 0.55 → webview2-com 0.38 / windows 0.61。
