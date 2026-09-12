@@ -62,20 +62,30 @@ jobs:
           [ -d node_modules ] || bun install
           bun build --compile --target=${{ matrix.bun-target }} ./src/index.ts --outfile ../docker/app-ai
 
-      - name: 交叉编译 ashell-server（musl 静态）
+      # runner 本身就是目标架构（x86_64/amd64 原生、arm64 原生），
+      # 直接 musl-tools 原生编译，无需 cross 容器（规避 cross 与 rustup 的
+      # 工具链误装 bug 这一整类问题，也更快）
+      - name: 安装 musl 工具链与 C 编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools musl-dev cmake perl pkg-config
+      - name: 编译 ashell-server（musl 静态）
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      # release 版 cross 0.2.5 在 rustup 1.28+ 上有误装非本机工具链的 bug
-      # （arm64 runner 上试图装 stable-x86_64-unknown-linux-gnu），用 git 修复版
-      - name: 安装 cross
-        run: cargo install --git https://github.com/cross-rs/cross --locked cross
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           key: ${{ matrix.target }}
       - working-directory: src-tauri
-        run: cross build --release --bin ashell-server --no-default-features --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CC_X86_64_UNKNOWN_LINUX_MUSL: musl-gcc
+          CC_AARCH64_UNKNOWN_LINUX_MUSL: musl-gcc
+          AR_X86_64_UNKNOWN_LINUX_MUSL: musl-ar
+          AR_AARCH64_UNKNOWN_LINUX_MUSL: musl-ar
+        run: cargo build --release --bin ashell-server --no-default-features --target ${{ matrix.target }}
 
       - name: 组装镜像构建上下文
         run: |
