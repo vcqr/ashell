@@ -2082,9 +2082,10 @@ function dirFirst(a: SftpFile, b: SftpFile): number {
   return da - db
 }
 
-/* 列排序必须受控：sorter 若交给 NDataTable 内部做，点列头后显示顺序
-   与 files.value 会错位，而 Shift 区间选择按 files.value 索引取区间，
-   错位就跳选。这里持有排序状态并在点列头时重排 files.value。 */
+/* 列排序受控：显示顺序必须与 files.value 一致——Shift 区间选择按
+   files.value 索引取区间，错位就跳选。表格必须设 remote：naive-ui
+   在受控 sortOrder 下仍会内部再排一次（比较结果乘升/降序 flag），
+   不加 remote 会双重排序，目录优先被反转、键值双重反转 */
 function cmpDefault(a: SftpFile, b: SftpFile): number {
   const d = dirFirst(a, b)
   if (d !== 0) return d
@@ -2151,8 +2152,11 @@ function onColumnResize(
 }
 
 /** 按当前排序状态重排列表（descend 只反转键值比较，目录始终排在前面；
- *  无排序时回到默认目录优先+名字。整体 reverse 会把目录一并沉底，不可用） */
+ *  整体 reverse 会把目录一并沉底，不可用）。无排序（还原）必须回默认
+ *  目录优先+名称升序：若沿用 columnKey 的比较器，还原与该列升序相同，
+ *  第三击看起来毫无变化 */
 function applySort(list: SftpFile[]): SftpFile[] {
+  if (sortState.value.order === false) return [...list].sort(cmpDefault)
   const cmp =
     sortState.value.columnKey === "size"
       ? cmpSize
@@ -3280,6 +3284,7 @@ function openInStandaloneWindow() {
           <NSpin :show="loading" class="table-wrap" @click="onRemoteTableClick">
             <NDataTable
               size="small"
+              remote
               :columns="columns"
               :data="displayFiles"
               :row-key="rowKey"
