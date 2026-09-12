@@ -202,7 +202,7 @@ fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let menu = build_menu(app)?;
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
 
-    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
+    let builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip("AShell")
         .menu(&menu)
@@ -221,11 +221,10 @@ fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 let _ = &tray;
             }
         });
-    // macOS 左键默认弹菜单（菜单栏习惯）；Windows/Linux 左键留给显示窗口
+    // macOS 左键默认弹菜单（菜单栏习惯）；Windows/Linux 左键留给显示窗口。
+    // shadowing 替代 let mut：macOS 上该行 cfg 掉后不会产生 unused_mut 警告
     #[cfg(not(target_os = "macos"))]
-    {
-        builder = builder.show_menu_on_left_click(false);
-    }
+    let builder = builder.show_menu_on_left_click(false);
     builder.build(app)?;
     Ok(())
 }
