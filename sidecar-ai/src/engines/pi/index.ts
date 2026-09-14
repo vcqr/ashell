@@ -114,10 +114,11 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
     }
 
     if (!customModel) {
-      const errMsg =
-        "No pi model configured. Please set PI_PROVIDER, PI_MODEL, PI_BASE_URL, PI_API_KEY, PI_API in ~/.ashell/ai/.env, or configure ~/.pi/agent/models.json.";
-      emitSystemError(errMsg);
-      process.exit(1);
+      // daemon 模式下进程被多会话共享，绝不允许 process.exit；
+      // 抛错由 create 流程捕获，经 create 帧 err 应答上报宿主
+      throw new Error(
+        "No pi model configured. Please set PI_PROVIDER, PI_MODEL, PI_BASE_URL, PI_API_KEY, PI_API in ~/.ashell/ai/.env, or configure ~/.pi/agent/models.json.",
+      );
     }
 
     console.log(`[PI] Using model from registry: ${customModel.provider}/${customModel.id}`);
@@ -128,10 +129,10 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
   let todos: TodoItem[] = [];
 
   const cmdExecTool = createCmdExecTool(ctx, () => ctx.io.readLineOrStop());
-  const askUserQuestionTool = createAskUserQuestionTool(ctx.io);
+  const askUserQuestionTool = createAskUserQuestionTool(ctx.io, ctx.ssid);
   const todoWriteTool = createTodoWriteTool((newTodos) => {
     todos = newTodos;
-    displayTodoProgress(todos);
+    displayTodoProgress(ctx.ssid, todos);
   });
 
   // ── 资源加载器 ──
@@ -179,14 +180,14 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
         if (msg.role === "assistant") {
           for (const block of msg.content) {
             if (block.type === "text") {
-              emitAIMSG(block.text);
+              emitAIMSG(ctx.ssid, block.text);
             } else if (block.type === "thinking") {
-              emitThinking(block.thinking);
+              emitThinking(ctx.ssid, block.thinking);
             } else if (block.type === "toolCall") {
               // TodoWrite 的进度由 todoWriteTool 的 onUpdate 推送，跳过工具调用展示
               if (block.name === "TodoWrite") continue;
               const args = block.arguments ?? {};
-              emitToolCall({
+              emitToolCall(ctx.ssid, {
                 name: block.name,
                 command: args.cmd || args.command || undefined,
                 description: JSON.stringify(args, null, 2),
@@ -195,7 +196,7 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
           }
 
           if (msg.stopReason === "error" && msg.errorMessage) {
-            emitSystemError(msg.errorMessage);
+            emitSystemError(ctx.ssid, msg.errorMessage);
           }
         }
         break;
@@ -210,7 +211,7 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
               type: c.type,
               content: c.type === "text" ? c.text : "",
             }));
-            emitToolRet(payload);
+            emitToolRet(ctx.ssid, payload);
           }
         }
         break;
@@ -218,6 +219,7 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
 
       case "auto_retry_start": {
         emitSystemError(
+          ctx.ssid,
           `Retrying (${event.attempt}/${event.maxAttempts}): ${event.errorMessage}`,
         );
         break;

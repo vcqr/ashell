@@ -17,6 +17,7 @@ export interface AskUserQuestionItem {
  */
 export async function askUserQuestion(
   io: StdinIO,
+  sid: string,
   q: AskUserQuestionItem,
 ): Promise<string | null> {
   const items = q.options.map(
@@ -26,7 +27,7 @@ export async function askUserQuestion(
     ? "(Enter numbers separated by commas, or type your own answer)"
     : "(Enter a number, or type your own answer)";
 
-  emitAskUserQuestion({ title: `${q.header}: ${q.question}`, items, tips });
+  emitAskUserQuestion(sid, { title: `${q.header}: ${q.question}`, items, tips });
 
   const response = (await io.readLineOrStop()).trim();
   if (response === STOP_SENTINEL) return null;

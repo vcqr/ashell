@@ -6,9 +6,9 @@ import type { StdinIO } from "../../stdin";
 /**
  * AskUserQuestion 工具：通过共享的 askUserQuestion 核心
  * （[AI_ASKUSERQUESTION] 发题 + stdin 等待作答）把问题交给用户选择。
- * io 由 index.ts 注入，复用全局 stdin 缓冲与停止信号机制。
+ * io 与 sid 由 index.ts 注入，复用本会话的收件箱缓冲与停止信号机制。
  */
-export function createAskUserQuestionTool(io: StdinIO) {
+export function createAskUserQuestionTool(io: StdinIO, sid: string) {
   return defineTool({
     name: "AskUserQuestion",
     label: "Ask User Question",
@@ -43,7 +43,7 @@ export function createAskUserQuestionTool(io: StdinIO) {
       let interrupted = false;
 
       for (const q of params.questions) {
-        const answer = await askUserQuestion(io, q);
+        const answer = await askUserQuestion(io, sid, q);
         if (answer === null) {
           interrupted = true;
           break;

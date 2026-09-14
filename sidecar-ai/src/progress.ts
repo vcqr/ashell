@@ -7,7 +7,7 @@ export interface TodoItem {
 }
 
 /** TodoWrite 进度推送（两个引擎共用同一渲染） */
-export function displayTodoProgress(todos: TodoItem[]): void {
+export function displayTodoProgress(sid: string, todos: TodoItem[]): void {
   if (todos.length === 0) return;
 
   const completed = todos.filter((t) => t.status === "completed").length;
@@ -22,5 +22,5 @@ export function displayTodoProgress(todos: TodoItem[]): void {
     msg += `\n${index + 1}. ${icon} ${text}`;
   });
 
-  emitAIMSG(msg);
+  emitAIMSG(sid, msg);
 }

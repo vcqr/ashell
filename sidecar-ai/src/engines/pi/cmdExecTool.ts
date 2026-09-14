@@ -35,7 +35,7 @@ export function createCmdExecTool(
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (params.needs_approval) {
-        emitToolConfirm("Allow this action? (y/n): ", { command: params.cmd });
+        emitToolConfirm(target.ssid, "Allow this action? (y/n): ", { command: params.cmd });
 
         const response = (await readLineFromStdin()).trim().toLowerCase();
         if (response === STOP_SENTINEL || response !== "y") {

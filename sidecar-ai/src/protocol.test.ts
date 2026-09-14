@@ -4,12 +4,15 @@ import {
   SESSION_STOP,
   emitAIMSG,
   emitAskUserQuestion,
+  emitControl,
   emitStopped,
   emitSystemError,
   emitThinking,
   emitToolCall,
   emitToolConfirm,
   emitToolRet,
+  setEmitSink,
+  type EmitSink,
 } from "./protocol";
 
 /** 拦截 console.log，返回被吞掉的每一行。
@@ -28,23 +31,23 @@ function captureLines(fn: () => void): string[] {
 
 describe("protocol emitters", () => {
   test("emitAIMSG 输出 [AIMSG] + assistant 信封", () => {
-    const lines = captureLines(() => emitAIMSG("hi"));
+    const lines = captureLines(() => emitAIMSG("s1", "hi"));
     expect(lines).toEqual(['[AIMSG]{"type":"assistant","payload":"hi"}']);
   });
 
   test("emitThinking 输出 [AI_THINKING]", () => {
-    const lines = captureLines(() => emitThinking("hmm"));
+    const lines = captureLines(() => emitThinking("s1", "hmm"));
     expect(lines).toEqual(['[AI_THINKING]{"type":"thinking","payload":"hmm"}']);
   });
 
   test("emitToolCall 省略 undefined 的 command/description（前端按缺省渲染）", () => {
-    const lines = captureLines(() => emitToolCall({ name: "Read" }));
+    const lines = captureLines(() => emitToolCall("s1", { name: "Read" }));
     expect(lines).toEqual(['[AITOOL]{"type":"assistant","payload":{"name":"Read"}}']);
   });
 
   test("emitToolCall 携带 command 与 description", () => {
     const lines = captureLines(() =>
-      emitToolCall({ name: "Bash", command: "ls -la", description: "list files" }),
+      emitToolCall("s1", { name: "Bash", command: "ls -la", description: "list files" }),
     );
     expect(lines).toEqual([
       '[AITOOL]{"type":"assistant","payload":{"name":"Bash","command":"ls -la","description":"list files"}}',
@@ -53,7 +56,7 @@ describe("protocol emitters", () => {
 
   test("emitToolRet 原样透传 payload 数组", () => {
     const payload = [{ type: "text", content: "result" }];
-    const lines = captureLines(() => emitToolRet(payload));
+    const lines = captureLines(() => emitToolRet("s1", payload));
     expect(lines).toEqual([
       '[TOOL_RET]{"type":"user","payload":[{"type":"text","content":"result"}]}',
     ]);
@@ -61,7 +64,7 @@ describe("protocol emitters", () => {
 
   test("emitToolConfirm 携带 question 与 options", () => {
     const lines = captureLines(() =>
-      emitToolConfirm("Allow this action? (y/n): ", { command: "rm -rf /" }),
+      emitToolConfirm("s1", "Allow this action? (y/n): ", { command: "rm -rf /" }),
     );
     expect(lines).toEqual([
       '[TOOL_CONFIRM]{"type":"tool_confirm","payload":{"question":"Allow this action? (y/n): ","options":{"command":"rm -rf /"}}}',
@@ -70,7 +73,7 @@ describe("protocol emitters", () => {
 
   test("emitAskUserQuestion 输出 title/items/tips", () => {
     const lines = captureLines(() =>
-      emitAskUserQuestion({
+      emitAskUserQuestion("s1", {
         title: "Mode: pick one",
         items: ["1. Alpha - first", "2. Beta"],
         tips: "(Enter a number, or type your own answer)",
@@ -86,12 +89,12 @@ describe("protocol emitters", () => {
   });
 
   test("emitSystemError 输出 [SYSTEM_API_RETRY]", () => {
-    const lines = captureLines(() => emitSystemError("boom"));
+    const lines = captureLines(() => emitSystemError("s1", "boom"));
     expect(lines).toEqual(['[SYSTEM_API_RETRY]{"type":"system","payload":"boom"}']);
   });
 
   test("emitStopped 输出 [STOPPED]", () => {
-    const lines = captureLines(() => emitStopped());
+    const lines = captureLines(() => emitStopped("s1"));
     expect(lines[0]!.startsWith("[STOPPED]")).toBe(true);
     expect(JSON.parse(lines[0]!.slice("[STOPPED]".length)).type).toBe("system");
   });
@@ -99,5 +102,39 @@ describe("protocol emitters", () => {
   test("控制行常量与前端解析约定一致", () => {
     expect(END_OF_RESPONSE).toBe("[END_OF_RESPONSE]");
     expect(SESSION_STOP.startsWith("[SESSION_STOP]")).toBe(true);
+  });
+});
+
+describe("protocol emit sink（daemon 模式）", () => {
+  test("sink 接收 (sid, tag, body)，恢复 sink 后回到 stdout 直写", () => {
+    const frames: Array<{ sid: string; tag: string; body: unknown | null; tail: string }> = [];
+    const sink: EmitSink = (sid, tag, body, tail) => frames.push({ sid, tag, body, tail });
+    setEmitSink(sink);
+    try {
+      emitAIMSG("A", "hello");
+      emitControl("A", END_OF_RESPONSE);
+      emitControl("A", SESSION_STOP);
+    } finally {
+      setEmitSink(null);
+    }
+
+    expect(frames).toHaveLength(3);
+    expect(frames[0]).toEqual({
+      sid: "A",
+      tag: "[AIMSG]",
+      body: { type: "assistant", payload: "hello" },
+      tail: "",
+    });
+    expect(frames[1]).toEqual({ sid: "A", tag: "[END_OF_RESPONSE]", body: null, tail: "" });
+    expect(frames[2]).toEqual({
+      sid: "A",
+      tag: "[SESSION_STOP]",
+      body: null,
+      tail: "The conversation has ended.",
+    });
+
+    // sink 撤销后回到旧版行为
+    const lines = captureLines(() => emitAIMSG("B", "back"));
+    expect(lines).toEqual(['[AIMSG]{"type":"assistant","payload":"back"}']);
   });
 });

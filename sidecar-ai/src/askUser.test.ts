@@ -11,7 +11,7 @@ const singleQ = {
 /** 启动提问（拦截 emit 日志）并在后台喂答案 */
 function startAsk(io: StdinIO) {
   const spy = spyOn(console, "log").mockImplementation(() => {});
-  const promise = askUserQuestion(io, singleQ);
+  const promise = askUserQuestion(io, "s1", singleQ);
   return { promise, spy };
 }
 
@@ -36,7 +36,7 @@ describe("askUserQuestion", () => {
   test("多选逗号分隔映射为 label 列表", async () => {
     const io = new StdinIO(false);
     const spy = spyOn(console, "log").mockImplementation(() => {});
-    const promise = askUserQuestion(io, { ...singleQ, multiSelect: true });
+    const promise = askUserQuestion(io, "s1", { ...singleQ, multiSelect: true });
     io.handleLine("1,3");
     spy.mockRestore();
     expect(await promise).toBe("Alpha, Gamma");
@@ -45,7 +45,7 @@ describe("askUserQuestion", () => {
   test("非法序号回退为原始输入透传", async () => {
     const io = new StdinIO(false);
     const spy = spyOn(console, "log").mockImplementation(() => {});
-    const promise = askUserQuestion(io, singleQ);
+    const promise = askUserQuestion(io, "s1", singleQ);
     io.handleLine("99");
     spy.mockRestore();
     expect(await promise).toBe("99");
@@ -54,7 +54,7 @@ describe("askUserQuestion", () => {
   test("非数字自由文本原样返回", async () => {
     const io = new StdinIO(false);
     const spy = spyOn(console, "log").mockImplementation(() => {});
-    const promise = askUserQuestion(io, singleQ);
+    const promise = askUserQuestion(io, "s1", singleQ);
     io.handleLine("do it yourself");
     spy.mockRestore();
     expect(await promise).toBe("do it yourself");
@@ -63,7 +63,7 @@ describe("askUserQuestion", () => {
   test("__STOP__ 打断时返回 null", async () => {
     const io = new StdinIO(false);
     const spy = spyOn(console, "log").mockImplementation(() => {});
-    const promise = askUserQuestion(io, singleQ);
+    const promise = askUserQuestion(io, "s1", singleQ);
     io.handleLine("__STOP__");
     spy.mockRestore();
     expect(await promise).toBe(null);
@@ -72,7 +72,7 @@ describe("askUserQuestion", () => {
   test("带 description 的选项渲染进 items", async () => {
     const io = new StdinIO(false);
     const spy = spyOn(console, "log").mockImplementation(() => {});
-    const promise = askUserQuestion(io, {
+    const promise = askUserQuestion(io, "s1", {
       header: "H",
       question: "Q",
       options: [{ label: "A", description: "the a" }],

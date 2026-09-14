@@ -52,7 +52,7 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
       const answers: Record<string, string> = {};
       let interrupted = false;
       for (const q of (input.questions ?? []) as AskUserQuestionItem[]) {
-        const answer = await askUserQuestion(ctx.io, q);
+        const answer = await askUserQuestion(ctx.io, ctx.ssid, q);
         if (answer === null) {
           interrupted = true;
           break;
@@ -68,7 +68,7 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
       };
     }
 
-    emitToolConfirm("Allow this action? (y/n): ", input);
+    emitToolConfirm(ctx.ssid, "Allow this action? (y/n): ", input);
     const response = await ctx.io.readLineOrStop();
     console.log(`[USER_RESPONSE] ${response}`);
 
@@ -140,7 +140,7 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
             console.log(`SESSION_ID:${sessionId}`);
           }
           if (message.subtype === "api_retry") {
-            emitSystemError(String(message.error));
+            emitSystemError(ctx.ssid, String(message.error));
           }
         }
 
@@ -149,20 +149,20 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
           message.message?.content &&
           message.tool_use_result
         ) {
-          emitToolRet(message.message.content);
+          emitToolRet(ctx.ssid, message.message.content);
         }
 
         if (message.type === "assistant" && message.message?.content) {
           for (const block of message.message.content) {
             if ("text" in block) {
-              emitAIMSG(block.text);
+              emitAIMSG(ctx.ssid, block.text);
             } else if ("name" in block) {
               const input = (block.input ?? {}) as Record<string, any>;
               if (block.name === "TodoWrite") {
                 todos = Array.isArray(input.todos) ? input.todos : [];
-                displayTodoProgress(todos);
+                displayTodoProgress(ctx.ssid, todos);
               } else {
-                emitToolCall({
+                emitToolCall(ctx.ssid, {
                   name: block.name,
                   command: input.command,
                   description: input.description,

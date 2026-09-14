@@ -44,6 +44,7 @@ pub async fn spawn(
         req.addr,
         req.sidecar_type,
     )
+    .await
     .map_err(AppError::BadRequest)?;
     Ok(ApiResponse::ok(serde_json::json!({ "pid": pid })))
 }
