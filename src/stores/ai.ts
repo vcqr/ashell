@@ -48,9 +48,10 @@ function emptySession(ssid: string): AiSession {
 /**
  * 按 ssid 维护 AI 助手会话状态。
  *
- * 一个 SSH 终端会话（ssid）对应一个独立的 sidecar 进程与对话历史；
- * 切换终端 tab 时只是切换显示哪个 ssid 的状态，不重启进程。
- * 仅在 SSH session 真正断开时（终端 status 变为 closed/error）才 kill sidecar。
+ * 一个 SSH 终端会话（ssid）对应一个独立的 AI 会话与对话历史：daemon 化后
+ * 常驻 daemon 进程内按 ssid 多路复用（sidecarPid 语义为宿主侧会话标识）；
+ * 切换终端 tab 时只是切换显示哪个 ssid 的状态，不重建会话。
+ * 仅在 SSH session 真正断开时（终端 status 变为 closed/error）才 kill。
  */
 export const useAiStore = defineStore('ai', () => {
   /** ssid -> session */

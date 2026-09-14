@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { storeToRefs } from "pinia";
 import type { UnlistenFn } from "@/utils/eventBus";
 import { busListen } from "@/utils/eventBus";
@@ -299,9 +299,7 @@ const canSend = computed(
   () =>
     input.value.trim().length > 0 &&
     !isTyping.value &&
-    currentSsid.value !== "" &&
-    currentSession.value?.sidecarPid !== null &&
-    currentSession.value?.sidecarPid !== undefined,
+    currentSsid.value !== "",
 );
 
 function nowStr() {
@@ -398,9 +396,12 @@ async function getApiAddr(): Promise<string> {
 }
 
 /**
- * 确保指定 ssid 的 sidecar 已启动并准备好接收消息。
+ * 确保指定 ssid 的 sidecar 已启动并准备好接收消息（懒启动）。
  * - 已存在且 PID 有效 → 直接返回（保持现有会话历史）
  * - 不存在 → spawn 新进程并 push 欢迎消息
+ *
+ * 只在真正要发消息 / 新对话时调用，切 tab、打开面板都不再预启进程，
+ * 避免浏览过多个终端后每个 tab 都常驻一个 sidecar 实例。
  */
 async function ensureSidecarFor(ssid: string) {
   if (!ssid) return;
@@ -673,6 +674,9 @@ async function sendMessage() {
   const content = input.value.trim();
   const ssid = currentSsid.value;
   if (!content || isTyping.value || !ssid) return;
+
+  // 懒启动：首条消息（或 daemon/进程失效后的下一条消息）在这里拉起 sidecar
+  await ensureSidecarFor(ssid);
   const session = aiStore.sessions[ssid];
   if (!session || session.sidecarPid === null) return;
 
@@ -844,22 +848,8 @@ onMounted(async () => {
     });
   }
 
-  if (currentSsid.value) {
-    await ensureSidecarFor(currentSsid.value);
-  }
-
   phraseStore.load();
 });
-
-// 监听 sid 变化：仅在切到新的 ssid 且尚未 spawn 时启动新 sidecar；
-// 切回旧 ssid 不重启进程，会话历史与状态由 store 保留。
-watch(
-  () => props.sid,
-  async (newSid) => {
-    if (!newSid) return;
-    await ensureSidecarFor(newSid);
-  },
-);
 
 onBeforeUnmount(() => {
   if (unlistenApiMessage) {
