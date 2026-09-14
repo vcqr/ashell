@@ -392,7 +392,10 @@ fn truncate_log(text: &str) -> String {
 
 // ── 帧发送 ──
 
+/// 所有下行帧的唯一出口：统一注入 `v:1`（daemon 按此校验合帧），
+/// 调用方只需组装 type/sid 等业务字段，避免逐处遗漏。
 fn daemon_send(handle: &DaemonHandle, frame: &mut Value) -> Result<(), String> {
+    frame["v"] = json!(1);
     let mut line = frame.to_string();
     line.push('\n');
     let mut w = handle.stdin.lock().map_err(|e| e.to_string())?;
@@ -407,7 +410,6 @@ fn send_with_ack(
     frame: &mut Value,
 ) -> Result<oneshot::Receiver<Result<(), String>>, String> {
     let id = state.handle.next_id.fetch_add(1, Ordering::Relaxed);
-    frame["v"] = json!(1);
     frame["id"] = json!(id);
 
     let (tx, rx) = oneshot::channel();
