@@ -99,7 +99,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 # SSH / SFTP
 russh = "0"
 russh-sftp = "3"
-russh-keys = "0"
 
 # Utilities
 anyhow = "1"
