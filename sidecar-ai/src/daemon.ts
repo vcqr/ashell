@@ -324,7 +324,20 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<void> {
 
   // 挂起直至宿主关闭 stdin（EOF）：daemon 生命周期跟随宿主进程，
   // 由 index.ts 的 main().finally 在本函数返回后统一退出
-  await new Promise<void>((resolve) => process.stdin.once("end", resolve));
+  const eof = new Promise<void>((resolve) => process.stdin.once("end", resolve));
+
+  // 孤儿自愈兜底：宿主异常死亡（不走 kill_all）时进程会被 init 收养
+  // （ppid=1）。EOF 理论上会触发，但任何 fd 泄漏路径都可能让它失效，
+  // 定期检查 ppid 确保孤儿必死。
+  const watchdog = setInterval(() => {
+    if (process.ppid === 1) {
+      console.warn("[DAEMON] host process died (ppid=1), exiting");
+      process.exit(0);
+    }
+  }, 10_000);
+
+  await eof;
+  clearInterval(watchdog);
   if (lineBuffer.trim()) core.handleLine(lineBuffer);
   console.warn("[DAEMON] stdin closed, exiting");
 }

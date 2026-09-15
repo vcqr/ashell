@@ -150,6 +150,22 @@ fn spawn_daemon_unix(binary_path: &Path) -> Result<(Child, Box<dyn Write + Send>
     }
     let (stdin_read, stdin_write) = (stdin_sockets[0], stdin_sockets[1]);
 
+    // 两端都打 CLOEXEC：写端若被本进程后续 spawn 的子进程继承，会替 daemon
+    // 一直持有写端，宿主死后 daemon 永远等不到 EOF（实测出过孤儿进程）。
+    // pre_exec 里 dup2 到 fd 0 会自动清掉 CLOEXEC，不影响子进程 stdin。
+    for fd in [stdin_read, stdin_write] {
+        unsafe {
+            if libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) != 0 {
+                let _ = libc::close(stdin_read);
+                let _ = libc::close(stdin_write);
+                return Err(format!(
+                    "Failed to set FD_CLOEXEC: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+    }
+
     let child = unsafe {
         Command::new(binary_path)
             .arg("--serve")
@@ -159,7 +175,10 @@ fn spawn_daemon_unix(binary_path: &Path) -> Result<(Child, Box<dyn Write + Send>
             .process_group(0)
             .pre_exec(move || {
                 let _ = libc::dup2(stdin_read, 0);
+                // 子进程必须关闭两个 socket 端的自身副本：留有写端副本时，
+                // 宿主死亡不会产生 EOF，daemon 将变成孤儿常驻
                 let _ = libc::close(stdin_read);
+                let _ = libc::close(stdin_write);
                 Ok(())
             })
             .spawn()
