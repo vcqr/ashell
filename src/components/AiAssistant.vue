@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { storeToRefs } from "pinia";
 import type { UnlistenFn } from "@/utils/eventBus";
 import { busListen } from "@/utils/eventBus";
@@ -675,19 +675,26 @@ async function sendMessage() {
   const ssid = currentSsid.value;
   if (!content || isTyping.value || !ssid) return;
 
-  // 懒启动：首条消息（或 daemon/进程失效后的下一条消息）在这里拉起 sidecar
-  await ensureSidecarFor(ssid);
-  const session = aiStore.sessions[ssid];
-  if (!session || session.sidecarPid === null) return;
-
+  // 先入列并展示打字动画：会话懒创建耗时（首建 ~百 ms 级）不再表现为无反馈卡顿
   aiStore.pushMessage(ssid, {
     role: "user",
     content,
     time: nowStr(),
   });
-  input.value = "";
   aiStore.patch(ssid, { isTyping: true });
+  scrollBottom();
 
+  // 懒兜底：面板打开时已预建会话（见下方 watch），这里通常直接命中；
+  // 未预建（如外部路径首发）才真正等待创建
+  await ensureSidecarFor(ssid);
+  const session = aiStore.sessions[ssid];
+  if (!session || session.sidecarPid === null) {
+    aiStore.patch(ssid, { isTyping: false });
+    pushAssistantMessage(ssid, t("ai.startFailed"));
+    return;
+  }
+
+  input.value = "";
   const formattedContent = JSON.stringify(content).trim().slice(1, -1);
   await aiStore.writeTo(ssid, formattedContent + "\n");
   scrollBottom();
@@ -850,6 +857,18 @@ onMounted(async () => {
 
   phraseStore.load();
 });
+
+// 面板打开（或面板开着时切换 tab）即预建会话：daemon 已常驻、引擎模块已预加载，
+// 创建成本约百毫秒级且发生在用户打字期间，发送时零等待。
+// 没打开过面板的 tab 仍然零成本——懒启动的内存收益保留，只是把触发时机
+// 从「发首条消息」提前到「明确打开 AI 面板」这一意图信号。
+watch(
+  () => [props.open, props.sid] as const,
+  async ([open, sid]) => {
+    if (!open || !sid) return;
+    await ensureSidecarFor(sid);
+  },
+);
 
 onBeforeUnmount(() => {
   if (unlistenApiMessage) {

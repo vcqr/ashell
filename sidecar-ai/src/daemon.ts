@@ -326,6 +326,12 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<void> {
   // 由 index.ts 的 main().finally 在本函数返回后统一退出
   const eof = new Promise<void>((resolve) => process.stdin.once("end", resolve));
 
+  // 预热引擎模块：首个 create 免去 SDK 动态加载（实测 ~1.5s），让"打开面板
+  // 预建会话"近乎瞬时。预热失败不致命——create 时会重新加载并如实报错。
+  void Promise.all([import("./engines/claude"), import("./engines/pi")]).catch(
+    (error) => console.warn("[DAEMON] engine preload failed:", error),
+  );
+
   // 孤儿自愈兜底：宿主异常死亡（不走 kill_all）时进程会被 init 收养
   // （ppid=1）。EOF 理论上会触发，但任何 fd 泄漏路径都可能让它失效，
   // 定期检查 ppid 确保孤儿必死。

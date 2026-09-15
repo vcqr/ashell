@@ -18,6 +18,7 @@ export default {
   },
   welcome: "Hi! I'm {name}. How can I help you?",
   stopped: "Response interrupted",
+  startFailed: "Failed to start AI session, please try again",
   toolRetDetail: "View details",
   process: {
     summary: "Execution · {count} tools, last {name}",

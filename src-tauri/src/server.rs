@@ -49,6 +49,9 @@ pub async fn run(opts: ServerOptions) -> anyhow::Result<()> {
     // 1) 初始化配置
     let mut cfg: AppConfig = crate::config::init()?;
 
+    // 1.05) 后台预热 AI daemon：首条 AI 消息不再等待进程 fork 与引擎加载
+    crate::sidecar::prewarm_sidecar_daemon(None);
+
     // 1.1) 内置默认图标按需写入 ~/.ashell/icons/（失败不阻塞）
     if let Err(e) = crate::service::icons::ensure_defaults() {
         log::warn!("ensure default icons: {e}");

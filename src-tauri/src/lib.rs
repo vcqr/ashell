@@ -234,6 +234,9 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // 后台预热 AI daemon：fork + 引擎模块加载不占首条消息的等待时间
+            sidecar::prewarm_sidecar_daemon(Some(app.handle().clone()));
+
             // 自定义应用菜单，使 macOS "关于" 面板显示正确的应用图标
             let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
             let about_metadata = AboutMetadataBuilder::new()

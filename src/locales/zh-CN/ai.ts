@@ -18,6 +18,7 @@ export default {
   },
   welcome: "嗨！我是{name}，有什么需要我帮助的吗？",
   stopped: "已中断本次回复",
+  startFailed: "AI 会话启动失败，请稍后重试",
   toolRetDetail: "查看详情",
   process: {
     summary: "执行过程 · {count} 个工具，最近 {name}",

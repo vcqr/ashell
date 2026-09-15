@@ -80,6 +80,16 @@ pub type AppEventBridge = ();
 
 // ── daemon 进程管理 ──
 
+/// 应用启动时后台预热 daemon（fork + bun 启动 + 引擎模块加载）。
+/// 失败不致命：首次 spawn_sidecar 时 ensure_daemon 会再尝试。
+/// 必须放线程里跑——fork 需要数百毫秒，不能阻塞窗口显示。
+pub fn prewarm_sidecar_daemon(bridge: Option<AppEventBridge>) {
+    std::thread::spawn(move || match ensure_daemon(bridge.as_ref()) {
+        Ok(pid) => tracing::info!("[DAEMON] prewarmed with PID {}", pid),
+        Err(e) => tracing::warn!("[DAEMON] prewarm failed (will retry on first spawn): {}", e),
+    });
+}
+
 /// 懒启动 daemon（已运行则直接返回 pid）。持锁完成 spawn，避免并发双启动。
 fn ensure_daemon(bridge: Option<&AppEventBridge>) -> Result<u32, String> {
     // Web 形态无 Tauri 事件桥，参数仅用于与桌面形态统一签名
