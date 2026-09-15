@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onErrorCaptured } from "vue";
+import { computed, onErrorCaptured, watch } from "vue";
 import {
   NConfigProvider,
   NMessageProvider,
@@ -59,6 +59,22 @@ const terminalStore = useTerminalStore();
 void terminalStore.loadSystemFonts();
 
 const startupStore = useStartupStore();
+
+// AI daemon 预热的开关门控：启动偏好存于 localStorage，只有前端读得到。
+// 开启助手（含启动即开启、设置里后来打开）时才拉起常驻进程；关闭时不预热，
+// 不让不用 AI 的用户白担 ~50MB 常驻。首次 spawn 自带懒拉起兜底，此调用仅影响时机。
+watch(
+  () => startupStore.aiAssistantEnabled,
+  (enabled) => {
+    if (!enabled || !isTauri) return;
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("prewarm_ai_daemon").catch(() => {
+        /* 预热失败不致命：首次 spawn_sidecar 会再尝试 */
+      }),
+    );
+  },
+  { immediate: true },
+);
 
 // 托盘设置：启动即加载（顺带把界面语言同步给托盘菜单）
 const trayStore = useTrayStore();

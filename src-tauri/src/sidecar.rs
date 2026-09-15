@@ -90,6 +90,15 @@ pub fn prewarm_sidecar_daemon(bridge: Option<AppEventBridge>) {
     });
 }
 
+/// 前端在 AI 助手开关开启时触发 daemon 预热（启动偏好存于 localStorage，
+/// 只有前端读得到，故由前端决定是否拉起；关闭时进程不预热）。
+/// 重复调用无害：ensure_daemon 已运行时直接返回。
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub fn prewarm_ai_daemon(app: tauri::AppHandle) {
+    prewarm_sidecar_daemon(Some(app));
+}
+
 /// 懒启动 daemon（已运行则直接返回 pid）。持锁完成 spawn，避免并发双启动。
 fn ensure_daemon(bridge: Option<&AppEventBridge>) -> Result<u32, String> {
     // Web 形态无 Tauri 事件桥，参数仅用于与桌面形态统一签名
