@@ -39,6 +39,7 @@ export default {
     goHome: "Home directory",
     pathPlaceholder: "Enter an absolute local path (Enter to go)",
     empty: "Directory is empty",
+    noMatch: "No matching items",
     loadErrorTitle: "Failed to load directory",
     retry: "Retry",
     toggleButton: "Local",

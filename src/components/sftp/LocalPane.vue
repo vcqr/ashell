@@ -32,6 +32,7 @@ import {
   HomeOutline,
   OpenOutline,
   RefreshOutline,
+  SearchOutline,
   TrashOutline,
   TrashSharp,
 } from "@vicons/ionicons5"
@@ -98,10 +99,17 @@ const viewingRoots = ref(false)
 
 /** 隐藏文件（dotfile）显示开关：默认隐藏，与 Finder/资源管理器一致 */
 const showHidden = ref(false)
+/** 目录名过滤（纯前端过滤当前列表，不发起请求）：与远程栏 filterText 语义一致 */
+const filterText = ref("")
 /** 表格实际渲染的列表（多选基于该列表） */
-const displayFiles = computed(() =>
-  showHidden.value ? files.value : files.value.filter((f) => !f.file_name.startsWith(".")),
-)
+const displayFiles = computed(() => {
+  const base = showHidden.value
+    ? files.value
+    : files.value.filter((f) => !f.file_name.startsWith("."))
+  const q = filterText.value.trim().toLowerCase()
+  if (!q) return base
+  return base.filter((f) => f.file_name.toLowerCase().includes(q))
+})
 const pathEditing = ref(false)
 const pathDraft = ref("")
 const pathInputRef = ref<InputInst | null>(null)
@@ -1230,6 +1238,17 @@ onMounted(() => {
           <NIcon><TrashOutline /></NIcon>
         </template>
       </NButton>
+      <NInput
+        v-model:value="filterText"
+        size="small"
+        clearable
+        :placeholder="t('sftp.filterPlaceholder')"
+        class="filter-input"
+      >
+        <template #prefix>
+          <NIcon :size="14"><SearchOutline /></NIcon>
+        </template>
+      </NInput>
     </div>
 
     <NSpin :show="loading" class="table-wrap" @click="onTableAreaClick">
@@ -1246,7 +1265,7 @@ onMounted(() => {
         </NSpace>
       </div>
       <NDataTable
-        v-else-if="files.length > 0"
+        v-else-if="displayFiles.length > 0"
         size="small"
         remote
         :columns="columns"
@@ -1261,7 +1280,11 @@ onMounted(() => {
       />
       <NEmpty
         v-else
-        :description="t('sftp.localPane.empty')"
+        :description="
+          files.length > 0
+            ? t('sftp.localPane.noMatch')
+            : t('sftp.localPane.empty')
+        "
         style="margin-top: 40px"
       />
     </NSpin>
@@ -1361,6 +1384,13 @@ onMounted(() => {
   width: 1px;
   height: 16px;
   background: var(--ashell-border-soft);
+}
+
+/* 过滤框靠右：基准宽度与远程栏 filter-input 一致，窄面板时可收缩换行 */
+.filter-input {
+  flex: 0 1 170px;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .address-bar {

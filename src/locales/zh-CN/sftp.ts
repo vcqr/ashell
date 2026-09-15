@@ -39,6 +39,7 @@ export default {
     goHome: "主目录",
     pathPlaceholder: "输入本地绝对路径（回车跳转）",
     empty: "目录为空",
+    noMatch: "无匹配项",
     loadErrorTitle: "目录加载失败",
     retry: "重试",
     toggleButton: "本地",
