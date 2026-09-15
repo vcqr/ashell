@@ -217,7 +217,7 @@ fn spawn_daemon_windows(binary_path: &Path) -> Result<(Child, Box<dyn Write + Se
     // CREATE_NO_WINDOW：父进程是 GUI 子系统时阻止子进程弹出 cmd 黑框
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let child = Command::new(binary_path)
+    let mut child = Command::new(binary_path)
         .arg("--serve")
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::piped())
