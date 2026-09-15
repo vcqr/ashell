@@ -37,6 +37,12 @@ static SFTP_SESSION_MAP: Lazy<RwLock<HashMap<String, Arc<SftpSession>>>> =
 static SFTP_ELEVATED_MAP: Lazy<RwLock<HashMap<String, bool>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// sid -> 提权会话可复用的 sudo 密码（仅内存，随会话释放）。
+/// 提权时输入一次即可让后续 shell 类操作（du/压缩/解压）免再次询问；
+/// 还原普通会话或释放会话时清除。NOPASSWD 主机不产生此条目。
+static SUDO_PASSWORD_MAP: Lazy<RwLock<HashMap<String, String>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 /// 远端 sftp-server 二进制路径探测（POSIX sh，BusyBox 兼容）。
 /// 优先 PATH 内 `command -v`，再测各发行版常见固定路径；找不到 exit 3。
 const SFTP_SERVER_DETECT: &str = "p=$(command -v sftp-server 2>/dev/null); \
@@ -517,6 +523,35 @@ impl Session {
             .await
             .map_err(|e| AppError::Ssh(format!("exec: {e}")))?;
 
+        Self::read_channel_result(&mut ch).await
+    }
+
+    /// 以 root 执行命令（sudo 提权）：exec `sudo -S -p '' <command>`，密码
+    /// 先写一行到 stdin（`sudo -S` 从 stdin 读）。`command` 需已由调用方
+    /// 完成整体 shell 引用（通常为 `sh -c <脚本>`）。sudo 验证失败会往
+    /// stderr 写原因并以非零码退出，交由调用方按结果报错。
+    pub async fn execute_sudo(
+        &self,
+        command: &str,
+        password: &str,
+    ) -> AppResult<CommandExecutedResult> {
+        let mut ch = self.channel_open_session().await?;
+        let cmd = format!("sudo -S -p '' {command}");
+        ch.exec(true, cmd.as_str())
+            .await
+            .map_err(|e| AppError::Ssh(format!("exec sudo: {e}")))?;
+        let mut line = password.to_string();
+        line.push('\n');
+        ch.data(line.as_bytes())
+            .await
+            .map_err(|e| AppError::Ssh(format!("send sudo password: {e}")))?;
+        Self::read_channel_result(&mut ch).await
+    }
+
+    /// 读干 channel 直到对端关闭，聚合 stdout/stderr/exit_status
+    async fn read_channel_result(
+        ch: &mut Channel<Msg>,
+    ) -> AppResult<CommandExecutedResult> {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut exit: Option<u32> = None;
@@ -560,6 +595,8 @@ impl Session {
             .await
             .insert(sid.to_string(), arc.clone());
         SFTP_ELEVATED_MAP.write().await.insert(sid.to_string(), false);
+        // 还原普通会话：提权密码缓存一并失效
+        SUDO_PASSWORD_MAP.write().await.remove(sid);
         Ok(arc)
     }
 
@@ -595,7 +632,7 @@ impl Session {
             .unwrap_or(false);
 
         let quoted = format!("'{path}'");
-        match (nopasswd, password.filter(|p| !p.is_empty())) {
+        let result = match (nopasswd, password.filter(|p| !p.is_empty())) {
             (true, _) => self
                 .open_sftp_via(sid, &format!("sudo {quoted}"), None)
                 .await,
@@ -606,7 +643,18 @@ impl Session {
             (false, None) => Err(AppError::BadRequest(
                 "ELEVATE_PASSWORD_REQUIRED".into(),
             )),
+        };
+        // 提权成功：缓存密码供会话内后续 shell 操作（du/压缩/解压）复用，
+        // 免得每个操作都重新询问
+        if result.is_ok() {
+            if let Some(pwd) = password.filter(|p| !p.is_empty()) {
+                SUDO_PASSWORD_MAP
+                    .write()
+                    .await
+                    .insert(sid.to_string(), pwd.to_string());
+            }
         }
+        result
     }
 
     /// exec 一条"最终 exec sftp-server"的命令并完成 SFTP 握手。
@@ -739,6 +787,49 @@ pub async fn get_sftp_elevated(sid: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// SFTP 面板的 shell 类操作（du / 压缩 / 解压）统一入口：按 sid 的 SFTP
+/// 提权状态决定是否以 root 执行。
+///
+/// - 普通会话：以登录用户直接执行。
+/// - 提权会话：优先用缓存的 / 调用方带来的 sudo 密码（`sudo -S sh -c`）；
+///   无密码时先探 NOPASSWD（`sudo -n true`），可免密则 `sudo -n sh -c`，
+///   否则返回 `ELEVATE_PASSWORD_REQUIRED`，由前端弹窗收集后带密码重试。
+pub async fn execute_for_sftp(
+    sid: &str,
+    command: &str,
+    password: Option<&str>,
+) -> AppResult<CommandExecutedResult> {
+    let client = get_client(sid).await?;
+    if !get_sftp_elevated(sid).await {
+        return client.execute(command).await;
+    }
+
+    let wrapped = format!("sh -c {}", sftp_svc::sh_quote(command));
+    if let Some(pwd) = password.filter(|p| !p.is_empty()) {
+        // 输入过的密码留给本次会话后续操作复用（提权语义：问一次就够）
+        SUDO_PASSWORD_MAP
+            .write()
+            .await
+            .insert(sid.to_string(), pwd.to_string());
+        return client.execute_sudo(&wrapped, pwd).await;
+    }
+    // 克隆后立刻放锁：execute_sudo 可能耗时很长，不能跨 await 持读锁
+    let cached = SUDO_PASSWORD_MAP.read().await.get(sid).cloned();
+    if let Some(pwd) = cached {
+        return client.execute_sudo(&wrapped, &pwd).await;
+    }
+    let nopasswd = client
+        .execute("sudo -n true 2>/dev/null")
+        .await
+        .map(|r| r.exit_status == 0)
+        .unwrap_or(false);
+    if nopasswd {
+        client.execute(&format!("sudo -n {wrapped}")).await
+    } else {
+        Err(AppError::BadRequest("ELEVATE_PASSWORD_REQUIRED".into()))
+    }
+}
+
 /// 注册终端会话的命令注入与输出广播通道
 pub async fn set_terminal_channels(
     sid: &str,
@@ -789,6 +880,7 @@ pub async fn remove(sid: &str) {
     let sftp = SFTP_SESSION_MAP.write().await.remove(sid);
     drop(sftp);
     SFTP_ELEVATED_MAP.write().await.remove(sid);
+    SUDO_PASSWORD_MAP.write().await.remove(sid);
     if let Some(sess) = SSH_CLIENT_MAP.write().await.remove(sid) {
         sess.disconnect().await;
     }

@@ -433,10 +433,10 @@ pub async fn set_attrs(
 
 /// 计算目录/文件占用大小（du -sk，POSIX/BusyBox 兼容），返回字节数。
 /// 子目录部分不可读时 du 仍输出已统计部分（exit != 0），按 stdout 解析。
-pub async fn du_size(sid: &str, path: &str) -> AppResult<u64> {
-    let client = ssh_svc::get_client(sid).await?;
-    let cmd = format!("du -sk '{}' 2>/dev/null", path.replace('\'', "'\\''"));
-    let res = client.execute(&cmd).await?;
+/// 提权会话下以 root 执行（execute_for_sftp 统一处理，下同）。
+pub async fn du_size(sid: &str, path: &str, password: Option<&str>) -> AppResult<u64> {
+    let cmd = format!("du -sk {} 2>/dev/null", sh_quote(path));
+    let res = ssh_svc::execute_for_sftp(sid, &cmd, password).await?;
     let first = res.stdout.lines().next().unwrap_or("");
     let kb: u64 = first
         .split_whitespace()
@@ -444,4 +444,115 @@ pub async fn du_size(sid: &str, path: &str) -> AppResult<u64> {
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| AppError::Sftp(format!("du 解析失败: {}", res.stderr.trim())))?;
     Ok(kb * 1024)
+}
+
+/// 远端 shell 单引号转义（防路径中的特殊字符逃逸命令），ssh.rs 的提权
+/// 包装也会用到
+pub(crate) fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// 压缩包识别：返回匹配到的（后缀, tar 解压压缩字母）；zip 用 "zip" 特殊标记。
+/// tar 字母拼进 -x{字母}f；长后缀在前，避免 .tar 抢先匹配 .tar.gz。
+fn detect_archive(name: &str) -> Option<(&'static str, &'static str)> {
+    const RULES: &[(&str, &str)] = &[
+        (".tar.gz", "z"),
+        (".tgz", "z"),
+        (".tar.bz2", "j"),
+        (".tbz2", "j"),
+        (".tbz", "j"),
+        (".tar.xz", "J"),
+        (".txz", "J"),
+        (".tar", ""),
+        (".zip", "zip"),
+    ];
+    let lower = name.to_lowercase();
+    RULES.iter().find(|(s, _)| lower.ends_with(s)).copied()
+}
+
+/// 远端压缩：把 dir 下的 names 打包为 dir/archive_name（.tar.gz）。
+/// 以 dir 为工作目录打包，压缩包内成员为相对路径；archive_name 由前端
+/// 保证不重名（tar 会静默覆盖已有文件）。提权会话下以 root 执行。
+pub async fn compress(
+    sid: &str,
+    dir: &str,
+    names: &[String],
+    archive_name: &str,
+    password: Option<&str>,
+) -> AppResult<String> {
+    if names.is_empty() {
+        return Err(AppError::BadRequest("没有可压缩的条目".into()));
+    }
+    let items = names.iter().map(|n| sh_quote(n)).collect::<Vec<_>>().join(" ");
+    let cmd = format!(
+        "cd {} && tar -czf {} -- {}",
+        sh_quote(dir),
+        sh_quote(archive_name),
+        items
+    );
+    let res = ssh_svc::execute_for_sftp(sid, &cmd, password).await?;
+    if res.exit_status != 0 {
+        return Err(AppError::Sftp(format!("压缩失败: {}", res.stderr.trim())));
+    }
+    Ok(join_path(dir, archive_name))
+}
+
+/// 远端解压：支持 tar 家族（gz/bz2/xz/裸 tar）与 zip（unzip，缺则回退
+/// python3 -m zipfile）。解到压缩包同目录下去扩展名命名的子目录；目录
+/// 已存在时自动追加 -2、-3…，返回实际解压目录名。提权会话下以 root 执行。
+pub async fn extract(sid: &str, path: &str, password: Option<&str>) -> AppResult<String> {
+    let trimmed = path.trim_end_matches('/');
+    let slash = trimmed
+        .rfind('/')
+        .ok_or_else(|| AppError::BadRequest("无效路径".into()))?;
+    let (parent, name) = trimmed.split_at(slash);
+    let parent = if parent.is_empty() { "/" } else { parent };
+    let name = &name[1..];
+    if name.is_empty() {
+        return Err(AppError::BadRequest("无效路径".into()));
+    }
+    let Some((suffix, kind)) = detect_archive(name) else {
+        return Err(AppError::BadRequest(
+            "不支持的压缩格式（支持 tar/tar.gz/tgz/tar.bz2/tbz2/tar.xz/txz/zip）".into(),
+        ));
+    };
+    let inner = &name[..name.len() - suffix.len()];
+
+    // 目标目录去重循环放在远端执行，避免目录名竞争与来回确认
+    let head = format!(
+        "cd {p} && base={b} && dest=\"$base\" && n=2 && \
+         while [ -e \"$dest\" ]; do dest=\"$base-$n\"; n=$((n+1)); done && mkdir \"$dest\"",
+        p = sh_quote(parent),
+        b = sh_quote(inner),
+    );
+    let body = if kind == "zip" {
+        format!(
+            "if command -v unzip >/dev/null 2>&1; then \
+               unzip -q {a} -d \"$dest\"; \
+             elif command -v python3 >/dev/null 2>&1; then \
+               python3 -m zipfile -e {a} \"$dest\"; \
+             else \
+               echo '远端缺少 unzip 且无 python3，无法解压 zip' >&2; exit 23; \
+             fi",
+            a = sh_quote(name),
+        )
+    } else {
+        format!("tar -x{kind}f {a} -C \"$dest\"", a = sh_quote(name),)
+    };
+    let script = format!("{head} && ({body}) || exit 22; printf '%s' \"$dest\"");
+
+    let res = ssh_svc::execute_for_sftp(sid, &script, password).await?;
+    if res.exit_status != 0 {
+        let detail = res.stderr.trim();
+        return Err(AppError::Sftp(if detail.is_empty() {
+            format!("解压失败（exit {}）", res.exit_status)
+        } else {
+            format!("解压失败: {detail}")
+        }));
+    }
+    let dest = res.stdout.trim();
+    if dest.is_empty() {
+        return Err(AppError::Sftp("解压结果异常：未返回目录名".into()));
+    }
+    Ok(dest.to_string())
 }

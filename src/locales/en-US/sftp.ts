@@ -82,6 +82,7 @@ export default {
     noHost: "Associated host info is missing; cannot elevate",
     passwordTitle: "Sudo password required",
     passwordPlaceholder: "Enter the sudo password of the remote user",
+    sudoPrompt: "This operation needs the sudo password in the elevated (root) session",
   },
   transferBar: {
     up: "Upload the selected local file(s)/folder(s) to the current remote directory",
@@ -117,6 +118,9 @@ export default {
     properties: "Properties",
     openTerminalHere: "Open terminal here",
     calcSize: "Calculate directory size",
+    compress: "Compress",
+    compressMulti: "Compress selected ({count})",
+    extract: "Extract",
   },
   newMenu: {
     newFolder: "New folder",
@@ -192,6 +196,10 @@ export default {
     pastePartial: "Partially pasted: {ok} succeeded, {fail} failed",
     dirSize: "{name} uses {size}",
     dirSizeFailed: "Failed to calculate size: {error}",
+    archived: "Archive created: {name}",
+    archiveFailed: "Compression failed: {error}",
+    extracted: "Extracted to {dest}",
+    extractFailed: "Extraction failed: {error}",
   },
   dialog: {
     deleteTitle: "Confirm delete",

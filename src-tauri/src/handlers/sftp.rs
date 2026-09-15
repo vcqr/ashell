@@ -9,6 +9,8 @@
 //! - POST /api/ssh/sftp/rename                重命名                { sid, old_path, new_path }
 //! - POST /api/ssh/sftp/chmod                 修改属性/属主(setstat) { sid, path, mode?, user?, group? }
 //! - POST /api/ssh/sftp/du                    目录大小(du -sk)      { sid, path } -> { bytes }
+//! - POST /api/ssh/sftp/compress              压缩为 .tar.gz        { sid, dir, names, archive_name } -> { archive }
+//! - POST /api/ssh/sftp/extract               解压(tar/zip)         { sid, path } -> { dest }
 //! - GET  /api/ssh/sftp/download              下载文件流            ?sid=&filename=
 //! - POST /api/ssh/sftp/upload                上传文件流(multipart) ?sid=&filename=
 //! - POST /api/ssh/sftp/close                 释放 sid 关联会话     { sid }
@@ -282,6 +284,8 @@ pub async fn chmod(
 pub struct DuReq {
     pub sid: String,
     pub path: String,
+    /// 提权会话且 sudo 非免密时由前端弹窗收集后重试带上
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -291,13 +295,70 @@ pub struct DuResp {
 
 /// 计算目录/文件占用大小（远端 du -sk）
 pub async fn du(Json(req): Json<DuReq>) -> AppResult<Json<ApiResponse<DuResp>>> {
-    let bytes = sftp_svc::du_size(&req.sid, &req.path).await?;
+    let bytes = sftp_svc::du_size(&req.sid, &req.path, req.password.as_deref()).await?;
     Ok(ApiResponse::ok(DuResp { bytes }))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CloseReq {
     pub sid: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompressReq {
+    pub sid: String,
+    /// 工作目录：既是打包条目所在目录，也是压缩包的落盘目录
+    pub dir: String,
+    /// 打包条目名（相对 dir）
+    pub names: Vec<String>,
+    /// 压缩包文件名（不含目录；前端保证不重名，tar 会静默覆盖）
+    pub archive_name: String,
+    /// 提权会话且 sudo 非免密时由前端弹窗收集后重试带上
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompressResp {
+    /// 压缩包完整路径
+    pub archive: String,
+}
+
+/// 远端压缩为 .tar.gz（cd dir && tar -czf，条目以相对名入包）
+pub async fn compress(
+    Json(req): Json<CompressReq>,
+) -> AppResult<Json<ApiResponse<CompressResp>>> {
+    let archive = sftp_svc::compress(
+        &req.sid,
+        &req.dir,
+        &req.names,
+        &req.archive_name,
+        req.password.as_deref(),
+    )
+    .await?;
+    Ok(ApiResponse::ok(CompressResp { archive }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExtractReq {
+    pub sid: String,
+    /// 压缩包完整路径
+    pub path: String,
+    /// 提权会话且 sudo 非免密时由前端弹窗收集后重试带上
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExtractResp {
+    /// 实际解压目录名（可能带 -2/-3 去重后缀）
+    pub dest: String,
+}
+
+/// 远端解压（tar 家族 / zip），解到压缩包同目录下的子目录
+pub async fn extract(
+    Json(req): Json<ExtractReq>,
+) -> AppResult<Json<ApiResponse<ExtractResp>>> {
+    let dest = sftp_svc::extract(&req.sid, &req.path, req.password.as_deref()).await?;
+    Ok(ApiResponse::ok(ExtractResp { dest }))
 }
 
 pub async fn close(

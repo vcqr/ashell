@@ -78,6 +78,7 @@ export default {
     noHost: "缺少关联主机信息，无法提权",
     passwordTitle: "需要 sudo 密码",
     passwordPlaceholder: "输入远端当前用户的 sudo 密码",
+    sudoPrompt: "提权 (root) 会话下执行此操作需要 sudo 密码",
   },
   transferBar: {
     up: "上传选中的本地文件/目录到远程当前目录",
@@ -113,6 +114,9 @@ export default {
     properties: "属性",
     openTerminalHere: "在此打开终端",
     calcSize: "计算目录大小",
+    compress: "压缩",
+    compressMulti: "压缩选中项（{count}）",
+    extract: "解压",
   },
   newMenu: {
     newFolder: "新建文件夹",
@@ -185,6 +189,10 @@ export default {
     pastePartial: "部分粘贴成功：成功 {ok} 个，失败 {fail} 个",
     dirSize: "{name} 占用 {size}",
     dirSizeFailed: "计算大小失败：{error}",
+    archived: "已创建压缩包：{name}",
+    archiveFailed: "压缩失败：{error}",
+    extracted: "已解压到 {dest}",
+    extractFailed: "解压失败：{error}",
   },
   dialog: {
     deleteTitle: "确认删除",

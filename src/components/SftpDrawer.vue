@@ -27,6 +27,7 @@ import type {
   UploadCustomRequestOptions,
 } from "naive-ui"
 import {
+  ArchiveOutline,
   ArrowUpOutline,
   BookmarksOutline,
   ChevronBackOutline,
@@ -57,10 +58,12 @@ import {
   TrashOutline,
 } from "@vicons/ionicons5"
 import {
+  compressSftp as compressApi,
   downloadStream,
   duplicate as duplicateApi,
   duSize,
   elevateSftp,
+  extractSftp as extractApi,
   isAbortError,
   listSftp,
   mkdir as mkdirApi,
@@ -444,42 +447,58 @@ function toggleElevate() {
   void setElevated(!elevated.value)
 }
 
-/** 弹窗收集 sudo 密码后带密码重试（主机密码不可用 / 密码错误） */
-function askSudoPassword(next: boolean, errMsg: string) {
+/** 弹窗收集 sudo 密码：确认 resolve 密码，取消/关闭 resolve null */
+function promptSudoPassword(errMsg: string): Promise<string | null> {
   sudoPasswordInput.value = ""
-  dialog.warning({
-    title: t("sftp.elevate.passwordTitle"),
-    content: () =>
-      h("div", { class: "sudo-pwd-dialog" }, [
-        h(
-          "p",
-          {
-            class: "sudo-pwd-err",
-            style: {
-              margin: "0 0 8px",
-              fontSize: "12px",
-              color: "var(--ashell-text-3, #999)",
-              wordBreak: "break-all",
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (v: string | null) => {
+      if (settled) return
+      settled = true
+      resolve(v)
+    }
+    dialog.warning({
+      title: t("sftp.elevate.passwordTitle"),
+      content: () =>
+        h("div", { class: "sudo-pwd-dialog" }, [
+          h(
+            "p",
+            {
+              class: "sudo-pwd-err",
+              style: {
+                margin: "0 0 8px",
+                fontSize: "12px",
+                color: "var(--ashell-text-3, #999)",
+                wordBreak: "break-all",
+              },
             },
-          },
-          errMsg,
-        ),
-        h(NInput, {
-          value: sudoPasswordInput.value,
-          "onUpdate:value": (v: string) => (sudoPasswordInput.value = v),
-          type: "password",
-          showPasswordOn: "click",
-          placeholder: t("sftp.elevate.passwordPlaceholder"),
-          autofocus: true,
-        }),
-      ]),
-    positiveText: t("common.confirm"),
-    negativeText: t("common.cancel"),
-    onPositiveClick: () => {
-      if (!sudoPasswordInput.value) return false
-      void setElevated(next, sudoPasswordInput.value)
-    },
+            errMsg,
+          ),
+          h(NInput, {
+            value: sudoPasswordInput.value,
+            "onUpdate:value": (v: string) => (sudoPasswordInput.value = v),
+            type: "password",
+            showPasswordOn: "click",
+            placeholder: t("sftp.elevate.passwordPlaceholder"),
+            autofocus: true,
+          }),
+        ]),
+      positiveText: t("common.confirm"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => {
+        if (!sudoPasswordInput.value) return false
+        done(sudoPasswordInput.value)
+      },
+      onNegativeClick: () => done(null),
+      onClose: () => done(null),
+    })
   })
+}
+
+/** 提权 / 还原流程弹窗：收集 sudo 密码后带密码重试 */
+async function askSudoPassword(next: boolean, errMsg: string) {
+  const pwd = await promptSudoPassword(errMsg)
+  if (pwd) void setElevated(next, pwd)
 }
 
 /* ---------- data loading ---------- */
@@ -2327,6 +2346,88 @@ function onBlankContextMenu(e: MouseEvent) {
   openCtxMenu(e, null)
 }
 
+/* ---------- 压缩 / 解压 ---------- */
+
+/** 后端支持的压缩包后缀（与 service::sftp::detect_archive 保持一致） */
+const ARCHIVE_RE = /\.(?:tar\.gz|tgz|tar\.bz2|tbz2|tbz|tar\.xz|txz|tar|zip)$/i
+
+function isArchiveName(name: string): boolean {
+  return ARCHIVE_RE.test(name)
+}
+
+/** 生成不重名的压缩包名：单条目取其名（压缩包再去一层后缀），多条目取
+ *  当前目录名；重名时追加 -2、-3…（与后端解压目录去重风格一致） */
+function uniqueArchiveName(items: SftpFile[]): string {
+  let base: string
+  if (items.length === 1) {
+    base = items[0]!.file_name.replace(ARCHIVE_RE, "")
+  } else {
+    base = currentPath.value.split("/").filter(Boolean).pop() || "archive"
+  }
+  const names = new Set(files.value.map((f) => f.file_name.toLowerCase()))
+  let name = `${base}.tar.gz`
+  for (let n = 2; names.has(name.toLowerCase()); n++) {
+    name = `${base}-${n}.tar.gz`
+  }
+  return name
+}
+
+/** 提权会话下的 shell 类操作（压缩/解压/du）统一重试入口：后端要求
+ *  sudo 密码（ELEVATE_PASSWORD_REQUIRED）时弹窗收集后带密码重试一次；
+ *  其余错误直接报 toast。成功返回结果，失败/取消返回 null。 */
+async function runShellOp<T>(
+  op: (password?: string) => Promise<T>,
+  failKey: string,
+): Promise<T | null> {
+  try {
+    return await op()
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e)
+    if (!/ELEVATE_PASSWORD_REQUIRED/.test(msg)) {
+      message.error(t(failKey, { error: msg }))
+      return null
+    }
+    const pwd = await promptSudoPassword(t("sftp.elevate.sudoPrompt"))
+    if (!pwd) return null
+    try {
+      return await op(pwd)
+    } catch (e2) {
+      const msg2 = (e2 as Error)?.message ?? String(e2)
+      message.error(t(failKey, { error: msg2 }))
+      return null
+    }
+  }
+}
+
+/** 压缩选中项（多选时作用于整个选择集）为 .tar.gz */
+async function compressSelection(target: SftpFile) {
+  if (!props.sid) return
+  const items =
+    remoteSelectedFiles.value.length > 1 ? remoteSelectedFiles.value : [target]
+  const archiveName = uniqueArchiveName(items)
+  const names = items.map((f) => f.file_name)
+  const ok = await runShellOp(
+    (password) =>
+      compressApi(props.sid!, currentPath.value, names, archiveName, password),
+    "sftp.message.archiveFailed",
+  )
+  if (!ok) return
+  message.success(t("sftp.message.archived", { name: archiveName }))
+  refresh()
+}
+
+/** 解压压缩包到同目录子目录（后端自动去重命名） */
+async function extractArchive(file: SftpFile) {
+  if (!props.sid) return
+  const ok = await runShellOp(
+    (password) => extractApi(props.sid!, file.full_path, password),
+    "sftp.message.extractFailed",
+  )
+  if (!ok) return
+  message.success(t("sftp.message.extracted", { dest: ok.dest }))
+  refresh()
+}
+
 const ctxMenuOptions = computed(() => {
   const target = ctxMenuTarget.value
   if (!target) {
@@ -2414,6 +2515,22 @@ const ctxMenuOptions = computed(() => {
       icon: () => h(NIcon, null, { default: () => h(StatsChartOutline) }),
     })
   }
+  // 压缩（任意文件/目录行）；解压（压缩包文件行）
+  opts.push({
+    label:
+      selCount > 1
+        ? t("sftp.ctxMenu.compressMulti", { count: selCount })
+        : t("sftp.ctxMenu.compress"),
+    key: "compress",
+    icon: () => h(NIcon, null, { default: () => h(ArchiveOutline) }),
+  })
+  if (target.file_type === "file" && isArchiveName(target.file_name)) {
+    opts.push({
+      label: t("sftp.ctxMenu.extract"),
+      key: "extract",
+      icon: () => h(NIcon, null, { default: () => h(ArchiveOutline) }),
+    })
+  }
   opts.push({
     label:
       selCount > 1
@@ -2466,25 +2583,26 @@ function showProps(file: SftpFile) {
   propsOpen.value = true
 }
 
-/** 目录大小：du 统计后回填该行 size 列并提示 */
+/** 目录大小：du 统计后回填该行 size 列并提示（提权会话下以 root 执行） */
 async function calcDirSize(file: SftpFile) {
   if (!props.sid) return
-  try {
-    const { bytes } = await duSize(props.sid, file.full_path)
-    const i = files.value.findIndex((f) => f.full_path === file.full_path)
-    if (i >= 0 && files.value[i]) {
-      files.value[i] = {
-        ...files.value[i]!,
-        size: humanSize(bytes),
-        size_bytes: bytes,
-      }
+  const ok = await runShellOp(
+    (password) => duSize(props.sid!, file.full_path, password),
+    "sftp.message.dirSizeFailed",
+  )
+  if (!ok) return
+  const { bytes } = ok
+  const i = files.value.findIndex((f) => f.full_path === file.full_path)
+  if (i >= 0 && files.value[i]) {
+    files.value[i] = {
+      ...files.value[i]!,
+      size: humanSize(bytes),
+      size_bytes: bytes,
     }
-    message.success(
-      t("sftp.message.dirSize", { name: file.file_name, size: humanSize(bytes) }),
-    )
-  } catch (e) {
-    message.error(t("sftp.message.dirSizeFailed", { error: (e as Error).message }))
   }
+  message.success(
+    t("sftp.message.dirSize", { name: file.file_name, size: humanSize(bytes) }),
+  )
 }
 
 async function copyPath(file: SftpFile) {
@@ -2525,6 +2643,8 @@ function onCtxMenuSelect(key: string | number) {
   else if (key === "clipboard-cut") setRemoteClipboard("cut")
   else if (key === "terminal-here") emit("open-terminal-here", target.full_path)
   else if (key === "calc-size") void calcDirSize(target)
+  else if (key === "compress") void compressSelection(target)
+  else if (key === "extract") void extractArchive(target)
   else if (key === "rename") openRename(target)
   else if (key === "remove") confirmRemove(target)
   else if (key === "copy-path") void copyPath(target)

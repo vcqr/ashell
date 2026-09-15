@@ -160,11 +160,51 @@ export function setAttrs(
   })
 }
 
-/** 计算目录/文件占用大小（远端 du -sk），返回字节数 */
-export function duSize(sid: string, path: string): Promise<{ bytes: number }> {
+/** 计算目录/文件占用大小（远端 du -sk），返回字节数。
+ *  提权会话下后端可能返回 ELEVATE_PASSWORD_REQUIRED，需带 password 重试 */
+export function duSize(
+  sid: string,
+  path: string,
+  password?: string,
+): Promise<{ bytes: number }> {
   return request<{ bytes: number }>("/api/ssh/sftp/du", {
     method: "POST",
-    json: { sid, path },
+    json: { sid, path, password: password ?? null },
+    timeout: 0,
+  })
+}
+
+/** 远端压缩：把 dir 下的 names 打包为 dir 内的 archive_name（.tar.gz）。
+ *  大目录打包耗时随体积增长，关闭 axios 默认 30s 超时 */
+export function compressSftp(
+  sid: string,
+  dir: string,
+  names: string[],
+  archiveName: string,
+  password?: string,
+): Promise<{ archive: string }> {
+  return request<{ archive: string }>("/api/ssh/sftp/compress", {
+    method: "POST",
+    json: {
+      sid,
+      dir,
+      names,
+      archive_name: archiveName,
+      password: password ?? null,
+    },
+    timeout: 0,
+  })
+}
+
+/** 远端解压（tar 家族 / zip），解到压缩包同目录的子目录，返回解压目录名 */
+export function extractSftp(
+  sid: string,
+  path: string,
+  password?: string,
+): Promise<{ dest: string }> {
+  return request<{ dest: string }>("/api/ssh/sftp/extract", {
+    method: "POST",
+    json: { sid, path, password: password ?? null },
     timeout: 0,
   })
 }
