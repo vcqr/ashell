@@ -28,6 +28,8 @@ export default {
     collapseAll: "收起所有目录",
     pin: "固定到左侧",
     unpin: "取消固定",
+    hostCount: "{count} 台主机",
+    clearFilter: "清除筛选",
   },
   ctxMenu: {
     newSubFolder: "新建子目录",
@@ -38,6 +40,7 @@ export default {
     newSession: "新建会话",
     edit: "编辑",
     copy: "复制",
+    copyConn: "复制连接串",
   },
   message: {
     backendNotReady: "后端未就绪: {error}",
@@ -58,6 +61,7 @@ export default {
     copiedName: "{name} 副本",
     copied: "已复制（凭证未复制）",
     copyFailed: "复制失败: {error}",
+    connCopied: "已复制 {text}",
     deleteFolderConfirm: '删除目录 "{name}" 及其全部子目录与连接？',
     deleteHostConfirm: '删除连接 "{name}"？',
     deleteTitle: "确认删除",

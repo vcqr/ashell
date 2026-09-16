@@ -28,6 +28,8 @@ export default {
     collapseAll: "Collapse all folders",
     pin: "Pin to left",
     unpin: "Unpin",
+    hostCount: "{count} hosts",
+    clearFilter: "Clear filter",
   },
   ctxMenu: {
     newSubFolder: "New subfolder",
@@ -38,6 +40,7 @@ export default {
     newSession: "New session",
     edit: "Edit",
     copy: "Copy",
+    copyConn: "Copy connection string",
   },
   message: {
     backendNotReady: "Backend not ready: {error}",
@@ -58,6 +61,7 @@ export default {
     copiedName: "{name} copy",
     copied: "Copied (credentials not copied)",
     copyFailed: "Copy failed: {error}",
+    connCopied: "Copied {text}",
     deleteFolderConfirm: 'Delete folder "{name}" and all its subfolders and connections?',
     deleteHostConfirm: 'Delete connection "{name}"?',
     deleteTitle: "Confirm delete",

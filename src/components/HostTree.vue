@@ -36,6 +36,7 @@ import {
   ListOutline,
   ExpandOutline,
   ContractOutline,
+  LinkOutline,
 } from "@vicons/ionicons5"
 import { Folder, FolderOpen } from "@vicons/fa"
 import { FolderAddOutlined, PushpinFilled, PushpinOutlined } from "@vicons/antd"
@@ -43,6 +44,7 @@ import { useI18n } from "vue-i18n"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
 import { useHostsPin } from "@/composables/useHostsPin"
+import { copyText } from "@/utils/clipboard"
 import SshConfigImportModal from "@/components/SshConfigImportModal.vue"
 import type { HostNode, Host } from "@/types"
 
@@ -64,6 +66,7 @@ const selectedKeys = ref<string[]>([])
 const expandedKeys = ref<string[]>([])
 const importModalShow = ref(false)
 const hostsPinned = useHostsPin()
+const searchInputRef = ref<InstanceType<typeof NInput> | null>(null)
 
 onMounted(() => {
   void iconStore.ensureLoaded()
@@ -101,6 +104,25 @@ const displayData = computed<TreeOption[]>(() =>
   flatMode.value ? flatTreeData.value : treeData.value,
 )
 
+/* ---------- 目录内主机总数（含子目录，tooltip 用） ---------- */
+const hostCountInFolder = computed(() => {
+  const map = new Map<string, number>()
+  const walk = (list: HostNode[]): number => {
+    let count = 0
+    for (const n of list) {
+      if (n.type === "host") count++
+      else if (n.children) {
+        const sub = walk(n.children)
+        map.set(n.key, sub)
+        count += sub
+      }
+    }
+    return count
+  }
+  walk(store.tree)
+  return map
+})
+
 /* ---------- 展开 / 收起所有目录 ---------- */
 function collectFolderKeys(list: HostNode[], out: string[] = []): string[] {
   for (const n of list) {
@@ -118,14 +140,24 @@ const allExpanded = computed(() => {
   return folderKeys.every((k) => expandedKeys.value.includes(k))
 })
 
-// 与 NTree 默认 filter 同口径（label 不区分大小写包含），驱动"无匹配"空态
+// 搜索口径：名称 + 主机地址。NTree filter 与"无匹配"计数共用同一判定，
+// 保证空态提示和实际过滤结果一致
+function nodeMatchesPattern(node: HostNode, q: string): boolean {
+  if (!q) return true
+  if (node.label.toLowerCase().includes(q)) return true
+  return node.type === "host" && !!node.host && node.host.toLowerCase().includes(q)
+}
+
+const treeFilter = (pattern: string, option: TreeOption): boolean =>
+  nodeMatchesPattern(option as unknown as HostNode, pattern.toLowerCase())
+
 const matchCount = computed(() => {
   const q = filter.value.toLowerCase()
   if (!q) return -1
   let n = 0
   const walk = (list: TreeOption[]) => {
     for (const o of list) {
-      if (String(o.label ?? "").toLowerCase().includes(q)) n++
+      if (nodeMatchesPattern(o as unknown as HostNode, q)) n++
       if (o.children) walk(o.children)
     }
   }
@@ -185,6 +217,82 @@ function renderPrefix({ option }: { option: TreeOption }) {
   )
 }
 
+function buildNodeTipLines(node: HostNode): string[] {
+  if (node.type === "folder") {
+    const count = hostCountInFolder.value.get(node.key) ?? 0
+    return count > 0 ? [t("hosts.tree.hostCount", { count })] : []
+  }
+  const lines: string[] = []
+  const addr = node.host ?? ""
+  if (node.protocol === "serial") {
+    if (addr) lines.push(addr)
+    lines.push(t("hosts.form.protocolSerial"))
+  } else if (addr) {
+    lines.push(
+      node.username
+        ? `${node.username}@${addr}:${node.port ?? "22"}`
+        : `${addr}:${node.port ?? "22"}`,
+    )
+    if (node.protocol && node.protocol !== "ssh") lines.push(node.protocol.toUpperCase())
+  }
+  if (node.desc) lines.push(node.desc)
+  return lines
+}
+
+/** 按当前搜索词切分 label,命中的子串单独成段(大小写不敏感,与 NTree pattern 同口径) */
+function splitHighlightSegments(label: string): Array<{ text: string; hit: boolean }> {
+  const q = filter.value.toLowerCase()
+  if (!q) return [{ text: label, hit: false }]
+  const lower = label.toLowerCase()
+  const segs: Array<{ text: string; hit: boolean }> = []
+  let i = 0
+  while (i < label.length) {
+    const idx = lower.indexOf(q, i)
+    if (idx === -1) {
+      segs.push({ text: label.slice(i), hit: false })
+      break
+    }
+    if (idx > i) segs.push({ text: label.slice(i, idx), hit: false })
+    segs.push({ text: label.slice(idx, idx + q.length), hit: true })
+    i = idx + q.length
+  }
+  return segs.length > 0 ? segs : [{ text: label, hit: false }]
+}
+
+function renderLabel({ option }: { option: TreeOption }) {
+  const node = option as unknown as HostNode
+  const label = String(node.label ?? "")
+  const lines = buildNodeTipLines(node)
+  const segments = splitHighlightSegments(label)
+  const hasHit = segments.some((s) => s.hit)
+  // 无附加信息（空目录等）不包 Tooltip，避免悬停噪音；拖拽中同理（读 dragGhost 注册依赖，
+  // 拖起/落下时标签重渲染，避免拖动途中 Tooltip 跟着鼠标闪现）
+  const showTip = lines.length > 0 && !dragGhost.value
+  const trigger = () =>
+    hasHit
+      ? h(
+          "span",
+          { class: "node-label" },
+          segments.map((s) =>
+            s.hit ? h("span", { class: "node-label-hit" }, s.text) : s.text,
+          ),
+        )
+      : h("span", { class: "node-label" }, label)
+  if (!showTip) return trigger()
+  return h(
+    NTooltip,
+    { placement: "right", delay: 350, style: "max-width: 360px" },
+    {
+      trigger,
+      default: () =>
+        h("div", { class: "node-tip" }, [
+          h("div", { class: "node-tip-name" }, label),
+          ...lines.map((line) => h("div", { class: "node-tip-line" }, line)),
+        ]),
+    },
+  )
+}
+
 function findParentAndIndex(
   list: HostNode[],
   key: string,
@@ -238,15 +346,21 @@ const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuKey = ref<string | null>(null)
 
+/** 在指定坐标弹出上下文菜单（key=null 表示空白处根级菜单） */
+function showCtxMenu(key: string | null, x: number, y: number) {
+  ctxMenuKey.value = key
+  ctxMenuX.value = x
+  ctxMenuY.value = y
+  // 关-开一帧，让 NDropdown 在坐标变化时重新定位
+  ctxMenuShow.value = false
+  requestAnimationFrame(() => (ctxMenuShow.value = true))
+}
+
 /** 空白处右键：弹出根级操作菜单（新建连接 / 新建目录 / 导入 / 刷新） */
 function onBlankContextMenu(e: MouseEvent) {
   e.preventDefault()
   e.stopPropagation()
-  ctxMenuKey.value = null
-  ctxMenuX.value = e.clientX
-  ctxMenuY.value = e.clientY
-  ctxMenuShow.value = false
-  requestAnimationFrame(() => (ctxMenuShow.value = true))
+  showCtxMenu(null, e.clientX, e.clientY)
 }
 
 /* ---------- 拖拽（pointer events，wry 稳定） ---------- */
@@ -406,17 +520,26 @@ function nodeProps({ option }: { option: TreeOption }) {
     onContextmenu(e: MouseEvent) {
       e.preventDefault()
       e.stopPropagation()
-      ctxMenuKey.value = key
-      ctxMenuX.value = e.clientX
-      ctxMenuY.value = e.clientY
-      ctxMenuShow.value = false
-      requestAnimationFrame(() => (ctxMenuShow.value = true))
+      showCtxMenu(key, e.clientX, e.clientY)
     },
     onDblclick() {
       const node = findNode(key)
       if (!node) return
-      if (node.type === "host") emit("open-host", node, true)
-      else toggleExpand(node.key)
+      // 双击 = 打开（已有会话则聚焦）；强制新会话降级为中键 / 右键"新建会话"
+      if (node.type === "host") emit("open-host", node)
+      // 目录不处理：expand-on-click 下双击的两次单击已自行抵消
+    },
+    onAuxclick(e: MouseEvent) {
+      if (e.button !== 1) return
+      const node = findNode(key)
+      if (node?.type === "host") {
+        e.preventDefault()
+        emit("open-host", node, true)
+      }
+    },
+    onMousedown(e: MouseEvent) {
+      // 吞掉中键默认行为（自动滚动 / Linux 中键粘贴）
+      if (e.button === 1) e.preventDefault()
     },
     onPointerdown(e: PointerEvent) {
       if (e.button !== 0) return
@@ -434,6 +557,82 @@ function toggleExpand(key: string) {
   if (set.has(key)) set.delete(key)
   else set.add(key)
   expandedKeys.value = Array.from(set)
+}
+
+/* ---------- 键盘操作 ---------- */
+function focusSearch() {
+  searchInputRef.value?.focus()
+}
+
+/** 面板内任意位置：Ctrl/Cmd+F 或 / 聚焦搜索 */
+function onRootKeydown(e: KeyboardEvent) {
+  if (e.isComposing) return
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+    e.preventDefault()
+    focusSearch()
+    return
+  }
+  if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const el = e.target as HTMLElement | null
+    if (el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.isContentEditable) return
+    e.preventDefault()
+    focusSearch()
+  }
+}
+
+/** 搜索框内 Esc：先清空，已空则回落焦点到树 */
+function onSearchEsc(e: KeyboardEvent) {
+  if (e.isComposing) return
+  if (filter.value) {
+    filter.value = ""
+    return
+  }
+  searchInputRef.value?.blur()
+  treeBodyEl.value?.querySelector<HTMLElement>(".n-tree")?.focus()
+}
+
+/** 树上焦点：Enter 连接/展开，F2 重命名，Delete 删除，Menu 键弹菜单，Esc 清筛选 */
+function onTreeKeydown(e: KeyboardEvent) {
+  if (e.repeat || e.isComposing) return
+  if (e.key === "Escape") {
+    if (ctxMenuShow.value) {
+      ctxMenuShow.value = false
+      return
+    }
+    if (filter.value) {
+      e.preventDefault()
+      filter.value = ""
+    }
+    return
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  if (e.key === "ContextMenu") {
+    const k = selectedKeys.value[0]
+    if (!k) return
+    const el = treeBodyEl.value?.querySelector<HTMLElement>(
+      `[data-node-key="${CSS.escape(k)}"]`,
+    )
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    showCtxMenu(k, rect.left + rect.width / 2, rect.bottom + 4)
+    e.preventDefault()
+    return
+  }
+  const k = selectedKeys.value[0]
+  if (!k) return
+  const node = findNode(k)
+  if (!node) return
+  if (e.key === "Enter") {
+    e.preventDefault()
+    if (node.type === "host") emit("open-host", node)
+    else toggleExpand(node.key)
+  } else if (e.key === "F2") {
+    e.preventDefault()
+    openRename(node)
+  } else if (e.key === "Delete") {
+    e.preventDefault()
+    confirmDelete(node)
+  }
 }
 
 function renderMenuIcon(comp: unknown) {
@@ -508,6 +707,11 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       },
       { type: "divider", key: "d0" },
       { label: t("hosts.ctxMenu.edit"), key: "edit", icon: renderMenuIcon(CreateOutline) },
+      {
+        label: t("hosts.ctxMenu.copyConn"),
+        key: "copy-conn",
+        icon: renderMenuIcon(LinkOutline),
+      },
       { label: t("hosts.ctxMenu.copy"), key: "copy", icon: renderMenuIcon(CopyOutline) },
       {
         label: t("hosts.ctxMenu.delete"),
@@ -547,6 +751,9 @@ function onCtxSelect(key: string) {
       break
     case "copy":
       if (node?.type === "host") copyHost(node)
+      break
+    case "copy-conn":
+      if (node?.type === "host") void copyConnStr(node)
       break
     case "rename":
       if (node) openRename(node)
@@ -656,6 +863,20 @@ async function copyHost(node: HostNode) {
   }
 }
 
+/** 复制连接串（user@addr:port），与"复制主机"（克隆记录）区分 */
+async function copyConnStr(node: HostNode) {
+  const host = store.findHost(node.id)
+  if (!host) return
+  const auth = host.username ? `${host.username}@` : ""
+  const text = `${auth}${host.addr}:${host.port}`
+  try {
+    await copyText(text)
+    message.success(t("hosts.message.connCopied", { text }))
+  } catch (e) {
+    message.error(t("hosts.message.copyFailed", { error: String(e) }))
+  }
+}
+
 function confirmDelete(node: HostNode) {
   const tip =
     node.type === "folder"
@@ -705,7 +926,7 @@ async function onRefresh() {
 </script>
 
 <template>
-  <div class="host-tree">
+  <div class="host-tree" @keydown="onRootKeydown">
     <div class="tree-header">
       <span class="tree-title">{{ t("hosts.tree.title") }}</span>
       <div class="header-actions">
@@ -778,10 +999,12 @@ async function onRefresh() {
 
     <div class="tree-search">
       <NInput
+        ref="searchInputRef"
         v-model:value="filter"
         size="small"
         :placeholder="t('hosts.tree.searchPlaceholder')"
         clearable
+        @keydown.esc="onSearchEsc"
       >
         <template #prefix>
           <NIcon><SearchOutline /></NIcon>
@@ -831,32 +1054,57 @@ async function onRefresh() {
       :class="{ 'drop-on-root': dropTargetKey === '__root__' }"
       :data-drop-key="dropTargetKey ?? ''"
       @contextmenu="onBlankContextMenu"
+      @keydown="onTreeKeydown"
     >
       <NSpin :show="store.loading" class="tree-spin">
         <NEmpty
           v-if="!store.loading && treeData.length === 0"
           :description="t('hosts.tree.empty')"
-        />
+        >
+          <div class="empty-actions">
+            <NButton type="primary" size="small" @click="newHostAtSelection">
+              <template #icon>
+                <NIcon><ServerOutline /></NIcon>
+              </template>
+              {{ t("hosts.ctxMenu.newHost") }}
+            </NButton>
+            <NButton size="small" @click="importModalShow = true">
+              <template #icon>
+                <NIcon><DownloadOutline /></NIcon>
+              </template>
+              {{ t("hosts.tree.importSshConfig") }}
+            </NButton>
+          </div>
+        </NEmpty>
         <NEmpty
           v-else-if="!store.loading && filter && matchCount === 0"
           :description="t('hosts.tree.noMatch')"
-        />
+        >
+          <NButton size="small" quaternary @click="filter = ''">
+            {{ t("hosts.tree.clearFilter") }}
+          </NButton>
+        </NEmpty>
         <NTree
           v-else
           :data="displayData"
           :pattern="filter"
+          :filter="treeFilter"
           :show-irrelevant-nodes="false"
           block-line
           show-line
+          ellipsis
+          virtual-scroll
           expand-on-click
           :selected-keys="selectedKeys"
           :expanded-keys="expandedKeys"
+          :render-label="renderLabel"
           :render-prefix="renderPrefix"
           :node-props="nodeProps"
           :selectable="true"
           key-field="key"
           label-field="label"
           children-field="children"
+          style="height: 100%"
           @update:selected-keys="(k: string[]) => (selectedKeys = k)"
           @update:expanded-keys="(k: string[]) => (expandedKeys = k)"
         />
@@ -1035,6 +1283,14 @@ async function onRefresh() {
   height: 100%;
 }
 
+/* 空态下的引导操作 */
+.empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 :deep(.tree-spin .n-spin-content) {
   height: 100%;
 }
@@ -1046,6 +1302,15 @@ async function onRefresh() {
 
 :deep(.n-tree-node--selected .n-tree-node-content) {
   background: rgba(124, 92, 255, 0.15) !important;
+}
+
+/* 搜索命中态：压掉 naive 默认的 label 下划线（highlight 会把 __text 的透明
+   border-bottom 翻成可见色），改为命中行淡紫底色区分 */
+:deep(.n-tree-node-content__text) {
+  border-bottom-color: transparent !important;
+}
+:deep(.n-tree-node--highlight .n-tree-node-content) {
+  background: rgba(124, 92, 255, 0.08);
 }
 
 /* 拖拽中：drop 目标 folder 高亮 */
@@ -1082,5 +1347,27 @@ async function onRefresh() {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
   user-select: none;
   white-space: nowrap;
+}
+
+/* 节点 tooltip（NTooltip 挂到 body，样式须全局） */
+.node-tip {
+  max-width: 360px;
+}
+.node-tip-name {
+  font-weight: 600;
+  margin-bottom: 2px;
+  word-break: break-all;
+}
+.node-tip-line {
+  font-size: 12px;
+  opacity: 0.75;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+/* 搜索命中子串（renderLabel 动态创建、挂在 NTree 子树，scoped 属性够不到，样式须全局） */
+.node-label-hit {
+  color: #7c5cff;
+  font-weight: 600;
 }
 </style>
