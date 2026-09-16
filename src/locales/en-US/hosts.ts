@@ -28,7 +28,7 @@ export default {
     collapseAll: "Collapse all folders",
     pin: "Pin to left",
     unpin: "Unpin",
-    hostCount: "{count} hosts",
+    hostCountShort: "{count}",
     clearFilter: "Clear filter",
   },
   ctxMenu: {

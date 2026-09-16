@@ -28,7 +28,7 @@ export default {
     collapseAll: "收起所有目录",
     pin: "固定到左侧",
     unpin: "取消固定",
-    hostCount: "{count} 台主机",
+    hostCountShort: "{count} 台",
     clearFilter: "清除筛选",
   },
   ctxMenu: {

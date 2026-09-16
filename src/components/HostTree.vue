@@ -217,26 +217,27 @@ function renderPrefix({ option }: { option: TreeOption }) {
   )
 }
 
-function buildNodeTipLines(node: HostNode): string[] {
+/** 悬停节点行末右对齐的元信息：主机=地址（端口非 22 时附带），目录=主机数 */
+function suffixTextOfNode(node: HostNode): string {
   if (node.type === "folder") {
     const count = hostCountInFolder.value.get(node.key) ?? 0
-    return count > 0 ? [t("hosts.tree.hostCount", { count })] : []
+    return count > 0 ? t("hosts.tree.hostCountShort", { count }) : ""
   }
-  const lines: string[] = []
   const addr = node.host ?? ""
-  if (node.protocol === "serial") {
-    if (addr) lines.push(addr)
-    lines.push(t("hosts.form.protocolSerial"))
-  } else if (addr) {
-    lines.push(
-      node.username
-        ? `${node.username}@${addr}:${node.port ?? "22"}`
-        : `${addr}:${node.port ?? "22"}`,
-    )
-    if (node.protocol && node.protocol !== "ssh") lines.push(node.protocol.toUpperCase())
-  }
-  if (node.desc) lines.push(node.desc)
-  return lines
+  if (!addr) return ""
+  if (node.protocol === "serial") return addr
+  const port = node.port ?? "22"
+  return port !== "22" ? `${addr}:${port}` : addr
+}
+
+function renderSuffix({ option }: { option: TreeOption }) {
+  const node = option as unknown as HostNode
+  const text = suffixTextOfNode(node)
+  if (!text) return null
+  // 常驻渲染 + 0 宽度收起，悬停（CSS :hover）时宽度动画展开，名字被平滑推开
+  return h("span", { class: "node-suffix" }, [
+    h("span", { class: "node-suffix-text" }, text),
+  ])
 }
 
 /** 按当前搜索词切分 label,命中的子串单独成段(大小写不敏感,与 NTree pattern 同口径) */
@@ -262,34 +263,12 @@ function splitHighlightSegments(label: string): Array<{ text: string; hit: boole
 function renderLabel({ option }: { option: TreeOption }) {
   const node = option as unknown as HostNode
   const label = String(node.label ?? "")
-  const lines = buildNodeTipLines(node)
   const segments = splitHighlightSegments(label)
-  const hasHit = segments.some((s) => s.hit)
-  // 无附加信息（空目录等）不包 Tooltip，避免悬停噪音；拖拽中同理（读 dragGhost 注册依赖，
-  // 拖起/落下时标签重渲染，避免拖动途中 Tooltip 跟着鼠标闪现）
-  const showTip = lines.length > 0 && !dragGhost.value
-  const trigger = () =>
-    hasHit
-      ? h(
-          "span",
-          { class: "node-label" },
-          segments.map((s) =>
-            s.hit ? h("span", { class: "node-label-hit" }, s.text) : s.text,
-          ),
-        )
-      : h("span", { class: "node-label" }, label)
-  if (!showTip) return trigger()
+  if (!segments.some((s) => s.hit)) return label
   return h(
-    NTooltip,
-    { placement: "right", delay: 350, style: "max-width: 360px" },
-    {
-      trigger,
-      default: () =>
-        h("div", { class: "node-tip" }, [
-          h("div", { class: "node-tip-name" }, label),
-          ...lines.map((line) => h("div", { class: "node-tip-line" }, line)),
-        ]),
-    },
+    "span",
+    { class: "node-label" },
+    segments.map((s) => (s.hit ? h("span", { class: "node-label-hit" }, s.text) : s.text)),
   )
 }
 
@@ -1099,6 +1078,7 @@ async function onRefresh() {
           :expanded-keys="expandedKeys"
           :render-label="renderLabel"
           :render-prefix="renderPrefix"
+          :render-suffix="renderSuffix"
           :node-props="nodeProps"
           :selectable="true"
           key-field="key"
@@ -1313,6 +1293,49 @@ async function onRefresh() {
   background: rgba(124, 92, 255, 0.08);
 }
 
+/* 悬停节点行末元信息：grid 0fr→1fr 做宽度动画，悬停时名字被平滑推开而非跳变；
+   不支持网格轨道动画的引擎（旧 WebKitGTK）退化为直接展开，功能不受影响 */
+:deep(.n-tree-node-content__suffix) {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 60%;
+}
+:deep(.node-suffix) {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-left: 0;
+  opacity: 0;
+  font-size: 11px;
+  transition:
+    grid-template-columns 0.18s ease,
+    opacity 0.18s ease,
+    margin-left 0.18s ease;
+}
+:deep(.n-tree-node-content:hover .node-suffix) {
+  grid-template-columns: 1fr;
+  margin-left: 8px;
+  opacity: 0.55;
+}
+/* 选中/键盘待选行常驻展开（悬停、选中、方向键待选任一命中即显示；方向键移动时
+   naive 会把虚拟滚动滚到待选行，展开正好可见；焦点离开树时 pending 自动清空） */
+:deep(.n-tree-node--selected .node-suffix) {
+  grid-template-columns: 1fr;
+  margin-left: 8px;
+  opacity: 0.55;
+}
+:deep(.n-tree-node--pending .node-suffix) {
+  grid-template-columns: 1fr;
+  margin-left: 8px;
+  opacity: 0.55;
+}
+:deep(.node-suffix-text) {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* 拖拽中：drop 目标 folder 高亮 */
 .tree-body[data-drop-key] :deep([data-node-key]) {
   transition: background 0.12s ease, box-shadow 0.12s ease;
@@ -1350,24 +1373,16 @@ async function onRefresh() {
 }
 
 /* 节点 tooltip（NTooltip 挂到 body，样式须全局） */
-.node-tip {
-  max-width: 360px;
-}
-.node-tip-name {
-  font-weight: 600;
-  margin-bottom: 2px;
-  word-break: break-all;
-}
-.node-tip-line {
-  font-size: 12px;
-  opacity: 0.75;
-  line-height: 1.5;
-  word-break: break-all;
-}
-
 /* 搜索命中子串（renderLabel 动态创建、挂在 NTree 子树，scoped 属性够不到，样式须全局） */
 .node-label-hit {
   color: #7c5cff;
   font-weight: 600;
+}
+
+/* 拖拽中抑制行内元信息展开（body class 由拖拽逻辑维护，scoped 够不到 body 级状态） */
+body.ashell-dragging .host-tree .node-suffix {
+  grid-template-columns: 0fr !important;
+  margin-left: 0 !important;
+  opacity: 0 !important;
 }
 </style>
