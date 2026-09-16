@@ -3006,9 +3006,11 @@ function openInStandaloneWindow() {
       <header v-if="!props.standalone" class="panel-header">
         <div class="drawer-title-wrap">
           <span class="drawer-title">{{ drawerTitle }}</span>
-          <NTooltip :disabled="!elevated">
+          <!-- v-if 必须放在 NTooltip 上：naive/vueuc 会把 trigger 槽里的注释 vnode
+               flatten 掉，v-if=false 时槽变空数组，报 slot should have exactly one child -->
+          <NTooltip v-if="elevated" placement="top">
             <template #trigger>
-              <NTag v-if="elevated" type="warning" size="small" round :bordered="false">
+              <NTag type="warning" size="small" round :bordered="false">
                 <template #icon>
                   <NIcon :size="12"><ShieldCheckmarkOutline /></NIcon>
                 </template>
