@@ -364,7 +364,7 @@ if (!isTauri) {
                 class="app-content"
                 :style="{
                   top: 'var(--ashell-header-h)',
-                  left: 0,
+                  left: 'var(--ashell-hosts-width, 0px)',
                   right: 'var(--ashell-activity-w, 0px)',
                   bottom: 0,
                 }"
@@ -586,7 +586,6 @@ if (!isTauri) {
   color: var(--ashell-text-muted);
   padding-left: var(--ashell-hosts-width, 0px);
   text-align: center;
-  transition: padding-left 0.25s ease;
   pointer-events: none;
 }
 

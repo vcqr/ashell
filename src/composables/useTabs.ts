@@ -7,6 +7,7 @@ import { useHostStore } from "@/stores/hosts";
 import { isTauri } from "@/utils/platform";
 import { useTerminalStore } from "@/stores/terminal";
 import { openTabInNewWindow } from "@/utils/newWindow";
+import { useHostsPin } from "@/composables/useHostsPin";
 
 /** TerminalView 通过 defineExpose 暴露的实例方法 */
 export type TerminalViewExposed = {
@@ -100,6 +101,7 @@ export function useTabs() {
   const terminalStore = useTerminalStore();
 
   const hostsOpen = ref(false);
+  const hostsPinned = useHostsPin();
 
   const persisted = loadPersistedTabs(startupStore.restoreTabs);
 
@@ -271,7 +273,7 @@ export function useTabs() {
       },
     });
     activeTabKey.value = key;
-    hostsOpen.value = false;
+    if (!hostsPinned.value) hostsOpen.value = false;
   }
 
   function openLocal(shell?: string) {
@@ -293,7 +295,7 @@ export function useTabs() {
       color: null,
     });
     activeTabKey.value = key;
-    hostsOpen.value = false;
+    if (!hostsPinned.value) hostsOpen.value = false;
   }
 
   function onTabBarNew(kind: "host" | "local") {
@@ -479,6 +481,8 @@ export function useTabs() {
   }
 
   function closeHostsIfOpen() {
+    // 固定模式下主界面已让位并排显示，点主界面不应收起
+    if (hostsPinned.value) return;
     if (hostsOpen.value) hostsOpen.value = false;
   }
 

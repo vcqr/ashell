@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from "vue"
 import { NModal, NCard, useMessage } from "naive-ui"
 import { useI18n } from "vue-i18n"
 import HostTree from "@/components/HostTree.vue"
 import HostForm from "@/components/HostForm.vue"
 import { useHostStore } from "@/stores/hosts"
 import { useApiStore } from "@/stores/api"
+import { useHostsPin } from "@/composables/useHostsPin"
 import type { Host, HostCreate, HostNode, HostUpdate } from "@/types"
 
 const props = defineProps<{
@@ -21,6 +22,7 @@ const { t } = useI18n()
 const store = useHostStore()
 const apiStore = useApiStore()
 const message = useMessage()
+const hostsPinned = useHostsPin()
 
 const formOpen = ref(false)
 const formMode = ref<"create" | "edit">("create")
@@ -152,9 +154,23 @@ onBeforeUnmount(onResizeEnd)
 
 const panelStyle = computed(() => ({
   width: `${width.value}px`,
-  transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
+  // pinned 停靠态直接显隐不滑入：滑入期间内容区让位变量已就位，会看到面板盖在已让位的空白上
+  transition: resizing.value || hostsPinned.value
+    ? "none"
+    : "transform 0.25s ease, box-shadow 0.15s ease",
   transform: props.open ? "translateX(0)" : "translateX(-100%)",
 }))
+
+// 固定时内容区让位（App 的 .app-content left 与空态 padding 读同一变量）；
+// 变量挂 documentElement，HostsDrawer 是宽度唯一持有者，在此统一维护
+watchEffect(() => {
+  const w = props.open && hostsPinned.value ? `${width.value}px` : "0px"
+  document.documentElement.style.setProperty("--ashell-hosts-width", w)
+})
+
+onBeforeUnmount(() => {
+  document.documentElement.style.setProperty("--ashell-hosts-width", "0px")
+})
 
 function onClose() {
   emit("update:open", false)
@@ -165,7 +181,7 @@ function onClose() {
   <Teleport to="body">
     <aside
       class="hosts-panel"
-      :class="{ open: props.open, resizing: resizing }"
+      :class="{ open: props.open, resizing: resizing, pinned: hostsPinned }"
       :style="panelStyle"
       :aria-hidden="!props.open"
     >
@@ -222,6 +238,11 @@ function onClose() {
 
 .hosts-panel.open {
   box-shadow: 8px 0 24px var(--ashell-shadow);
+}
+
+/* 固定（停靠）态：与主内容并排，不再悬浮 */
+.hosts-panel.pinned.open {
+  box-shadow: none;
 }
 
 .hosts-panel.resizing {

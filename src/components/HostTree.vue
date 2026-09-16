@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NTree,
   NIcon,
@@ -32,12 +32,17 @@ import {
   CopyOutline,
   ServerOutline,
   DownloadOutline,
+  AddCircleOutline,
+  ListOutline,
+  ExpandOutline,
+  ContractOutline,
 } from "@vicons/ionicons5"
 import { Folder, FolderOpen } from "@vicons/fa"
-import { FolderAddOutlined } from "@vicons/antd"
+import { FolderAddOutlined, PushpinFilled, PushpinOutlined } from "@vicons/antd"
 import { useI18n } from "vue-i18n"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
+import { useHostsPin } from "@/composables/useHostsPin"
 import SshConfigImportModal from "@/components/SshConfigImportModal.vue"
 import type { HostNode, Host } from "@/types"
 
@@ -58,6 +63,7 @@ const filter = ref("")
 const selectedKeys = ref<string[]>([])
 const expandedKeys = ref<string[]>([])
 const importModalShow = ref(false)
+const hostsPinned = useHostsPin()
 
 onMounted(() => {
   void iconStore.ensureLoaded()
@@ -66,6 +72,70 @@ onMounted(() => {
 const treeData = computed<TreeOption[]>(
   () => store.tree as unknown as TreeOption[],
 )
+
+/* ---------- 平铺视图：忽略目录，按树序列出所有主机 ---------- */
+const FLAT_KEY = "ashell:hosts-flat"
+
+const flatMode = ref(
+  typeof localStorage !== "undefined" && localStorage.getItem(FLAT_KEY) === "true",
+)
+
+watch(flatMode, (v) => {
+  try {
+    localStorage.setItem(FLAT_KEY, String(v))
+  } catch {
+    // ignore
+  }
+})
+
+function collectHosts(list: HostNode[], out: HostNode[] = []): HostNode[] {
+  for (const n of list) {
+    if (n.type === "host") out.push(n)
+    if (n.children) collectHosts(n.children, out)
+  }
+  return out
+}
+
+const flatTreeData = computed<TreeOption[]>(() => collectHosts(store.tree) as unknown as TreeOption[])
+const displayData = computed<TreeOption[]>(() =>
+  flatMode.value ? flatTreeData.value : treeData.value,
+)
+
+/* ---------- 展开 / 收起所有目录 ---------- */
+function collectFolderKeys(list: HostNode[], out: string[] = []): string[] {
+  for (const n of list) {
+    if (n.type === "folder") {
+      out.push(n.key)
+      if (n.children) collectFolderKeys(n.children, out)
+    }
+  }
+  return out
+}
+
+const allExpanded = computed(() => {
+  const folderKeys = collectFolderKeys(store.tree)
+  if (folderKeys.length === 0) return false
+  return folderKeys.every((k) => expandedKeys.value.includes(k))
+})
+
+// 与 NTree 默认 filter 同口径（label 不区分大小写包含），驱动"无匹配"空态
+const matchCount = computed(() => {
+  const q = filter.value.toLowerCase()
+  if (!q) return -1
+  let n = 0
+  const walk = (list: TreeOption[]) => {
+    for (const o of list) {
+      if (String(o.label ?? "").toLowerCase().includes(q)) n++
+      if (o.children) walk(o.children)
+    }
+  }
+  walk(displayData.value)
+  return n
+})
+
+function toggleAllExpand() {
+  expandedKeys.value = allExpanded.value ? [] : collectFolderKeys(store.tree)
+}
 
 /* ---------- 仅含目录（folder）的列表，供 NTreeSelect 选父级 ---------- */
 function buildFolderOptions(list: HostNode[]): TreeSelectOption[] {
@@ -350,6 +420,8 @@ function nodeProps({ option }: { option: TreeOption }) {
     },
     onPointerdown(e: PointerEvent) {
       if (e.button !== 0) return
+      // 平铺视图没有可见目录，落点语义不成立，禁用拖拽归组
+      if (flatMode.value) return
       const node = findNode(key)
       if (!node || node.type !== "host") return
       beginHostDrag(e, node)
@@ -636,22 +708,22 @@ async function onRefresh() {
   <div class="host-tree">
     <div class="tree-header">
       <span class="tree-title">{{ t("hosts.tree.title") }}</span>
-      <NSpace :size="4">
+      <div class="header-actions">
         <NTooltip>
           <template #trigger>
             <NButton
               size="small"
               quaternary
               circle
-              :loading="store.loading"
-              @click="onRefresh"
+              type="primary"
+              @click="newHostAtSelection"
             >
               <template #icon>
-                <NIcon><RefreshOutline /></NIcon>
+                <NIcon :size="20"><AddCircleOutline /></NIcon>
               </template>
             </NButton>
           </template>
-          {{ t("hosts.tree.refresh") }}
+          {{ t("hosts.ctxMenu.newHost") }}
         </NTooltip>
         <NTooltip>
           <template #trigger>
@@ -662,7 +734,7 @@ async function onRefresh() {
               @click="newFolderAtSelection"
             >
               <template #icon>
-                <NIcon><FolderAddOutlined /></NIcon>
+                <NIcon :size="20"><FolderAddOutlined /></NIcon>
               </template>
             </NButton>
           </template>
@@ -674,27 +746,34 @@ async function onRefresh() {
               size="small"
               quaternary
               circle
-              @click="importModalShow = true"
+              :type="hostsPinned ? 'primary' : 'default'"
+              @click="hostsPinned = !hostsPinned"
             >
               <template #icon>
-                <NIcon><DownloadOutline /></NIcon>
+                <NIcon :size="18">
+                  <component :is="hostsPinned ? PushpinFilled : PushpinOutlined" />
+                </NIcon>
               </template>
             </NButton>
           </template>
-          {{ t("hosts.tree.importSshConfig") }}
+          {{ hostsPinned ? t("hosts.tree.unpin") : t("hosts.tree.pin") }}
         </NTooltip>
-        <NButton size="small" type="primary" @click="newHostAtSelection">
-          <template #icon>
-            <NIcon><AddOutline /></NIcon>
+        <NTooltip>
+          <template #trigger>
+            <NButton
+              size="small"
+              quaternary
+              circle
+              @click="emit('close')"
+            >
+              <template #icon>
+                <NIcon :size="20"><CloseOutline /></NIcon>
+              </template>
+            </NButton>
           </template>
-          {{ t("hosts.tree.newHost") }}
-        </NButton>
-        <NButton size="small" quaternary circle @click="emit('close')">
-          <template #icon>
-            <NIcon><CloseOutline /></NIcon>
-          </template>
-        </NButton>
-      </NSpace>
+          {{ t("common.close") }}
+        </NTooltip>
+      </div>
     </div>
 
     <div class="tree-search">
@@ -706,6 +785,42 @@ async function onRefresh() {
       >
         <template #prefix>
           <NIcon><SearchOutline /></NIcon>
+        </template>
+        <template #suffix>
+          <NTooltip>
+            <template #trigger>
+              <NButton
+                size="tiny"
+                quaternary
+                circle
+                :type="flatMode ? 'primary' : 'default'"
+                @click="flatMode = !flatMode"
+              >
+                <template #icon>
+                  <NIcon :size="16"><ListOutline /></NIcon>
+                </template>
+              </NButton>
+            </template>
+            {{ flatMode ? t("hosts.tree.treeView") : t("hosts.tree.flatView") }}
+          </NTooltip>
+          <NTooltip>
+            <template #trigger>
+              <NButton
+                size="tiny"
+                quaternary
+                circle
+                :disabled="flatMode"
+                @click="toggleAllExpand"
+              >
+                <template #icon>
+                  <NIcon :size="14">
+                    <component :is="allExpanded ? ContractOutline : ExpandOutline" />
+                  </NIcon>
+                </template>
+              </NButton>
+            </template>
+            {{ allExpanded ? t("hosts.tree.collapseAll") : t("hosts.tree.expandAll") }}
+          </NTooltip>
         </template>
       </NInput>
     </div>
@@ -722,10 +837,15 @@ async function onRefresh() {
           v-if="!store.loading && treeData.length === 0"
           :description="t('hosts.tree.empty')"
         />
+        <NEmpty
+          v-else-if="!store.loading && filter && matchCount === 0"
+          :description="t('hosts.tree.noMatch')"
+        />
         <NTree
           v-else
-          :data="treeData"
+          :data="displayData"
           :pattern="filter"
+          :show-irrelevant-nodes="false"
           block-line
           show-line
           expand-on-click
@@ -866,16 +986,35 @@ async function onRefresh() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 
 .tree-title {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--ashell-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .tree-search {
   flex-shrink: 0;
+}
+
+/* 收进输入框的视图切换小按钮：贴紧排布 */
+.tree-search :deep(.n-input__suffix) {
+  gap: 2px;
 }
 
 .tree-body {
