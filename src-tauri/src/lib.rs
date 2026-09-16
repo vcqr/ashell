@@ -117,6 +117,31 @@ fn open_icons_dir() -> Result<(), String> {
     opener::open_path(&dir)
 }
 
+/// 打开/关闭 WebView 开发者工具（前端「通用-开发者选项」开关调用）。
+/// 需要 Cargo.toml tauri 的 devtools feature，release 构建才有此能力。
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn devtools_set(win: tauri::WebviewWindow, open: bool) {
+    if open {
+        win.open_devtools();
+    } else {
+        win.close_devtools();
+    }
+}
+
+/// 开发者模式下 F12 / Ctrl+Shift+I 切换用，返回切换后是否打开
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn devtools_toggle(win: tauri::WebviewWindow) -> bool {
+    if win.is_devtools_open() {
+        win.close_devtools();
+        false
+    } else {
+        win.open_devtools();
+        true
+    }
+}
+
 /// 返回 ~/.ashell/ai 目录的绝对路径（AI sidecar 工作目录）。
 /// 用于前端在 spawn_sidecar 时传入 workspace 参数。
 #[cfg(feature = "desktop")]
@@ -330,6 +355,8 @@ pub fn run() {
             commands::fonts::list_system_fonts,
             open_icons_dir,
             get_ai_dir,
+            devtools_set,
+            devtools_toggle,
             commands::dialog::save_text_file,
             commands::dialog::pick_image_file,
             commands::dialog::pick_private_key_file,

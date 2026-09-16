@@ -26,6 +26,10 @@ export default {
     title: "General",
     language: "Interface Language",
     languageDesc: "Choose the application interface language. Changes take effect immediately.",
+    developerTitle: "Developer Options",
+    devtools: "Developer Tools",
+    devtoolsDesc:
+      "Opens WebView DevTools immediately; F12 / Ctrl+Shift+I (⌘⌥I on macOS) toggles it afterwards. Turning off closes DevTools and passes the keys through to the terminal.",
   },
   theme: {
     appearance: "Appearance",

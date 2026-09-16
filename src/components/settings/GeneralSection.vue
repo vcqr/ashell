@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import {
   NForm,
   NFormItem,
   NSelect,
+  NSwitch,
   type SelectOption,
 } from "naive-ui";
 import { useI18n } from "vue-i18n";
@@ -11,6 +13,8 @@ import {
   setLocalePreference,
   type LocalePreference,
 } from "@/locales";
+import { isTauri } from "@/utils/platform";
+import { devtoolsEnabled, setDevtoolsEnabled } from "@/utils/devtools";
 
 const { t } = useI18n();
 
@@ -22,6 +26,18 @@ const languageOptions: SelectOption[] = [
 
 function onChange(value: LocalePreference) {
   setLocalePreference(value);
+}
+
+const devtoolsOn = ref(devtoolsEnabled());
+
+async function onDevtoolsChange(value: boolean) {
+  devtoolsOn.value = value;
+  try {
+    await setDevtoolsEnabled(value);
+  } catch {
+    // 后端调用失败（如前端新于后端）时回退开关，避免 UI 与实际状态不一致
+    devtoolsOn.value = !value;
+  }
 }
 </script>
 
@@ -39,6 +55,18 @@ function onChange(value: LocalePreference) {
       </NFormItem>
       <p class="settings-hint">{{ t("settings.general.languageDesc") }}</p>
     </NForm>
+
+    <div v-if="isTauri" class="dev-block">
+      <div class="settings-section-title">
+        {{ t("settings.general.developerTitle") }}
+      </div>
+      <NForm label-placement="top" size="small" :show-feedback="false">
+        <NFormItem :label="t('settings.general.devtools')">
+          <NSwitch :value="devtoolsOn" @update:value="onDevtoolsChange" />
+        </NFormItem>
+        <p class="settings-hint">{{ t("settings.general.devtoolsDesc") }}</p>
+      </NForm>
+    </div>
   </section>
 </template>
 
@@ -53,6 +81,10 @@ function onChange(value: LocalePreference) {
   font-size: 13px;
   font-weight: 600;
   color: var(--ashell-text-strong);
+}
+
+.dev-block {
+  margin-top: 14px;
 }
 
 .settings-hint {

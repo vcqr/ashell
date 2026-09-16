@@ -40,6 +40,7 @@ import AiProvidersModal from "@/components/AiProvidersModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
 import LoginGate from "@/components/LoginGate.vue";
 import { isTauri } from "@/utils/platform";
+import { installDevtoolsShortcut } from "@/utils/devtools";
 import { useKeybindingStore } from "@/stores/keybindings";
 import { onBeforeUnmount } from "vue";
 import { useApiStore } from "@/stores/api";
@@ -169,6 +170,10 @@ const {
 function onSftpOpenTerminalHere(path: string) {
   sendCommandToActive(`cd '${path.replace(/'/g, `'\\''`)}'`);
 }
+
+// 开发者模式快捷键：F12 / Ctrl+Shift+I 切换 WebView 开发者工具
+// （开关在 设置-通用-开发者选项；Web 形态内部自动跳过）
+installDevtoolsShortcut();
 
 useGlobalShortcuts({
   isMac,

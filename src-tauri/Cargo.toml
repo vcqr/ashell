@@ -61,7 +61,10 @@ tauri-build = { version = "2", features = [] }
 # 桌面壳（web server 不启用）。opener 仅供桌面 JS 侧 openUrl 插件使用；
 # Rust 侧打开/定位文件走 opener.rs（std 命令实现），server 目标在 Linux 上
 # 不再被 tauri→GTK/GLib 依赖链拖累
-tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "image-png", "tray-icon"], optional = true }
+# devtools：release 构建也编译进 WebView 开发者工具（配合前端「通用-开发者选项」
+# 开关，默认关闭不打开；快捷键由前端 F12/Ctrl+Shift+I 捕获后调 devtools_* 命令，
+# 不依赖 WebView2 浏览器加速键——那已被 disable_browser_accelerators 关闭）
+tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "image-png", "tray-icon", "devtools"], optional = true }
 tauri-plugin-opener = { version = "2", optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-clipboard-manager = { version = "2", optional = true }

@@ -26,6 +26,10 @@ export default {
     title: "通用",
     language: "界面语言",
     languageDesc: "选择应用界面语言，切换后立即生效。",
+    developerTitle: "开发者选项",
+    devtools: "开发者工具",
+    devtoolsDesc:
+      "开启后立即打开 WebView 开发者工具，并可用 F12 / Ctrl+Shift+I（macOS 为 ⌘⌥I）切换；关闭后立即收起，按键恢复透传给终端。",
   },
   theme: {
     appearance: "外观",
