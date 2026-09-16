@@ -574,6 +574,7 @@ function onSearchEsc(e: KeyboardEvent) {
 function onTreeKeydown(e: KeyboardEvent) {
   if (e.repeat || e.isComposing) return
   if (e.key === "Escape") {
+    // Esc 级联：先关右键菜单 → 再清搜索词 → 最后取消选中
     if (ctxMenuShow.value) {
       ctxMenuShow.value = false
       return
@@ -581,6 +582,17 @@ function onTreeKeydown(e: KeyboardEvent) {
     if (filter.value) {
       e.preventDefault()
       filter.value = ""
+      return
+    }
+    if (selectedKeys.value.length > 0) {
+      e.preventDefault()
+      selectedKeys.value = []
+      // naive 的 pending 游标（行内淡色背景 + suffix 展开）没有公开 API，
+      // 借它自己的 focusout 清理路径置空：派发 relatedTarget 为空的合成事件，
+      // 不真实移焦，方向键导航不中断
+      treeBodyEl.value
+        ?.querySelector<HTMLElement>(".n-tree")
+        ?.dispatchEvent(new FocusEvent("focusout", { relatedTarget: null }))
     }
     return
   }
