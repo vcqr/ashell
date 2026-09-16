@@ -61,6 +61,8 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
+/** .terminal-host 左侧描边颜色 = 主题背景色，随主题/透明度/壁纸设置动态更新 */
+const hostBgColor = ref("transparent")
 
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
@@ -264,7 +266,11 @@ function declineHostKey() {
 
 function applyTheme() {
   if (!term) return
-  term.options.theme = termStore.getActiveTerminalTheme()
+  const theme = termStore.getActiveTerminalTheme()
+  term.options.theme = theme
+  // 左侧 8px 用主题背景色描边（见 .terminal-host 的 border-left）：
+  // padding 区域不被 xterm 画布覆盖，半透明背景下会露出未暗化的壁纸形成亮条
+  hostBgColor.value = theme.background ?? "transparent"
 }
 
 function setStatus(status: TermStatus) {
@@ -1234,6 +1240,8 @@ onMounted(() => {
   // 新渲染器可能未正确继承构造函数里的 cursorBlink/cursorStyle 选项。
   // 显式重新设置一次，强制渲染器刷新光标状态。
   applyTermOptions()
+  // 同步主题到 xterm 与容器描边（首次挂载时 watcher 不会触发，需显式调用）
+  applyTheme()
 
   installAltScreenScrollFix()
 
@@ -1578,7 +1586,7 @@ onBeforeUnmount(() => {
         :style="progressState === 3 ? undefined : { width: `${progressValue}%` }"
       />
     </div>
-    <div ref="containerRef" class="terminal-host"></div>
+    <div ref="containerRef" class="terminal-host" :style="{ borderLeftColor: hostBgColor }"></div>
     <Transition name="search-fade">
       <div
         v-if="searchOpen"
@@ -1853,7 +1861,10 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 0;
   overflow: hidden;
-  padding-left: 8px;
+  /* 左侧 8px 留白用 border 而非 padding：border 颜色由 applyTheme 同步为
+     主题背景色，半透明背景下与画布区域同色；padding 区域则无任何覆盖，
+     壁纸/透明窗口下会露出一条未暗化的亮带 */
+  border-left: 8px solid transparent;
   box-sizing: border-box;
   contain: layout paint;
 }
