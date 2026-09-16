@@ -4,7 +4,7 @@
   "version": "0.1.27",
   "identifier": "com.vcqr.ashell",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "node scripts/sidecar-guard.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run sidecar:build && npm run build",
     "frontendDist": "../dist"
