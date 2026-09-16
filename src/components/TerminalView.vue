@@ -18,7 +18,7 @@ import {
   TimeOutline as HistoryIcon,
   BookOutline as DictIcon,
 } from "@vicons/ionicons5"
-import { pasteText, copyText } from "@/utils/clipboard"
+import { pasteText, copyText, sanitizePastedText } from "@/utils/clipboard"
 import { openExternal } from "@/utils/platform"
 import { useI18n } from "vue-i18n"
 import { useApiStore } from "@/stores/api"
@@ -439,10 +439,15 @@ async function writeClipboard(text: string) {
 
 function pasteToTerminal(text: string) {
   if (!text || !term) return
+  // 剪贴板文本可能混有字面 ESC 字节（复制自带色输出/日志/堡垒机页面），随回显被
+  // xterm 当 SGR/CSI 解释后，粘贴内容会被反显/改色成看不清的色块；先剥掉全部
+  // 转义序列只留纯文本（\r \n \t 保留）。
+  const clean = sanitizePastedText(text)
+  if (!clean) return
   // 必须经 term.paste() 而非直接 sendJson 裸发剪贴板原文：xterm 会把 \r?\n 规范化
   // 为 \r（CRLF 裸发到 vim 会 \r、\n 各换一行，多出空行），并在远端开启 bracketed
   // paste 时加 200/201 包裹（防 autoindent 重排缩进）。发送仍走 onData -> WS，与键盘一致。
-  term.paste(text)
+  term.paste(clean)
 }
 
 function onSelectionChange() {
