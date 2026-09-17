@@ -64,6 +64,18 @@ const containerRef = ref<HTMLDivElement | null>(null)
 /** .terminal-host 左侧描边颜色 = 主题背景色，随主题/透明度/壁纸设置动态更新 */
 const hostBgColor = ref("transparent")
 
+/**
+ * 画布区域会把主题背景叠两层（WebGL 渲染器：全视口清屏矩形 + 默认背景单元格
+ * 矩形，见 @xterm/addon-webgl RectangleRenderer），半透明背景下等效 alpha 为
+ * 1-(1-a)²。左侧 8px 描边必须使用合成后的颜色，否则比画布区亮一条。
+ */
+function doubledAlphaBackground(bg: string): string {
+  const m = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(bg)
+  if (!m) return bg
+  const a = Number(m[4]!)
+  return `rgba(${m[1]!}, ${m[2]!}, ${m[3]!}, ${(1 - (1 - a) * (1 - a)).toFixed(3)})`
+}
+
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let webglAddon: WebglAddon | null = null
@@ -269,8 +281,9 @@ function applyTheme() {
   const theme = termStore.getActiveTerminalTheme()
   term.options.theme = theme
   // 左侧 8px 用主题背景色描边（见 .terminal-host 的 border-left）：
-  // padding 区域不被 xterm 画布覆盖，半透明背景下会露出未暗化的壁纸形成亮条
-  hostBgColor.value = theme.background ?? "transparent"
+  // padding 区域不被 xterm 画布覆盖，半透明背景下会露出未暗化的壁纸形成亮条；
+  // alpha 需翻倍以匹配画布的两层叠加（见 doubledAlphaBackground）
+  hostBgColor.value = doubledAlphaBackground(theme.background ?? "transparent")
 }
 
 function setStatus(status: TermStatus) {
