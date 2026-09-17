@@ -547,6 +547,7 @@ function applyTermOptions() {
   term.options.fontFamily = termStore.fontFamily
   term.options.cursorStyle = termStore.cursorStyle
   term.options.cursorBlink = termStore.cursorBlink
+  term.options.cursorWidth = 2
   installCursorBlinkGuard()
   safeFit()
 }
@@ -1216,6 +1217,8 @@ onMounted(() => {
     fontSize: termStore.fontSize,
     cursorBlink: termStore.cursorBlink,
     cursorStyle: termStore.cursorStyle,
+    // 竖线光标宽度（CSS px），仅 cursorStyle='bar' 时生效；WebGL/DOM 两条渲染路径都支持
+    cursorWidth: 2,
     scrollback: termStore.scrollback,
     allowProposedApi: true,
     theme: termStore.getActiveTerminalTheme(),
