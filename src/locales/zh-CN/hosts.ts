@@ -48,6 +48,8 @@ export default {
     edit: "编辑",
     copy: "复制",
     copyConn: "复制连接串",
+    pinTop: "置顶",
+    unpinTop: "取消置顶",
   },
   message: {
     backendNotReady: "后端未就绪: {error}",

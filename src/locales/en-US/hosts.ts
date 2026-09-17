@@ -48,6 +48,8 @@ export default {
     edit: "Edit",
     copy: "Copy",
     copyConn: "Copy connection string",
+    pinTop: "Pin to top",
+    unpinTop: "Unpin",
   },
   message: {
     backendNotReady: "Backend not ready: {error}",

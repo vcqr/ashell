@@ -103,12 +103,14 @@ function collectHosts(list: HostNode[], out: HostNode[] = []): HostNode[] {
 
 const flatTreeData = computed<TreeOption[]>(() => {
   const hosts = collectHosts(store.tree)
-  // 平铺是单一列表：整体按排序模式排
+  // 平铺是单一列表：置顶主机全局置顶（树形视图则是组内置顶），其余按排序模式
+  const pinned = hosts.filter((h) => store.isHostPinned(h.id))
+  const rest = hosts.filter((h) => !store.isHostPinned(h.id))
   const cmp =
     store.hostSortMode === "addr"
       ? (a: HostNode, b: HostNode) => compareAddr(a.host ?? "", b.host ?? "")
       : (a: HostNode, b: HostNode) => a.label.localeCompare(b.label)
-  return [...hosts].sort(cmp) as unknown as TreeOption[]
+  return [...pinned.sort(cmp), ...rest.sort(cmp)] as unknown as TreeOption[]
 })
 const displayData = computed<TreeOption[]>(() =>
   flatMode.value ? flatTreeData.value : treeData.value,
@@ -279,13 +281,24 @@ function suffixTextOfNode(node: HostNode): string {
 
 function renderSuffix({ option }: { option: TreeOption }) {
   const node = option as unknown as HostNode
+  const pinned = node.type === "host" && store.isHostPinned(node.id)
   const text = suffixTextOfNode(node)
-  if (!text) return null
-  // 常驻渲染 + 0 宽度收起，悬停（CSS :hover）时宽度动画展开，名字被平滑推开
+  if (!pinned && !text) return null
+  // 常驻渲染 + 0 宽度收起，悬停（CSS :hover）时宽度动画展开，名字被平滑推开；
+  // 置顶图钉在折叠网格之外，不受 hover 门控
   return h("span", { class: "node-suffix-wrap" }, [
-    h("span", { class: "node-suffix" }, [
-      h("span", { class: "node-suffix-text" }, text),
-    ]),
+    pinned
+      ? h(
+          NIcon,
+          { class: "node-pin", size: 12, color: "#7c5cff" },
+          { default: () => h(PushpinFilled) },
+        )
+      : null,
+    text
+      ? h("span", { class: "node-suffix" }, [
+          h("span", { class: "node-suffix-text" }, text),
+        ])
+      : null,
   ])
 }
 
@@ -778,6 +791,15 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       },
       { label: t("hosts.ctxMenu.copy"), key: "copy", icon: renderMenuIcon(CopyOutline) },
       {
+        label: store.isHostPinned(node.id)
+          ? t("hosts.ctxMenu.unpinTop")
+          : t("hosts.ctxMenu.pinTop"),
+        key: "pin-top",
+        icon: renderMenuIcon(
+          store.isHostPinned(node.id) ? PushpinFilled : PushpinOutlined,
+        ),
+      },
+      {
         label: t("hosts.ctxMenu.delete"),
         key: "delete",
         icon: renderMenuIcon(TrashOutline),
@@ -831,6 +853,9 @@ function onCtxSelect(key: string) {
       break
     case "copy-conn":
       if (node?.type === "host") void copyConnStr(node)
+      break
+    case "pin-top":
+      if (node?.type === "host") store.togglePinHost(node.id)
       break
     case "rename":
       if (node) openRename(node)
@@ -1417,11 +1442,15 @@ async function onRefresh() {
   text-overflow: ellipsis;
 }
 
-/* 行末元信息外层容器：inline-flex 收紧排布 */
+/* 置顶图钉：suffix 内、折叠网格外的常驻图标；行末元信息外层容器 inline-flex 收紧排布 */
 :deep(.node-suffix-wrap) {
   display: inline-flex;
   align-items: center;
   min-width: 0;
+}
+:deep(.node-pin) {
+  flex-shrink: 0;
+  margin-right: 4px;
 }
 
 /* 拖拽中：drop 目标 folder 高亮 */
