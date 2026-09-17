@@ -266,6 +266,15 @@ if (!isTauri) {
                   tabs.length > 0 && activityBarVisible ? '44px' : '0px',
               }"
             >
+              <!-- 毛玻璃浓度色罩：亚克力原生效果在 Windows 11 走 DWM 系统背景路径，
+                   不接受自定义色罩（window-vibrancy 忽略 color），浓度改由这层 DOM
+                   色罩控制（透明度 = 磨砂浓度滑杆）。置于壁纸层之下：设壁纸时壁纸
+                   作为底层背景盖住色罩，与历史行为一致。 -->
+              <div
+                v-if="terminalStore.windowBlur"
+                class="acrylic-tint-layer"
+                :style="{ opacity: String(terminalStore.acrylicTint) }"
+              />
               <div
                 v-if="terminalStore.wallpaperUrl"
                 class="wallpaper-layer"
@@ -482,6 +491,15 @@ if (!isTauri) {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* 毛玻璃浓度色罩（见模板内注释）：盖在亚克力原生效果之上、壁纸与内容之下 */
+.acrylic-tint-layer {
+  position: absolute;
+  inset: 0;
+  background: var(--ashell-bg-solid, #0f1115);
   z-index: 0;
   pointer-events: none;
 }

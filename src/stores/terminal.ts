@@ -336,13 +336,11 @@ export const useTerminalStore = defineStore("terminal", () => {
         await win.clearEffects()
         return
       }
-      const isDark = resolveCurrentTerminalTheme() === "dark"
-      const r = isDark ? 15 : 244
-      const g = isDark ? 17 : 246
-      const b = isDark ? 21 : 251
+      // 只传 effects 不传 color：Windows 11 的 DWM 系统背景路径（window-vibrancy
+      // 的 DWMSBT_TRANSIENTWINDOW）完全忽略 color，色罩浓度由 App.vue 的
+      // .acrylic-tint-layer DOM 色罩层控制（各 Windows 版本行为一致）。
       await win.setEffects({
         effects: ["acrylic" as never],
-        color: [r, g, b, Math.round(acrylicTint.value * 255)],
       })
     } catch {
       // 非 Windows 或不支持 — 静默忽略，CSS 透明仍生效
