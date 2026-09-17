@@ -10,7 +10,6 @@ import {
   NCard,
   NSpace,
   NEmpty,
-  NSpin,
   NTooltip,
   NTreeSelect,
   NForm,
@@ -104,14 +103,12 @@ function collectHosts(list: HostNode[], out: HostNode[] = []): HostNode[] {
 
 const flatTreeData = computed<TreeOption[]>(() => {
   const hosts = collectHosts(store.tree)
-  // 平铺是单一列表：置顶主机全局置顶（树形视图则是组内置顶），其余按排序模式
-  const pinned = hosts.filter((h) => store.isHostPinned(h.id))
-  const rest = hosts.filter((h) => !store.isHostPinned(h.id))
+  // 平铺是单一列表：整体按排序模式排
   const cmp =
     store.hostSortMode === "addr"
       ? (a: HostNode, b: HostNode) => compareAddr(a.host ?? "", b.host ?? "")
       : (a: HostNode, b: HostNode) => a.label.localeCompare(b.label)
-  return [...pinned.sort(cmp), ...rest.sort(cmp)] as unknown as TreeOption[]
+  return [...hosts].sort(cmp) as unknown as TreeOption[]
 })
 const displayData = computed<TreeOption[]>(() =>
   flatMode.value ? flatTreeData.value : treeData.value,
@@ -153,30 +150,66 @@ const allExpanded = computed(() => {
   return folderKeys.every((k) => expandedKeys.value.includes(k))
 })
 
-// 搜索口径：名称 + 主机地址。NTree filter 与"无匹配"计数共用同一判定，
-// 保证空态提示和实际过滤结果一致
+// 搜索口径：名称 + 主机地址（大小写不敏感）
 function nodeMatchesPattern(node: HostNode, q: string): boolean {
   if (!q) return true
   if (node.label.toLowerCase().includes(q)) return true
   return node.type === "host" && !!node.host && node.host.toLowerCase().includes(q)
 }
 
-const treeFilter = (pattern: string, option: TreeOption): boolean =>
-  nodeMatchesPattern(option as unknown as HostNode, pattern.toLowerCase())
+/* ---------- 数据层过滤：先在数据里筛出命中项,再把新列表交给 NTree 渲染。
+   不用 NTree 的 pattern/filter/show-irrelevant-nodes——避免其内部过滤
+   与行组件更新在同一次 flush 里互相踩踏（2.45 崩溃根因） ---------- */
+const isFiltering = computed(() => filter.value.trim().length > 0)
 
-const matchCount = computed(() => {
-  const q = filter.value.toLowerCase()
-  if (!q) return -1
-  let n = 0
-  const walk = (list: TreeOption[]) => {
-    for (const o of list) {
-      if (nodeMatchesPattern(o as unknown as HostNode, q)) n++
-      if (o.children) walk(o.children)
+/** 剪枝：保留命中节点与其祖先路径；命中目录若无匹配子孙则保留为叶子。无命中返回 null */
+function pruneToMatches(list: HostNode[], q: string): HostNode[] | null {
+  const out: HostNode[] = []
+  for (const n of list) {
+    if (n.type === "folder" && n.children) {
+      const kids = pruneToMatches(n.children, q)
+      if (kids) {
+        out.push({ ...n, children: kids })
+        continue
+      }
+    }
+    if (nodeMatchesPattern(n, q)) {
+      out.push(n.type === "folder" ? { ...n, children: [] } : n)
     }
   }
-  walk(displayData.value)
-  return n
+  return out.length > 0 ? out : null
+}
+
+const filteredDisplayData = computed<TreeOption[]>(() => {
+  const q = filter.value.trim().toLowerCase()
+  if (!q) return displayData.value
+  if (flatMode.value) {
+    return (displayData.value as unknown as HostNode[]).filter((n) =>
+      nodeMatchesPattern(n, q),
+    ) as unknown as TreeOption[]
+  }
+  return (pruneToMatches(store.tree, q) ?? []) as unknown as TreeOption[]
 })
+
+// 过滤态下命中路径全部展开,展开键由过滤结果决定,不读写 expandedKeys
+const visibleExpandedKeys = computed<string[]>(() => {
+  if (!isFiltering.value) return expandedKeys.value
+  const keys: string[] = []
+  const walk = (list: HostNode[]) => {
+    for (const n of list) {
+      if (n.type !== "folder") continue
+      keys.push(n.key)
+      if (n.children) walk(n.children)
+    }
+  }
+  walk(filteredDisplayData.value as unknown as HostNode[])
+  return keys
+})
+
+function onUpdateExpandedKeys(keys: string[]) {
+  if (isFiltering.value) return
+  expandedKeys.value = keys
+}
 
 function toggleAllExpand() {
   expandedKeys.value = allExpanded.value ? [] : collectFolderKeys(store.tree)
@@ -202,7 +235,8 @@ const folderSelectOptions = computed<TreeSelectOption[]>(() => [
 function renderPrefix({ option }: { option: TreeOption }) {
   const node = option as unknown as HostNode
   if (node.type === "folder") {
-    const expanded = expandedKeys.value.includes(node.key)
+    // 过滤态下命中路径全展开,目录图标按展开绘制
+    const expanded = isFiltering.value || expandedKeys.value.includes(node.key)
     return h(
       NIcon,
       { color: "#f1c27d", size: 16 },
@@ -245,24 +279,13 @@ function suffixTextOfNode(node: HostNode): string {
 
 function renderSuffix({ option }: { option: TreeOption }) {
   const node = option as unknown as HostNode
-  const pinned = node.type === "host" && store.isHostPinned(node.id)
   const text = suffixTextOfNode(node)
-  if (!pinned && !text) return null
-  // 常驻渲染 + 0 宽度收起，悬停（CSS :hover）时宽度动画展开，名字被平滑推开；
-  // 置顶图钉在折叠网格之外，不受 hover 门控
+  if (!text) return null
+  // 常驻渲染 + 0 宽度收起，悬停（CSS :hover）时宽度动画展开，名字被平滑推开
   return h("span", { class: "node-suffix-wrap" }, [
-    pinned
-      ? h(
-          NIcon,
-          { class: "node-pin", size: 12, color: "#7c5cff" },
-          { default: () => h(PushpinFilled) },
-        )
-      : null,
-    text
-      ? h("span", { class: "node-suffix" }, [
-          h("span", { class: "node-suffix-text" }, text),
-        ])
-      : null,
+    h("span", { class: "node-suffix" }, [
+      h("span", { class: "node-suffix-text" }, text),
+    ]),
   ])
 }
 
@@ -755,15 +778,6 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       },
       { label: t("hosts.ctxMenu.copy"), key: "copy", icon: renderMenuIcon(CopyOutline) },
       {
-        label: store.isHostPinned(node.id)
-          ? t("hosts.ctxMenu.unpinTop")
-          : t("hosts.ctxMenu.pinTop"),
-        key: "pin-top",
-        icon: renderMenuIcon(
-          store.isHostPinned(node.id) ? PushpinFilled : PushpinOutlined,
-        ),
-      },
-      {
         label: t("hosts.ctxMenu.delete"),
         key: "delete",
         icon: renderMenuIcon(TrashOutline),
@@ -817,9 +831,6 @@ function onCtxSelect(key: string) {
       break
     case "copy-conn":
       if (node?.type === "host") void copyConnStr(node)
-      break
-    case "pin-top":
-      if (node?.type === "host") store.togglePinHost(node.id)
       break
     case "rename":
       if (node) openRename(node)
@@ -1122,7 +1133,7 @@ async function onRefresh() {
       @contextmenu="onBlankContextMenu"
       @keydown="onTreeKeydown"
     >
-      <NSpin :show="store.loading" class="tree-spin">
+      <div class="tree-spin">
         <NEmpty
           v-if="!store.loading && treeData.length === 0"
           :description="t('hosts.tree.empty')"
@@ -1143,7 +1154,7 @@ async function onRefresh() {
           </div>
         </NEmpty>
         <NEmpty
-          v-else-if="!store.loading && filter && matchCount === 0"
+          v-else-if="!store.loading && isFiltering && filteredDisplayData.length === 0"
           :description="t('hosts.tree.noMatch')"
         >
           <NButton size="small" quaternary @click="filter = ''">
@@ -1152,17 +1163,13 @@ async function onRefresh() {
         </NEmpty>
         <NTree
           v-else
-          :data="displayData"
-          :pattern="filter"
-          :filter="treeFilter"
-          :show-irrelevant-nodes="false"
+          :data="filteredDisplayData"
           block-line
           show-line
           ellipsis
-          virtual-scroll
           expand-on-click
           :selected-keys="selectedKeys"
-          :expanded-keys="expandedKeys"
+          :expanded-keys="visibleExpandedKeys"
           :render-label="renderLabel"
           :render-prefix="renderPrefix"
           :render-suffix="renderSuffix"
@@ -1173,9 +1180,9 @@ async function onRefresh() {
           children-field="children"
           style="height: 100%"
           @update:selected-keys="(k: string[]) => (selectedKeys = k)"
-          @update:expanded-keys="(k: string[]) => (expandedKeys = k)"
+          @update:expanded-keys="onUpdateExpandedKeys"
         />
-      </NSpin>
+      </div>
     </div>
 
     <NDropdown
@@ -1358,10 +1365,6 @@ async function onRefresh() {
   margin-top: 8px;
 }
 
-:deep(.tree-spin .n-spin-content) {
-  height: 100%;
-}
-
 :deep(.n-tree-node-content) {
   font-size: 13px;
   border-radius: 6px;
@@ -1369,15 +1372,6 @@ async function onRefresh() {
 
 :deep(.n-tree-node--selected .n-tree-node-content) {
   background: rgba(124, 92, 255, 0.15) !important;
-}
-
-/* 搜索命中态：压掉 naive 默认的 label 下划线（highlight 会把 __text 的透明
-   border-bottom 翻成可见色），改为命中行淡紫底色区分 */
-:deep(.n-tree-node-content__text) {
-  border-bottom-color: transparent !important;
-}
-:deep(.n-tree-node--highlight .n-tree-node-content) {
-  background: rgba(124, 92, 255, 0.08);
 }
 
 /* 悬停节点行末元信息：grid 0fr→1fr 做宽度动画，悬停时名字被平滑推开而非跳变；
@@ -1423,15 +1417,11 @@ async function onRefresh() {
   text-overflow: ellipsis;
 }
 
-/* 置顶图钉：suffix 内、折叠网格外的常驻图标 */
+/* 行末元信息外层容器：inline-flex 收紧排布 */
 :deep(.node-suffix-wrap) {
   display: inline-flex;
   align-items: center;
   min-width: 0;
-}
-:deep(.node-pin) {
-  flex-shrink: 0;
-  margin-right: 4px;
 }
 
 /* 拖拽中：drop 目标 folder 高亮 */
