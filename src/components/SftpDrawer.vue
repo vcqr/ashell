@@ -3062,7 +3062,7 @@ function openInStandaloneWindow() {
             :size="dualPane ? splitSize : 0"
             :min="SPLIT_MIN"
             :max="SPLIT_MAX"
-            :resize-trigger-size="5"
+            :resize-trigger-size="dualPane ? 21 : 5"
             @mousedown.capture="onSplitMouseDownCapture"
             @update:size="onSplitSizeUpdate"
             @drag-end="persistSplitSize"
