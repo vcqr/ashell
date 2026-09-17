@@ -519,15 +519,13 @@ export const useTerminalStore = defineStore("terminal", () => {
     const base = resolveCurrentTerminalTheme() === "dark" ? darkTheme : lightTheme
     const theme = { ...base }
     if (wallpaperUrl.value) {
-      // 壁纸模式下背景保留一层半透明深色底，而不是全透明（原为 #00000000）。
-      // 原因：xterm 反显（reverse）单元格的前景色直接取自背景色（含 alpha），
-      // 背景全透明时反显文字完全隐形。而现代 shell 恰恰大量依赖反显：
-      // bash 5.1+/Git Bash 的 bracketed paste 会用 standout 高亮粘贴区域
-      // （回显 \x1b[7m…），vim 可视选择、htop 选中行等同理——表现为
-      // "粘贴后只剩一块浅色底、文字看不清"。0.6 alpha 下反显前景对比度
-      // 约 4.5:1，壁纸仍能透出。
-      const bg = theme.background ?? "#0f1115"
-      theme.background = /^#([0-9a-f]{6})$/i.test(bg) ? hexToRgba(bg, 0.6) : bg
+      // 壁纸模式下背景完全透明，让壁纸透过显示，且终端区域与窗口其余部分
+      // 使用同一份壁纸透明度（wallpaperOpacity），不再额外叠暗层。
+      // 反显（standout，如 bash bracketed paste 的粘贴高亮、vim 可视选择）的
+      // 可读性由 DOM 渲染器保证：它对反显默认色用 opaque(background) 作为前景
+      // （TerminalView 会在此模式下停用 WebGL 渲染器——WebGL 不做该处理，
+      // 透明前景会直接隐形，且其画布只在字符网格范围内绘制，边缘会露出亮带）。
+      theme.background = "#00000000"
     } else if (windowOpacity.value < 1 && theme.background) {
       theme.background = hexToRgba(theme.background, windowOpacity.value)
     }

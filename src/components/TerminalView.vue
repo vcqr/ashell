@@ -685,6 +685,10 @@ function installAltScreenScrollFix() {
 
 function loadWebgl() {
   if (!term || webglAddon) return
+  // 壁纸模式下停用 WebGL：其画布只在字符网格范围内绘制背景（网格外露出亮带），
+  // 且对透明主题背景不做反显前景的 opaque() 处理（粘贴高亮等反显内容会隐形）。
+  // 统一回退到 DOM 渲染器（见 stores/terminal.ts getActiveTerminalTheme 注释）。
+  if (termStore.wallpaperUrl) return
   try {
     const addon = new WebglAddon()
     // GPU 上下文丢失（如外接显示器切换、长时间休眠、驱动崩溃）时及时 dispose，
@@ -1442,6 +1446,10 @@ watch(
   ],
   () => {
     applyTheme()
+    // 壁纸开关同时切换渲染器（见 loadWebgl 内的守卫）：设壁纸 → 停用 WebGL
+    // 回退 DOM 渲染器；清除壁纸 → 按设置恢复 WebGL。dispose/load 自身有幂等保护。
+    if (termStore.wallpaperUrl) disposeWebgl()
+    else if (termStore.webglEnabled) loadWebgl()
   },
   { deep: true },
 )
@@ -1855,9 +1863,9 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 0;
   overflow: hidden;
-  /* 不留任何 padding/border 内缩：半透明背景（壁纸/窗口透明度）下，画布外的
-     任何区域都不会被主题背景覆盖，会露出一 条亮度不同的边带（画布内部对主题
-     背景的叠加层数无法在外部精确复刻）。画布铺满整个 host 才能无缝。 */
+  /* DOM 渲染器（壁纸模式）的背景是整块连续的 CSS 层，8px 内缩区域与字符网格
+     区域亮度一致，不会再出现 WebGL 画布网格外的亮带 */
+  padding-left: 8px;
   box-sizing: border-box;
   contain: layout paint;
 }
