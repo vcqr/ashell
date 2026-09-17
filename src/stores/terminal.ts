@@ -318,7 +318,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       const b = isDark ? 21 : 251
       await win.setEffects({
         effects: ["acrylic" as never],
-        color: [r, g, b, 115],
+        color: [r, g, b, 70],
       })
     } catch {
       // 非 Windows 或不支持 — 静默忽略，CSS 透明仍生效
