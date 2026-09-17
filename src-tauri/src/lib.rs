@@ -307,7 +307,15 @@ pub fn run() {
             let menu = MenuBuilder::new(app)
                 .items(&[&app_menu, &edit_menu, &window_menu])
                 .build()?;
+
+            // macOS：菜单在系统菜单栏顶部，保留标准应用菜单。
+            // Windows：不设置原生菜单——菜单栏会以悬浮条形式绘制在自绘标题栏与
+            // 终端内容上方（窗口状态变化后还会重新出现），而应用使用自绘标题栏 +
+            // 标签栏，原生菜单栏不属于这里的视觉；其编辑快捷键与终端按键处理冲突。
+            #[cfg(target_os = "macos")]
             app.set_menu(menu)?;
+            #[cfg(not(target_os = "macos"))]
+            drop(menu);
 
             // 前端正常情况下会在首帧后主动 show；这里兜底：前端异常时避免窗口一直隐藏。
             if let Some(win) = app.get_webview_window("main") {
