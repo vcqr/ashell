@@ -242,7 +242,8 @@ function goUp() {
 }
 
 function goHome() {
-  void load(undefined)
+  // 空串 = 后端语义的用户家目录；无参 load() 会回退当前目录（等于刷新）
+  void load("")
 }
 
 /* ---------- 工具行（表格上方常用操作，与远程栏 .toolbar 对位） ---------- */
