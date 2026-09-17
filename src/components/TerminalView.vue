@@ -685,10 +685,12 @@ function installAltScreenScrollFix() {
 
 function loadWebgl() {
   if (!term || webglAddon) return
-  // 壁纸模式下停用 WebGL：其画布只在字符网格范围内绘制背景（网格外露出亮带），
-  // 且对透明主题背景不做反显前景的 opaque() 处理（粘贴高亮等反显内容会隐形）。
-  // 统一回退到 DOM 渲染器（见 stores/terminal.ts getActiveTerminalTheme 注释）。
-  if (termStore.wallpaperUrl) return
+  // 半透明背景下停用 WebGL（壁纸开启 / 窗口透明度 <100%）：WebGL 画布对主题
+  // 背景多层叠加且只覆盖字符网格，会让终端区比面板更浑浊、网格外露底色，
+  // 破坏窗口透明与亚克力效果。统一回退 DOM 渲染器：它只为显式背景色的单元格
+  // 绘制背景，默认背景由窗口 CSS 层（--ashell-bg-alpha）呈现，与面板同源；
+  // 反显内容的前景由其 opaque(background) 规则保证可读。
+  if (termStore.wallpaperUrl || termStore.windowOpacity < 1) return
   try {
     const addon = new WebglAddon()
     // GPU 上下文丢失（如外接显示器切换、长时间休眠、驱动崩溃）时及时 dispose，
@@ -1446,9 +1448,10 @@ watch(
   ],
   () => {
     applyTheme()
-    // 壁纸开关同时切换渲染器（见 loadWebgl 内的守卫）：设壁纸 → 停用 WebGL
-    // 回退 DOM 渲染器；清除壁纸 → 按设置恢复 WebGL。dispose/load 自身有幂等保护。
-    if (termStore.wallpaperUrl) disposeWebgl()
+    // 主题背景半透明（壁纸开启 / 窗口透明度 <100%）时切换渲染器（见 loadWebgl
+    // 内的守卫）：停用 WebGL 回退 DOM 渲染器，恢复不透明后按设置恢复 WebGL。
+    // dispose/load 自身有幂等保护。
+    if (termStore.wallpaperUrl || termStore.windowOpacity < 1) disposeWebgl()
     else if (termStore.webglEnabled) loadWebgl()
   },
   { deep: true },
