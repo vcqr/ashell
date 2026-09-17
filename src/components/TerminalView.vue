@@ -61,20 +61,6 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
-/** .terminal-host 左侧描边颜色 = 主题背景色，随主题/透明度/壁纸设置动态更新 */
-const hostBgColor = ref("transparent")
-
-/**
- * 画布区域会把主题背景叠两层（WebGL 渲染器：全视口清屏矩形 + 默认背景单元格
- * 矩形，见 @xterm/addon-webgl RectangleRenderer），半透明背景下等效 alpha 为
- * 1-(1-a)²。左侧 8px 描边必须使用合成后的颜色，否则比画布区亮一条。
- */
-function doubledAlphaBackground(bg: string): string {
-  const m = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(bg)
-  if (!m) return bg
-  const a = Number(m[4]!)
-  return `rgba(${m[1]!}, ${m[2]!}, ${m[3]!}, ${(1 - (1 - a) * (1 - a)).toFixed(3)})`
-}
 
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
@@ -278,12 +264,7 @@ function declineHostKey() {
 
 function applyTheme() {
   if (!term) return
-  const theme = termStore.getActiveTerminalTheme()
-  term.options.theme = theme
-  // 左侧 8px 用主题背景色描边（见 .terminal-host 的 border-left）：
-  // padding 区域不被 xterm 画布覆盖，半透明背景下会露出未暗化的壁纸形成亮条；
-  // alpha 需翻倍以匹配画布的两层叠加（见 doubledAlphaBackground）
-  hostBgColor.value = doubledAlphaBackground(theme.background ?? "transparent")
+  term.options.theme = termStore.getActiveTerminalTheme()
 }
 
 function setStatus(status: TermStatus) {
@@ -1599,7 +1580,7 @@ onBeforeUnmount(() => {
         :style="progressState === 3 ? undefined : { width: `${progressValue}%` }"
       />
     </div>
-    <div ref="containerRef" class="terminal-host" :style="{ borderLeftColor: hostBgColor }"></div>
+    <div ref="containerRef" class="terminal-host"></div>
     <Transition name="search-fade">
       <div
         v-if="searchOpen"
@@ -1874,10 +1855,9 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 0;
   overflow: hidden;
-  /* 左侧 8px 留白用 border 而非 padding：border 颜色由 applyTheme 同步为
-     主题背景色，半透明背景下与画布区域同色；padding 区域则无任何覆盖，
-     壁纸/透明窗口下会露出一条未暗化的亮带 */
-  border-left: 8px solid transparent;
+  /* 不留任何 padding/border 内缩：半透明背景（壁纸/窗口透明度）下，画布外的
+     任何区域都不会被主题背景覆盖，会露出一 条亮度不同的边带（画布内部对主题
+     背景的叠加层数无法在外部精确复刻）。画布铺满整个 host 才能无缝。 */
   box-sizing: border-box;
   contain: layout paint;
 }
