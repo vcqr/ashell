@@ -297,7 +297,11 @@ export const useTerminalStore = defineStore("terminal", () => {
    * 根据当前 blur + opacity 配置应用原生窗口效果。
    *
    * - blur === false：清除效果（纯透明，无模糊）
-   * - blur === true：Acrylic 亚克力，color alpha 跟随 opacity
+   * - blur === true：Acrylic 亚克力，色罩固定为半透明
+   *
+   * 色罩 alpha 不能跟随窗口透明度（1.0 → 255 会让色罩完全不透明，把亚克力
+   * 模糊背景整个盖死，表现为"开启毛玻璃后窗口透明失效"）。模糊的浓淡由该
+   * 固定色罩决定；内容层的透明度仍由 --ashell-bg-alpha 控制。
    */
   async function applyWindowEffect() {
     if (!isTauri) return
@@ -314,7 +318,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       const b = isDark ? 21 : 251
       await win.setEffects({
         effects: ["acrylic" as never],
-        color: [r, g, b, Math.round(windowOpacity.value * 255)],
+        color: [r, g, b, 115],
       })
     } catch {
       // 非 Windows 或不支持 — 静默忽略，CSS 透明仍生效
