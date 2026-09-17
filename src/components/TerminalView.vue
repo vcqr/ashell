@@ -1885,7 +1885,12 @@ onBeforeUnmount(() => {
   will-change: transform;
 }
 
-.terminal-host :deep(.xterm-viewport) {
+/* Viewport.ts 会把主题背景色内联写到 .xterm-viewport 及其子元素
+   .xterm-scrollable-element 上（前者还有 xterm.css 的 #000 兜底）。半透明窗口
+   （壁纸/窗口透明度/亚克力）下这层内联背景会在窗口 CSS 层之上再叠一层暗色，
+   使终端区比面板更浑浊——强制一并透明，让终端与窗口共用同一份背景层。 */
+.terminal-host :deep(.xterm-viewport),
+.terminal-host :deep(.xterm-scrollable-element) {
   background: transparent !important;
 }
 
