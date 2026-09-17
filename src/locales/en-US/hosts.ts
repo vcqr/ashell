@@ -30,6 +30,13 @@ export default {
     unpin: "Unpin",
     hostCountShort: "{count}",
     clearFilter: "Clear filter",
+    sort: "Sort",
+    sortByName: "By name",
+    sortByAddr: "By address",
+    sortedByName: "Sorted by name",
+    sortedByAddr: "Sorted by address",
+    sortedByNameGrouped: "Sorted by name (within folders)",
+    sortedByAddrGrouped: "Sorted by address (within folders)",
   },
   ctxMenu: {
     newSubFolder: "New subfolder",
@@ -41,6 +48,8 @@ export default {
     edit: "Edit",
     copy: "Copy",
     copyConn: "Copy connection string",
+    pinTop: "Pin to top",
+    unpinTop: "Unpin",
   },
   message: {
     backendNotReady: "Backend not ready: {error}",

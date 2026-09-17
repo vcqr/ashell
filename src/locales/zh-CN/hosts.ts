@@ -30,6 +30,13 @@ export default {
     unpin: "取消固定",
     hostCountShort: "{count} 台",
     clearFilter: "清除筛选",
+    sort: "排序",
+    sortByName: "按名称",
+    sortByAddr: "按地址",
+    sortedByName: "已按名称排序",
+    sortedByAddr: "已按地址排序",
+    sortedByNameGrouped: "已按名称排序（目录内生效）",
+    sortedByAddrGrouped: "已按地址排序（目录内生效）",
   },
   ctxMenu: {
     newSubFolder: "新建子目录",
@@ -41,6 +48,8 @@ export default {
     edit: "编辑",
     copy: "复制",
     copyConn: "复制连接串",
+    pinTop: "置顶",
+    unpinTop: "取消置顶",
   },
   message: {
     backendNotReady: "后端未就绪: {error}",

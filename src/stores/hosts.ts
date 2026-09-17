@@ -22,8 +22,69 @@ import type {
   HostNode,
 } from '@/types'
 
-/** 把 group + host 列表合成前端的树结构 */
-function buildTree(groups: Group[], hosts: HostWithGroup[]): HostNode[] {
+/** 主机排序模式：按名称 / 按地址（IP 数值序） */
+export type HostSortMode = "name" | "addr"
+
+const PINNED_KEY = "ashell:host-pinned-ids"
+const SORT_KEY = "ashell:host-sort-mode"
+
+function loadPinnedHostIds(): Set<number> {
+  if (typeof localStorage === "undefined") return new Set()
+  try {
+    const raw = localStorage.getItem(PINNED_KEY)
+    const arr = raw ? (JSON.parse(raw) as unknown) : []
+    if (!Array.isArray(arr)) return new Set()
+    return new Set(
+      arr.filter((n): n is number => typeof n === "number" && Number.isFinite(n)),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+function loadHostSortMode(): HostSortMode {
+  if (typeof localStorage === "undefined") return "name"
+  return localStorage.getItem(SORT_KEY) === "addr" ? "addr" : "name"
+}
+
+/** 地址比较：双方都是 IPv4 时按 octet 数值比较（字典序会把 10.x 排在 9.x 前），否则退化为字符串比较 */
+export function compareAddr(a: string, b: string): number {
+  const pa = a.split(".").map(Number)
+  const pb = b.split(".").map(Number)
+  const ipv4 =
+    pa.length === 4 &&
+    pb.length === 4 &&
+    pa.every((n) => Number.isFinite(n)) &&
+    pb.every((n) => Number.isFinite(n))
+  if (ipv4) {
+    for (let i = 0; i < 4; i++) {
+      if (pa[i] !== pb[i]) return pa[i]! - pb[i]!
+    }
+    return 0
+  }
+  return a.localeCompare(b)
+}
+
+/** 组内排序：置顶主机优先（组内相对顺序保持名称序），其余按排序模式 */
+function sortHosts(
+  list: HostWithGroup[],
+  pinned: Set<number>,
+  mode: HostSortMode,
+): HostWithGroup[] {
+  return list.slice().sort((a, b) => {
+    const pa = pinned.has(a.id) ? 0 : 1
+    const pb = pinned.has(b.id) ? 0 : 1
+    if (pa !== pb) return pa - pb
+    return mode === "addr" ? compareAddr(a.addr, b.addr) : a.name.localeCompare(b.name)
+  })
+}
+
+function buildTree(
+  groups: Group[],
+  hosts: HostWithGroup[],
+  pinned: Set<number>,
+  mode: HostSortMode,
+): HostNode[] {
   // 按 parent_id 索引 group
   const groupChildren = new Map<number, Group[]>()
   for (const g of groups) {
@@ -45,10 +106,7 @@ function buildTree(groups: Group[], hosts: HostWithGroup[]): HostNode[] {
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(makeFolder)
-    const subHosts = (hostsByGid.get(g.id) ?? [])
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(makeHost)
+    const subHosts = sortHosts(hostsByGid.get(g.id) ?? [], pinned, mode).map(makeHost)
     return {
       key: `folder-${g.id}`,
       label: g.name,
@@ -84,10 +142,7 @@ function buildTree(groups: Group[], hosts: HostWithGroup[]): HostNode[] {
     .map(makeFolder)
 
   // gid === 0 的 host 直接挂在根（如果允许）
-  const rootHosts = (hostsByGid.get(0) ?? [])
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map(makeHost)
+  const rootHosts = sortHosts(hostsByGid.get(0) ?? [], pinned, mode).map(makeHost)
 
   return [...rootGroups, ...rootHosts]
 }
@@ -98,6 +153,40 @@ export const useHostStore = defineStore('hosts', () => {
   const tree = ref<HostNode[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  // 置顶主机：纯前端偏好（不动后端 schema），组内置顶优先，树形/平铺共用
+  const pinnedHostIds = ref<Set<number>>(loadPinnedHostIds())
+  // 主机排序模式（组内生效；平铺视图额外把置顶全局提前）
+  const hostSortMode = ref<HostSortMode>(loadHostSortMode())
+
+  function isHostPinned(id: number): boolean {
+    return pinnedHostIds.value.has(id)
+  }
+
+  function togglePinHost(id: number): void {
+    const next = new Set(pinnedHostIds.value)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    pinnedHostIds.value = next
+    try {
+      localStorage.setItem(PINNED_KEY, JSON.stringify([...next]))
+    } catch {
+      // ignore
+    }
+    // 重排只需本地重建树，不回源后端
+    tree.value = buildTree(groups.value, hosts.value, next, hostSortMode.value)
+  }
+
+  function setHostSortMode(mode: HostSortMode): void {
+    if (hostSortMode.value === mode) return
+    hostSortMode.value = mode
+    try {
+      localStorage.setItem(SORT_KEY, mode)
+    } catch {
+      // ignore
+    }
+    // 纯本地重排，不回源后端
+    tree.value = buildTree(groups.value, hosts.value, pinnedHostIds.value, mode)
+  }
 
   async function refresh() {
     loading.value = true
@@ -106,7 +195,7 @@ export const useHostStore = defineStore('hosts', () => {
       const [g, h] = await Promise.all([listGroups(), listHostsWithGroup()])
       groups.value = g
       hosts.value = h
-      tree.value = buildTree(g, h)
+      tree.value = buildTree(g, h, pinnedHostIds.value, hostSortMode.value)
     } catch (e) {
       error.value = String(e)
       throw e
@@ -172,5 +261,9 @@ export const useHostStore = defineStore('hosts', () => {
     addHost,
     editHost,
     removeHost,
+    isHostPinned,
+    togglePinHost,
+    hostSortMode,
+    setHostSortMode,
   }
 })

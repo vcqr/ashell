@@ -37,6 +37,8 @@ import {
   ExpandOutline,
   ContractOutline,
   LinkOutline,
+  SwapVerticalOutline,
+  CheckmarkOutline,
 } from "@vicons/ionicons5"
 import { Folder, FolderOpen } from "@vicons/fa"
 import { FolderAddOutlined, PushpinFilled, PushpinOutlined } from "@vicons/antd"
@@ -45,6 +47,7 @@ import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
 import { useHostsPin } from "@/composables/useHostsPin"
 import { copyText } from "@/utils/clipboard"
+import { compareAddr } from "@/stores/hosts"
 import SshConfigImportModal from "@/components/SshConfigImportModal.vue"
 import type { HostNode, Host } from "@/types"
 
@@ -99,7 +102,17 @@ function collectHosts(list: HostNode[], out: HostNode[] = []): HostNode[] {
   return out
 }
 
-const flatTreeData = computed<TreeOption[]>(() => collectHosts(store.tree) as unknown as TreeOption[])
+const flatTreeData = computed<TreeOption[]>(() => {
+  const hosts = collectHosts(store.tree)
+  // 平铺是单一列表：置顶主机全局置顶（树形视图则是组内置顶），其余按排序模式
+  const pinned = hosts.filter((h) => store.isHostPinned(h.id))
+  const rest = hosts.filter((h) => !store.isHostPinned(h.id))
+  const cmp =
+    store.hostSortMode === "addr"
+      ? (a: HostNode, b: HostNode) => compareAddr(a.host ?? "", b.host ?? "")
+      : (a: HostNode, b: HostNode) => a.label.localeCompare(b.label)
+  return [...pinned.sort(cmp), ...rest.sort(cmp)] as unknown as TreeOption[]
+})
 const displayData = computed<TreeOption[]>(() =>
   flatMode.value ? flatTreeData.value : treeData.value,
 )
@@ -232,11 +245,24 @@ function suffixTextOfNode(node: HostNode): string {
 
 function renderSuffix({ option }: { option: TreeOption }) {
   const node = option as unknown as HostNode
+  const pinned = node.type === "host" && store.isHostPinned(node.id)
   const text = suffixTextOfNode(node)
-  if (!text) return null
-  // 常驻渲染 + 0 宽度收起，悬停（CSS :hover）时宽度动画展开，名字被平滑推开
-  return h("span", { class: "node-suffix" }, [
-    h("span", { class: "node-suffix-text" }, text),
+  if (!pinned && !text) return null
+  // 常驻渲染 + 0 宽度收起，悬停（CSS :hover）时宽度动画展开，名字被平滑推开；
+  // 置顶图钉在折叠网格之外，不受 hover 门控
+  return h("span", { class: "node-suffix-wrap" }, [
+    pinned
+      ? h(
+          NIcon,
+          { class: "node-pin", size: 12, color: "#7c5cff" },
+          { default: () => h(PushpinFilled) },
+        )
+      : null,
+    text
+      ? h("span", { class: "node-suffix" }, [
+          h("span", { class: "node-suffix-text" }, text),
+        ])
+      : null,
   ])
 }
 
@@ -657,6 +683,30 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
         key: "refresh",
         icon: renderMenuIcon(RefreshOutline),
       },
+      { type: "divider", key: "d-blank-2" },
+      {
+        label: t("hosts.tree.sort"),
+        key: "sort",
+        icon: renderMenuIcon(SwapVerticalOutline),
+        children: [
+          {
+            label: t("hosts.tree.sortByName"),
+            key: "sort-name",
+            icon:
+              store.hostSortMode === "name"
+                ? renderMenuIcon(CheckmarkOutline)
+                : undefined,
+          },
+          {
+            label: t("hosts.tree.sortByAddr"),
+            key: "sort-addr",
+            icon:
+              store.hostSortMode === "addr"
+                ? renderMenuIcon(CheckmarkOutline)
+                : undefined,
+          },
+        ],
+      },
     )
     return opts
   }
@@ -705,6 +755,15 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       },
       { label: t("hosts.ctxMenu.copy"), key: "copy", icon: renderMenuIcon(CopyOutline) },
       {
+        label: store.isHostPinned(node.id)
+          ? t("hosts.ctxMenu.unpinTop")
+          : t("hosts.ctxMenu.pinTop"),
+        key: "pin-top",
+        icon: renderMenuIcon(
+          store.isHostPinned(node.id) ? PushpinFilled : PushpinOutlined,
+        ),
+      },
+      {
         label: t("hosts.ctxMenu.delete"),
         key: "delete",
         icon: renderMenuIcon(TrashOutline),
@@ -728,6 +787,19 @@ function onCtxSelect(key: string) {
     case "refresh":
       void onRefresh()
       break
+    case "sort-name":
+      store.setHostSortMode("name")
+      // 树形视图排序只在目录内生效，明确告知避免"点了没反应"的误解
+      message.success(
+        t(flatMode.value ? "hosts.tree.sortedByName" : "hosts.tree.sortedByNameGrouped"),
+      )
+      break
+    case "sort-addr":
+      store.setHostSortMode("addr")
+      message.success(
+        t(flatMode.value ? "hosts.tree.sortedByAddr" : "hosts.tree.sortedByAddrGrouped"),
+      )
+      break
     case "import-ssh":
       importModalShow.value = true
       break
@@ -745,6 +817,9 @@ function onCtxSelect(key: string) {
       break
     case "copy-conn":
       if (node?.type === "host") void copyConnStr(node)
+      break
+    case "pin-top":
+      if (node?.type === "host") store.togglePinHost(node.id)
       break
     case "rename":
       if (node) openRename(node)
@@ -1346,6 +1421,17 @@ async function onRefresh() {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* 置顶图钉：suffix 内、折叠网格外的常驻图标 */
+:deep(.node-suffix-wrap) {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+:deep(.node-pin) {
+  flex-shrink: 0;
+  margin-right: 4px;
 }
 
 /* 拖拽中：drop 目标 folder 高亮 */
