@@ -229,6 +229,10 @@ export const useTerminalStore = defineStore("terminal", () => {
   const WINDOW_BLUR_KEY = "ashell:window-blur"
   const windowBlur = ref<boolean>(loadWindowBlur())
 
+  /** 亚克力色罩浓度 (0 – 1)。0 = 纯模糊无色罩，1 = 色罩完全不透明（模糊被盖死）。 */
+  const ACRYLIC_TINT_KEY = "ashell:acrylic-tint"
+  const acrylicTint = ref<number>(loadAcrylicTint())
+
   /** 壁纸透明度 (0 – 1)。1 = 完全不透明，0 = 完全透明。 */
   const WALLPAPER_OPACITY_KEY = "ashell:wallpaper-opacity"
   const wallpaperOpacity = ref<number>(loadWallpaperOpacity())
@@ -244,6 +248,15 @@ export const useTerminalStore = defineStore("terminal", () => {
   function loadWindowBlur(): boolean {
     if (typeof localStorage === "undefined") return true
     return localStorage.getItem(WINDOW_BLUR_KEY) !== "false"
+  }
+
+  function loadAcrylicTint(): number {
+    // 默认 0.27 ≈ alpha 70，朦胧磨砂观感（历史未配置用户与旧版固定值对齐）
+    if (typeof localStorage === "undefined") return 0.27
+    const raw = localStorage.getItem(ACRYLIC_TINT_KEY)
+    const n = raw ? Number(raw) : NaN
+    if (!Number.isFinite(n)) return 0.27
+    return Math.min(1, Math.max(0, n))
   }
 
   function loadWallpaperOpacity(): number {
@@ -273,6 +286,17 @@ export const useTerminalStore = defineStore("terminal", () => {
     windowBlur.value = v
     try {
       localStorage.setItem(WINDOW_BLUR_KEY, String(v))
+    } catch {
+      // ignore
+    }
+    applyWindowEffect()
+  }
+
+  function setAcrylicTint(v: number) {
+    const clamped = Math.min(1, Math.max(0, v))
+    acrylicTint.value = clamped
+    try {
+      localStorage.setItem(ACRYLIC_TINT_KEY, String(clamped))
     } catch {
       // ignore
     }
@@ -318,7 +342,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       const b = isDark ? 21 : 251
       await win.setEffects({
         effects: ["acrylic" as never],
-        color: [r, g, b, 70],
+        color: [r, g, b, Math.round(acrylicTint.value * 255)],
       })
     } catch {
       // 非 Windows 或不支持 — 静默忽略，CSS 透明仍生效
@@ -612,6 +636,8 @@ export const useTerminalStore = defineStore("terminal", () => {
     setWindowOpacity,
     windowBlur,
     setWindowBlur,
+    acrylicTint,
+    setAcrylicTint,
     wallpaperOpacity,
     setWallpaperOpacity,
     wallpaperUrl,

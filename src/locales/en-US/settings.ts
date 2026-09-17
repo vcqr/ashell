@@ -195,6 +195,7 @@ export default {
     wallpaperClearFailed: "Failed to clear wallpaper: {error}",
     opacity: "Window opacity",
     blur: "Frosted glass blur",
+    acrylicTint: "Frost tint",
     wallpaper: "Background wallpaper",
     changeWallpaper: "Change wallpaper",
     selectWallpaper: "Select wallpaper",

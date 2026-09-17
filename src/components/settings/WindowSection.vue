@@ -57,6 +57,18 @@ async function removeWallpaper() {
       />
     </NFormItem>
 
+    <NFormItem v-if="termStore.windowBlur" :label="t('settings.window.acrylicTint')">
+      <NSlider
+        :value="Math.round(termStore.acrylicTint * 100)"
+        :min="0"
+        :max="100"
+        :step="1"
+        :tooltip="true"
+        :format-tooltip="(v: number) => `${v}%`"
+        @update:value="(v: number) => termStore.setAcrylicTint(v / 100)"
+      />
+    </NFormItem>
+
     <NDivider style="margin: 16px 0 12px" />
 
     <NFormItem :label="t('settings.window.wallpaper')">

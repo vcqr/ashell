@@ -194,6 +194,7 @@ export default {
     wallpaperClearFailed: "清除壁纸失败：{error}",
     opacity: "窗口透明度",
     blur: "毛玻璃模糊",
+    acrylicTint: "磨砂浓度",
     wallpaper: "背景壁纸",
     changeWallpaper: "更换壁纸",
     selectWallpaper: "选择壁纸",
