@@ -102,6 +102,9 @@ pub struct ClientHandler {
     port: u16,
     pool: DbPool,
     pending_key: Arc<AsyncMutex<Option<PendingHostKey>>>,
+    /// 认证阶段服务器推送的横幅（SSH_MSG_USERAUTH_BANNER，如欢迎/告警信息）：
+    /// russh 默认丢弃，这里暂存，终端 WS 建连成功后由 take_banner 取出转发前端
+    banner_slot: Arc<AsyncMutex<Option<String>>>,
 }
 
 impl ClientHandler {
@@ -114,9 +117,11 @@ impl ClientHandler {
         Self,
         Arc<AsyncMutex<Option<String>>>,
         Arc<AsyncMutex<Option<PendingHostKey>>>,
+        Arc<AsyncMutex<Option<String>>>,
     ) {
         let sid = Arc::new(AsyncMutex::new(None));
         let pending_key = Arc::new(AsyncMutex::new(None));
+        let banner_slot = Arc::new(AsyncMutex::new(None));
         (
             Self {
                 sid: Arc::clone(&sid),
@@ -125,9 +130,11 @@ impl ClientHandler {
                 port,
                 pool,
                 pending_key: Arc::clone(&pending_key),
+                banner_slot: Arc::clone(&banner_slot),
             },
             sid,
             pending_key,
+            banner_slot,
         )
     }
 }
@@ -191,6 +198,28 @@ impl Handler for ClientHandler {
         }
     }
 
+    /// 认证前服务器横幅（RFC 4252 §5.4）：ssh CLI 会在输密码前显示的欢迎/告警
+    /// 文本。多次推送时按顺序拼接。
+    async fn auth_banner(
+        &mut self,
+        banner: &str,
+        _session: &mut ClientSession,
+    ) -> Result<(), Self::Error> {
+        let text = banner.trim_matches('\n').to_string();
+        if text.is_empty() {
+            return Ok(());
+        }
+        let mut slot = self.banner_slot.lock().await;
+        match slot.as_mut() {
+            Some(existing) => {
+                existing.push_str("\r\n");
+                existing.push_str(&text);
+            }
+            None => *slot = Some(text),
+        }
+        Ok(())
+    }
+
     /// 远程端口转发（-R）回连：sshd 收到外部连接后会以这种 channel 通知客户端。
     /// 我们根据 `connected_address:connected_port` 反查 sid 对应的转发规则，
     /// 把 channel 桥接到本地目标地址。
@@ -231,6 +260,8 @@ impl Handler for ClientHandler {
 pub struct Session {
     handle: AsyncMutex<Handle<ClientHandler>>,
     sid_slot: Arc<AsyncMutex<Option<String>>>,
+    /// 认证横幅暂存槽（与 ClientHandler 共享），建连成功后由 take_banner 取出
+    banner_slot: Arc<AsyncMutex<Option<String>>>,
     /// 跳板机会话：目标连接建立在其 direct-tcpip 通道之上，
     /// 必须与目标会话同生命周期（断开目标后一并断开）
     jump: Option<Box<Session>>,
@@ -296,7 +327,7 @@ impl Session {
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
         let addr = (host.addr.as_str(), port);
 
-        let (handler, sid_slot, pending_key) =
+        let (handler, sid_slot, pending_key, banner_slot) =
             ClientHandler::new(host.id, host.addr.clone(), port, pool.clone());
         let result = client::connect(Self::build_config(host), addr, handler).await;
         let mut handle = match result {
@@ -312,6 +343,7 @@ impl Session {
         Ok(Self {
             handle: AsyncMutex::new(handle),
             sid_slot,
+            banner_slot,
             jump: None,
         })
     }
@@ -325,7 +357,7 @@ impl Session {
             .port
             .parse()
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
-        let (handler, sid_slot, pending_key) =
+        let (handler, sid_slot, pending_key, banner_slot) =
             ClientHandler::new(host.id, host.addr.clone(), port, pool.clone());
         let result = client::connect_stream(Self::build_config(host), stream, handler).await;
         let mut handle = match result {
@@ -338,6 +370,7 @@ impl Session {
         Ok(Self {
             handle: AsyncMutex::new(handle),
             sid_slot,
+            banner_slot,
             jump: None,
         })
     }
@@ -445,6 +478,11 @@ impl Session {
     /// 把 sid 写入 client handler，使后续远程转发回连能路由到本会话
     pub async fn attach_sid(&self, sid: &str) {
         *self.sid_slot.lock().await = Some(sid.to_string());
+    }
+
+    /// 取出认证阶段收到的服务器横幅（取后即清）。无横幅或横幅为空返回 None。
+    pub async fn take_banner(&self) -> Option<String> {
+        self.banner_slot.lock().await.take()
     }
 
     /// 远程端口转发请求：让远端 sshd 监听 `bind_addr:bind_port`，

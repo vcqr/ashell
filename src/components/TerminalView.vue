@@ -1137,6 +1137,13 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           })
           return
         }
+        if (msg.kind === "banner") {
+          // 服务器认证前横幅（RFC 4252 §5.4）：ssh CLI 在输密码前显示的欢迎/告警文本
+          const m = msg as { text?: string }
+          const text = (m.text ?? "").replace(/\r?\n/g, "\r\n")
+          if (text) term.write(text.endsWith("\r\n") ? text : text + "\r\n")
+          return
+        }
         if (msg.kind === "pong") {
           return
         }

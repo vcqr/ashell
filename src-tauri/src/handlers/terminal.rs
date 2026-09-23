@@ -499,15 +499,17 @@ async fn run_terminal(
     session_arc.attach_sid(sid).await;
     ssh_svc::set_client(sid.to_string(), session_arc.clone()).await;
 
-    // 3) 同步打开一个 sftp 子通道（即便客户端不立刻用，后续 REST 也能用）
-    // 重连复用同一 sid：先记住此前的提权状态，open_sftp 会把它覆盖成普通会话，
-    // 等 sudo 密码就绪后（下方）再自动恢复提权。
-    let sftp_was_elevated = ssh_svc::get_sftp_elevated(sid).await;
-    if let Err(e) = session_arc.open_sftp(sid).await {
-        log::warn!("open sftp for sid={sid} failed: {e}");
+    // 认证前服务器横幅（SSH_MSG_USERAUTH_BANNER）：转发给前端在终端展示，
+    // 与 ssh CLI 在输密码前显示的行为对齐
+    if let Some(banner) = session_arc.take_banner().await {
+        let msg = serde_json::json!({ "kind": "banner", "text": banner }).to_string();
+        let _ = ws_tx.send(Message::Text(msg.into())).await;
     }
 
-    // 4) 打开终端 channel
+    // 3) 打开终端 channel 并请求 shell。必须先于 SFTP 子通道：OpenSSH 只对同一
+    //    连接上的第一个会话打印 Last login/MOTD，先开 sftp 子系统会让 shell 会话
+    //    的欢迎信息（Last login / uname / Welcome...）整体消失，提示符前一片空白
+    //    （阿里云 Debian 13 实测复现）。
     let mut channel = session_arc.channel_open_session().await?;
     channel
         .request_pty(false, &q.term, q.cols, q.rows, 0, 0, &[])
@@ -517,6 +519,14 @@ async fn run_terminal(
         .request_shell(true)
         .await
         .map_err(|e| anyhow::anyhow!("request shell: {e}"))?;
+
+    // 4) 同步打开一个 sftp 子通道（终端之后；即便客户端不立刻用，后续 REST 也能用）
+    // 重连复用同一 sid：先记住此前的提权状态，open_sftp 会把它覆盖成普通会话，
+    // 等 sudo 密码就绪后（下方）再自动恢复提权。
+    let sftp_was_elevated = ssh_svc::get_sftp_elevated(sid).await;
+    if let Err(e) = session_arc.open_sftp(sid).await {
+        log::warn!("open sftp for sid={sid} failed: {e}");
+    }
 
     // 创建终端命令注入 / 输出广播通道（供 POST /api/ssh/send/{sid} 使用）
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
