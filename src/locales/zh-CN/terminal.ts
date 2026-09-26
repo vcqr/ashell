@@ -39,9 +39,14 @@ export default {
     statusError: "连接错误",
     statusClosed: "已断开",
   },
+  localFiles: {
+    pin: "固定到右侧",
+    unpin: "取消固定",
+  },
   activityBar: {
     broadcast: "广播输入",
     broadcasting: "广播中：→ {count} 个 tab",
+    localFiles: "本地文件",
     sftp: "SFTP",
     sftpDisabled: "连接后可用",
     hostInfo: "主机信息",

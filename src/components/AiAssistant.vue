@@ -192,7 +192,11 @@ const panelStyle = computed(() => {
   return {
     width: `${width.value}px`,
     transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
-    transform: props.open ? "translateX(0)" : "translateX(100%)",
+    // 关闭态平移要叠加活动栏宽度：面板锚定 right: var(--ashell-activity-w)，
+    // 只平移自身宽度会残留一条活动栏宽度的面板左缘盖住活动栏
+    transform: props.open
+      ? "translateX(0)"
+      : "translateX(calc(100% + var(--ashell-activity-w, 0px)))",
   }
 });
 

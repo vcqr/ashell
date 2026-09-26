@@ -48,6 +48,19 @@ pub fn reveal_item(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Windows：explorer 的退出码不可靠——/select 委托给已存在的资源管理器进程时
+/// 返回 1 也算成功；且 .status() 会等到资源管理器窗口关闭才返回。
+/// 因此 spawn 后不等待、不检查退出码，只以"能否启动进程"判定成败。
+#[cfg(target_os = "windows")]
+fn spawn(program: &str, args: &[impl AsRef<str>]) -> Result<(), String> {
+    Command::new(program)
+        .args(args.iter().map(AsRef::as_ref))
+        .spawn()
+        .map_err(|e| format!("spawn {program}: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
 fn spawn(program: &str, args: &[impl AsRef<str>]) -> Result<(), String> {
     let mut cmd = Command::new(program);
     for a in args {

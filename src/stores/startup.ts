@@ -16,6 +16,8 @@ export interface StartupConfig {
   aiAssistantEnabled: boolean
   /** 本地终端初始命令：每个新建本地终端 tab 连接就绪后自动执行一次；空串不执行。 */
   localInitCommand: string
+  /** 本地文件抽屉目录跟随：开启后抽屉自动跳到当前终端上报的工作目录。 */
+  cwdFollowEnabled: boolean
 }
 
 const STORAGE_KEY = "ashell:startup-config"
@@ -29,6 +31,7 @@ const DEFAULT_CONFIG: StartupConfig = {
   autoConnectRememberedTabs: isWeb,
   aiAssistantEnabled: true,
   localInitCommand: "",
+  cwdFollowEnabled: false,
 }
 
 function loadConfig(): StartupConfig {
@@ -62,6 +65,10 @@ function loadConfig(): StartupConfig {
         typeof parsed.localInitCommand === "string"
           ? parsed.localInitCommand
           : DEFAULT_CONFIG.localInitCommand,
+      cwdFollowEnabled:
+        typeof parsed.cwdFollowEnabled === "boolean"
+          ? parsed.cwdFollowEnabled
+          : DEFAULT_CONFIG.cwdFollowEnabled,
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -106,6 +113,7 @@ export const useStartupStore = defineStore("startup", () => {
   )
   const aiAssistantEnabled = ref<boolean>(initial.aiAssistantEnabled)
   const localInitCommand = ref<string>(initial.localInitCommand)
+  const cwdFollowEnabled = ref<boolean>(initial.cwdFollowEnabled)
 
   function persist() {
     if (typeof localStorage === "undefined") return
@@ -117,6 +125,7 @@ export const useStartupStore = defineStore("startup", () => {
         autoConnectRememberedTabs: autoConnectRememberedTabs.value,
         aiAssistantEnabled: aiAssistantEnabled.value,
         localInitCommand: localInitCommand.value,
+        cwdFollowEnabled: cwdFollowEnabled.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
     } catch {
@@ -132,6 +141,7 @@ export const useStartupStore = defineStore("startup", () => {
       autoConnectRememberedTabs,
       aiAssistantEnabled,
       localInitCommand,
+      cwdFollowEnabled,
     ],
     persist,
   )
@@ -154,6 +164,9 @@ export const useStartupStore = defineStore("startup", () => {
   function setLocalInitCommand(v: string) {
     localInitCommand.value = v.trim()
   }
+  function setCwdFollowEnabled(v: boolean) {
+    cwdFollowEnabled.value = v
+  }
 
   return {
     openLocalOnStart,
@@ -162,11 +175,13 @@ export const useStartupStore = defineStore("startup", () => {
     autoConnectRememberedTabs,
     aiAssistantEnabled,
     localInitCommand,
+    cwdFollowEnabled,
     setOpenLocalOnStart,
     setDefaultShell,
     setRestoreTabs,
     setAutoConnectRememberedTabs,
     setAiAssistantEnabled,
     setLocalInitCommand,
+    setCwdFollowEnabled,
   }
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onErrorCaptured, watch } from "vue";
+import { computed, onErrorCaptured, watch, watchEffect } from "vue";
 import {
   NConfigProvider,
   NMessageProvider,
@@ -31,6 +31,7 @@ import AiWindow from "@/components/AiWindow.vue";
 import ActivityBar from "@/components/ActivityBar.vue";
 import SftpDrawer from "@/components/SftpDrawer.vue";
 import SftpWindow from "@/components/SftpWindow.vue";
+import LocalFilesDrawer from "@/components/LocalFilesDrawer.vue";
 import WindowControls from "@/components/WindowControls.vue";
 import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
@@ -106,6 +107,8 @@ const {
   activeSftpTab,
   activeAiTab,
   activeTerminalTab,
+  activeLocalTab,
+  hasLocalTab,
   restoredTabKeys,
   terminalRefs,
   aiAssistantRef,
@@ -127,6 +130,7 @@ const {
   onSidReady,
   onStatusChange,
   onTitleChange,
+  onCwdChange,
   closeHostsIfOpen,
   toggleHosts,
   sendCommandToActive,
@@ -138,6 +142,7 @@ const {
   hostInfoOpen,
   forwardOpen,
   templateOpen,
+  localFilesOpen,
   settingsOpen,
   aiProvidersOpen,
   activityBarVisible,
@@ -146,12 +151,13 @@ const {
   toggleHostInfo,
   toggleForward,
   toggleTemplate,
+  toggleLocalFiles,
   toggleSettings,
   toggleAiProviders,
   toggleActivityBar,
   onSendToAi,
   onSftpSendToAi,
-} = usePanels(activeSftpTab, activeAiTab, activeTerminalTab, aiAssistantRef);
+} = usePanels(activeSftpTab, activeAiTab, activeTerminalTab, aiAssistantRef, activeLocalTab, hasLocalTab);
 
 // 独立窗口：由 openSftpInNewWindow / openAiInNewWindow 创建，
 // URL 带 newwin=1&kind=sftp|ai。走完整 App 实例（providers/api init/theme），
@@ -161,6 +167,21 @@ const soloKind = launchParams.get("newwin") === "1" ? launchParams.get("kind") :
 const soloSftp = soloKind === "sftp";
 const soloAi = soloKind === "ai";
 
+// 活动栏宽度挂 documentElement：内容区让位计算与右侧抽屉（SFTP / 本地文件 /
+// 模板等，均 Teleport 到 body）共用同一变量。此前挂在 .app-root 上，Teleport
+// 出去的抽屉读不到（回退 0px），会盖住活动栏；固定停靠的抽屉还会与终端之间
+// 露出一条活动栏宽度的空隙。solo 独立窗口无活动栏，恒为 0。
+watchEffect(() => {
+  const w =
+    !soloSftp && !soloAi && tabs.value.length > 0 && activityBarVisible.value
+      ? "44px"
+      : "0px";
+  document.documentElement.style.setProperty("--ashell-activity-w", w);
+});
+onBeforeUnmount(() => {
+  document.documentElement.style.setProperty("--ashell-activity-w", "0px");
+});
+
 const {
   isMac,
   onHeaderDblClick,
@@ -168,7 +189,27 @@ const {
 
 // SFTP 面板右键目录 -> 当前终端 cd 到该目录（sendCommand 自动补 \r 执行）
 function onSftpOpenTerminalHere(path: string) {
-  sendCommandToActive(`cd '${path.replace(/'/g, `'\\''`)}'`);
+  sendCommandToActive(`cd '${path.replace(/'/g, `'\\''`)}'`)
+}
+
+// 本地文件抽屉右键"在终端中打开"：按绑定本地终端的 shell 生成对应语法的 cd
+// 命令（PowerShell/cmd/POSIX 的引号规则不同），发送给抽屉绑定的那个本地 tab
+// ——即使活动 tab 已切到别处（固定停靠的抽屉），也始终作用于它跟随的终端。
+function onLocalOpenInTerminal(path: string) {
+  const tab = activeLocalTab.value;
+  if (!tab) return;
+  const shell = tab.shell ?? "auto";
+  const cmd =
+    shell === "cmd"
+      ? `cd /d "${path}"`
+      : shell === "bash" ||
+          shell === "git-bash" ||
+          shell === "zsh" ||
+          shell === "sh" ||
+          shell === "fish"
+        ? `cd '${path.replace(/'/g, `'\\''`)}'`
+        : `cd '${path.replace(/'/g, "''")}'`;
+  terminalRefs.get(tab.key)?.sendCommand(cmd);
 }
 
 // 开发者模式快捷键：F12 / Ctrl+Shift+I 切换 WebView 开发者工具
@@ -258,14 +299,7 @@ if (!isTauri) {
             <UpdateChecker v-if="isTauri && !soloSftp && !soloAi" />
             <SftpWindow v-if="soloSftp" />
             <AiWindow v-else-if="soloAi" />
-            <div
-              v-else
-              class="app-root"
-              :style="{
-                '--ashell-activity-w':
-                  tabs.length > 0 && activityBarVisible ? '44px' : '0px',
-              }"
-            >
+            <div v-else class="app-root">
               <!-- 毛玻璃浓度色罩：亚克力原生效果在 Windows 11 走 DWM 系统背景路径，
                    不接受自定义色罩（window-vibrancy 忽略 color），浓度改由这层 DOM
                    色罩控制（透明度 = 磨砂浓度滑杆）。置于壁纸层之下：设壁纸时壁纸
@@ -374,7 +408,8 @@ if (!isTauri) {
                 :style="{
                   top: 'var(--ashell-header-h)',
                   left: 'var(--ashell-hosts-width, 0px)',
-                  right: 'var(--ashell-activity-w, 0px)',
+                  right:
+                    'calc(var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px))',
                   bottom: 0,
                 }"
                 @mousedown="closeHostsIfOpen"
@@ -393,6 +428,7 @@ if (!isTauri) {
                   @sid-ready="onSidReady"
                   @status-change="onStatusChange"
                   @title-change="onTitleChange"
+                  @cwd-change="onCwdChange"
                   @send-to-ai="onSendToAi"
                   @close-tab="closeTab"
                 />
@@ -417,18 +453,27 @@ if (!isTauri) {
                 :forward-open="forwardOpen"
                 :ai-open="aiOpen"
                 :template-open="templateOpen"
+                :local-files-open="localFilesOpen"
                 :ai-enabled="startupStore.aiAssistantEnabled"
                 :has-active-session="!!activeSftpTab"
                 :has-terminal-session="!!activeTerminalTab"
                 :has-ai-session="!!activeAiTab"
+                :has-local-terminal="!!activeLocalTab"
                 @toggle-sftp="toggleSftp"
                 @toggle-host-info="toggleHostInfo"
                 @toggle-forward="toggleForward"
                 @toggle-ai="toggleAi"
                 @toggle-template="toggleTemplate"
+                @toggle-local-files="toggleLocalFiles"
               />
 
               <HostsDrawer v-model:open="hostsOpen" @open-host="openHost" />
+              <LocalFilesDrawer
+                v-model:open="localFilesOpen"
+                :cwd="activeLocalTab?.cwd ?? ''"
+                :tab-title="activeLocalTab?.title"
+                @open-in-terminal="onLocalOpenInTerminal"
+              />
               <SftpDrawer
                 v-model:open="sftpOpen"
                 :sid="activeSftpTab?.sid ?? null"

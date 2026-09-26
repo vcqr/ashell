@@ -401,7 +401,10 @@ onBeforeUnmount(onResizeEnd)
 const panelStyle = computed(() => ({
   width: `${width.value}px`,
   transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
-  transform: props.open ? "translateX(0)" : "translateX(100%)",
+  // 关闭态平移叠加活动栏宽度，理由同 AiAssistant（锚定 right: 活动栏宽）
+  transform: props.open
+    ? "translateX(0)"
+    : "translateX(calc(100% + var(--ashell-activity-w, 0px)))",
 }))
 </script>
 

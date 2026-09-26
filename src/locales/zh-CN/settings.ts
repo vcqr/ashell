@@ -223,6 +223,8 @@ export default {
     localInitCommand: "本地终端初始命令",
     localInitCommandPlaceholder: "如：cd ~/projects",
     localInitCommandHint: "每个新建的本地终端连接就绪后自动执行一次；留空不执行。",
+    cwdFollow: "本地文件目录跟随",
+    cwdFollowHint: "开启后，「本地文件」抽屉自动跳转到当前本地终端的工作目录。",
   },
   ai: {
     title: "AI 助手",

@@ -50,11 +50,13 @@ export default {
     ctxUploadDir: "Upload this folder",
     ctxUploadMulti: "Upload selected ({count})",
     dropHint: "Drop to copy to {dir}",
+    dropToImport: "Drop to copy to the current directory",
     dropNeedsDir: "The local pane is on the This PC page; open a directory first",
     importDone: "Copied {count} file(s) to the local directory",
     importPartial: "Copy finished: {ok} succeeded, {fail} failed",
     loadFailed: "Failed to read local directory: {error}",
     ctxTrash: "Move to Trash",
+    ctxOpenInTerminal: "Open in Terminal",
     trashConfirm:
       "Move {type} \"{name}\" to the Trash? You can restore it from there.",
     trashConfirmMulti:

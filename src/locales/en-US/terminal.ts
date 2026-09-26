@@ -39,9 +39,14 @@ export default {
     statusError: "Connection error",
     statusClosed: "Disconnected",
   },
+  localFiles: {
+    pin: "Pin to right",
+    unpin: "Unpin",
+  },
   activityBar: {
     broadcast: "Broadcast input",
     broadcasting: "Broadcasting: → {count} tabs",
+    localFiles: "Local files",
     sftp: "SFTP",
     sftpDisabled: "Available after connecting",
     hostInfo: "Host info",

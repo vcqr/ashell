@@ -43,6 +43,10 @@ pub struct SftpFileAttr {
     pub permissions: String,
     pub atime: Option<u32>,
     pub mtime: Option<u32>,
+    /// 隐藏/系统条目（Windows FILE_ATTRIBUTE_HIDDEN/SYSTEM，Unix 点开头）。
+    /// 前端"显示隐藏文件"开关据此过滤；false 时省略序列化
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -164,6 +168,7 @@ pub async fn list(sid: &str, path: Option<String>) -> AppResult<SftpListResp> {
             permissions: attrs.permissions().to_string(),
             atime: attrs.atime,
             mtime: attrs.mtime,
+            hidden: entry.file_name().starts_with('.'),
         });
     }
 

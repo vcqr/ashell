@@ -9,6 +9,7 @@ import {
 } from "naive-ui"
 import {
   MegaphoneOutline,
+  DesktopOutline,
   FolderOpenOutline,
   HardwareChipOutline,
   SwapHorizontalOutline,
@@ -29,6 +30,8 @@ defineProps<{
   forwardOpen: boolean
   aiOpen: boolean
   templateOpen: boolean
+  /** 本地文件抽屉开关状态 */
+  localFilesOpen: boolean
   /** AI 助手功能总开关；关闭时整个 AI 入口不渲染 */
   aiEnabled: boolean
   hasActiveSession: boolean
@@ -36,6 +39,8 @@ defineProps<{
   hasTerminalSession: boolean
   /** AI 助手可用性：比 hasActiveSession 宽，本地 PTY tab 也算可用 */
   hasAiSession: boolean
+  /** 激活 tab 是本地终端：本地文件抽屉的可用条件 */
+  hasLocalTerminal: boolean
 }>()
 
 const emit = defineEmits<{
@@ -44,6 +49,7 @@ const emit = defineEmits<{
   "toggle-forward": []
   "toggle-ai": []
   "toggle-template": []
+  "toggle-local-files": []
 }>()
 
 const broadcastStore = useBroadcastStore()
@@ -123,8 +129,23 @@ function renderIcon(comp: unknown) {
       {{ hasTerminalSession ? t("terminal.activityBar.templates") : t("terminal.activityBar.templatesDisabled") }}
     </NTooltip>
 
-    <!-- SFTP -->
-    <NTooltip placement="left" :show-arrow="false">
+    <!-- 文件浏览入口按激活 tab 类型互斥切换：
+         本地终端 -> 本地文件；远程（SSH/Telnet/串口）-> SFTP -->
+    <NTooltip v-if="hasLocalTerminal" placement="left" :show-arrow="false">
+      <template #trigger>
+        <button
+          class="ab-btn"
+          :class="{ active: localFilesOpen }"
+          type="button"
+          @click="emit('toggle-local-files')"
+        >
+          <component :is="renderIcon(DesktopOutline)" />
+        </button>
+      </template>
+      {{ t("terminal.activityBar.localFiles") }}
+    </NTooltip>
+
+    <NTooltip v-else placement="left" :show-arrow="false">
       <template #trigger>
         <button
           class="ab-btn"

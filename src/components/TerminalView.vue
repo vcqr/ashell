@@ -56,11 +56,14 @@ const emit = defineEmits<{
   (e: "sid-ready", tabKey: string, sid: string): void
   (e: "status-change", tabKey: string, status: TermStatus): void
   (e: "title-change", tabKey: string, title: string): void
+  (e: "cwd-change", tabKey: string, cwd: string): void
   (e: "send-to-ai", tabKey: string, text: string): void
   (e: "close-tab", tabKey: string): void
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
+/** 主题背景色（随壁纸/窗口透明度联动）：涂在 .terminal-host 上填补画布网格外余量 */
+const terminalBackground = ref("transparent")
 
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
@@ -264,7 +267,13 @@ function declineHostKey() {
 
 function applyTheme() {
   if (!term) return
-  term.options.theme = termStore.getActiveTerminalTheme()
+  const theme = termStore.getActiveTerminalTheme()
+  term.options.theme = theme
+  // 画布只在字符网格范围内绘制主题背景，网格外余量（容器宽 - cols×cell 宽）
+  // 会露出应用底色，在终端主题色与窗口底色不同的主题/透明度组合下形成一条
+  // 可见竖缝。把同一份主题背景（壁纸模式下为全透明，语义不变）涂在宿主层，
+  // 让余量与网格区走同一份合成。
+  terminalBackground.value = String(theme.background ?? "transparent")
 }
 
 function setStatus(status: TermStatus) {
@@ -615,6 +624,50 @@ function installCursorBlinkGuard() {
       return false // 0/1/3/5 已是 blinking 变体，交给默认 handler
     },
   )
+}
+
+/**
+ * 解析 shell 的 cwd 上报序列并上抛 cwd-change（驱动本地文件抽屉目录跟随）。
+ *
+ * - OSC 9;9;<path>（ConEmu 风格）：本地 PTY 后端按 shell 注入（PowerShell 包
+ *   prompt 函数 / cmd 改 PROMPT 环境变量 / bash 挂 PROMPT_COMMAND / zsh 走
+ *   ZDOTDIR 垫片），每次出提示符上报当前目录。
+ * - OSC 7（file:// URI 风格）：兼容用户自行配置的 shell 集成（如 bash/zsh 的
+ *   osc7 插件），SSH 会话若也上报则由上层自行决定是否消费。
+ *
+ * 两个 handler 都返回 false：不吞序列，xterm 默认对未知 OSC 无动作。
+ * 只注册一次：registerOscHandler 是追加不去重的，term 在组件生命周期内
+ * 只建一次，与 installCursorBlinkGuard 同款兜底以防未来重复调用。
+ */
+let cwdReporterInstalled = false
+
+function installCwdReporter() {
+  if (!term || cwdReporterInstalled) return
+  cwdReporterInstalled = true
+  term.parser.registerOscHandler(9, (data) => {
+    if (!data.startsWith("9;")) return false
+    // ConEmu 允许路径带引号；去掉首尾引号后原样上报（Windows 反斜杠保留）
+    const raw = data.slice(2).trim().replace(/^"(.*)"$/, "$1")
+    if (raw) emit("cwd-change", props.tab.key, raw)
+    return false
+  })
+  term.parser.registerOscHandler(7, (data) => {
+    // file://[host]/path -> /path；Windows 盘符 "/C:/x" 归一为 "C:/x"
+    const s = data.trim()
+    if (!s.startsWith("file://")) return false
+    let path = s.substring(7)
+    const slash = path.indexOf("/")
+    if (slash < 0) return false
+    path = path.substring(slash)
+    try {
+      path = decodeURIComponent(path)
+    } catch {
+      // 非法百分号编码：保留原文
+    }
+    if (/^\/[a-zA-Z]:\//.test(path)) path = path.substring(1)
+    if (path) emit("cwd-change", props.tab.key, path)
+    return false
+  })
 }
 
 /**
@@ -1254,6 +1307,7 @@ onMounted(() => {
   applyTheme()
 
   installAltScreenScrollFix()
+  installCwdReporter()
 
   // 键盘复制粘贴（Ctrl+C 选区 / Ctrl+Shift+C / Ctrl+Shift+V），须在 onData 前注册
   term.attachCustomKeyEventHandler(onTermCustomKey)
@@ -1601,7 +1655,11 @@ onBeforeUnmount(() => {
         :style="progressState === 3 ? undefined : { width: `${progressValue}%` }"
       />
     </div>
-    <div ref="containerRef" class="terminal-host"></div>
+    <div
+      ref="containerRef"
+      class="terminal-host"
+      :style="{ background: terminalBackground }"
+    ></div>
     <Transition name="search-fade">
       <div
         v-if="searchOpen"

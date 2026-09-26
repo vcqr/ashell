@@ -142,6 +142,8 @@ export interface SftpFile {
   file_type: string
   full_path: string
   link_path?: string | null
+  /** 隐藏/系统条目（Windows FILE_ATTRIBUTE_HIDDEN/SYSTEM，Unix 点开头），showHidden=false 时过滤 */
+  hidden?: boolean
   /** 人类可读大小，如 "12.34 K" */
   size: string
   size_bytes?: number
@@ -239,6 +241,8 @@ export interface TerminalTab {
   status?: 'connecting' | 'connected' | 'closed' | 'error'
   /** 本地 PTY tab 使用的 shell 名（powershell/pwsh/cmd/bash/zsh/...）。 */
   shell?: string | null
+  /** 本地终端当前工作目录（shell 以 OSC 9;9 上报，驱动本地文件抽屉目录跟随；不持久化） */
+  cwd?: string
   /** 主机展示信息（断线重连时复用） */
   hostInfo?: {
     addr: string

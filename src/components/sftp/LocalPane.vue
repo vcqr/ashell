@@ -33,6 +33,7 @@ import {
   OpenOutline,
   RefreshOutline,
   SearchOutline,
+  TerminalOutline,
   TrashOutline,
   TrashSharp,
 } from "@vicons/ionicons5"
@@ -68,6 +69,9 @@ const props = defineProps<{
   dir: string
   /** SFTP 会话 id：复制任务挂到该会话的下载列表 */
   sid: string
+  /** 独立模式（本地文件抽屉）：无远程侧，隐藏上传类入口、
+   *  双击文件改为系统默认程序打开、OS 拖入直接落盘不记传输任务 */
+  standalone?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -82,6 +86,8 @@ const emit = defineEmits<{
   (e: "upload-selection"): void
   /** OS 拖放复制任务开始（父组件据此自动打开下载列表弹窗显示进度） */
   (e: "copy-started"): void
+  /** 右键"在终端中打开"：由父组件向绑定的本地终端发送 cd 命令（仅独立抽屉） */
+  (e: "open-in-terminal", path: string): void
   /** 关闭本地栏（双栏 -> 单栏），由父组件执行宽度记忆与切换 */
   (e: "close"): void
 }>()
@@ -101,11 +107,15 @@ const viewingRoots = ref(false)
 const showHidden = ref(false)
 /** 目录名过滤（纯前端过滤当前列表，不发起请求）：与远程栏 filterText 语义一致 */
 const filterText = ref("")
-/** 表格实际渲染的列表（多选基于该列表） */
+/** 表格实际渲染的列表（多选基于该列表）：默认过滤隐藏/系统条目
+ *  （后端 hidden 标记 = Windows 隐藏/系统属性、Unix 点开头；
+ *  startsWith('.') 兜底兼容未带标记的旧响应） */
 const displayFiles = computed(() => {
   const base = showHidden.value
     ? files.value
-    : files.value.filter((f) => !f.file_name.startsWith("."))
+    : files.value.filter(
+        (f) => !f.hidden && !f.file_name.startsWith("."),
+      )
   const q = filterText.value.trim().toLowerCase()
   if (!q) return base
   return base.filter((f) => f.file_name.toLowerCase().includes(q))
@@ -455,9 +465,11 @@ function rowProps(row: SftpFile) {
       .filter(Boolean)
       .join(" "),
     style: {
-      // 文件/目录行都可拖到远程栏（目录为递归上传），提示 grab
+      // 文件/目录行都可拖到远程栏（目录为递归上传），提示 grab；
+      // 独立模式无远程落区，不提示可拖
       cursor:
         !viewingRoots.value &&
+        !props.standalone &&
         (row.file_type === "file" || row.file_type === "dir")
           ? "grab"
           : "default",
@@ -466,7 +478,10 @@ function rowProps(row: SftpFile) {
       // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
       // （click 阶段已经选完了）
       if (e.shiftKey) e.preventDefault()
-      onRowPointerdown(row, e)
+      // 独立模式无远程落区，不发起内部拖拽（拖拽幽灵文案是"→ 远程"）
+      if (!props.standalone) {
+        onRowPointerdown(row, e)
+      }
     },
     onClick: (e: MouseEvent) => {
       e.stopPropagation()
@@ -479,8 +494,13 @@ function rowProps(row: SftpFile) {
       if (row.file_type === "dir") {
         void enterDir(row)
       } else if (row.file_type === "file" && !viewingRoots.value) {
-        // 与远程栏双击语义对齐：双击文件 = 传到对侧（上传到远程当前目录）
-        emit("transfer-up", [row])
+        // 双栏：双击文件 = 传到对侧（上传到远程当前目录，与远程栏语义对齐）；
+        // 独立模式（本地文件抽屉）：无对侧，双击 = 系统默认程序打开
+        if (props.standalone) {
+          void openWithDefaultApp(row)
+        } else {
+          emit("transfer-up", [row])
+        }
       }
     },
     onContextmenu: (e: MouseEvent) => {
@@ -552,6 +572,13 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
         { type: "divider", key: "d-local-blank-2" },
       )
     }
+    if (props.standalone && !viewingRoots.value && currentPath.value) {
+      opts.push({
+        key: "local-open-in-terminal",
+        label: t("sftp.localPane.ctxOpenInTerminal"),
+        icon: () => h(NIcon, null, () => h(TerminalOutline)),
+      })
+    }
     opts.push({
       key: "local-refresh",
       label: t("sftp.ctxMenu.refresh"),
@@ -574,20 +601,29 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       icon: () => h(NIcon, null, () => h(CopyOutline)),
     },
   ]
-  // 多选（右键行必然在选择集内）：合并为批量上传项；单选按行类型单项
-  if (selCount > 1) {
+  // 独立抽屉（本地终端）：把终端 cd 到目标目录（文件则取其父目录）
+  if (props.standalone && !viewingRoots.value) {
+    opts.push({
+      key: "open-in-terminal",
+      label: t("sftp.localPane.ctxOpenInTerminal"),
+      icon: () => h(NIcon, null, () => h(TerminalOutline)),
+    })
+  }
+  // 多选（右键行必然在选择集内）：合并为批量上传项；单选按行类型单项。
+  // 独立模式无远程侧，不上传
+  if (!props.standalone && selCount > 1) {
     opts.push({
       key: "upload-selection",
       label: t("sftp.localPane.ctxUploadMulti", { count: selCount }),
       icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
     })
-  } else if (row.file_type === "file" && !viewingRoots.value) {
+  } else if (!props.standalone && row.file_type === "file" && !viewingRoots.value) {
     opts.push({
       key: "upload",
       label: t("sftp.localPane.ctxUpload"),
       icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
     })
-  } else if (row.file_type === "dir" && !viewingRoots.value) {
+  } else if (!props.standalone && row.file_type === "dir" && !viewingRoots.value) {
     opts.push({
       key: "upload-dir",
       label: t("sftp.localPane.ctxUploadDir"),
@@ -659,6 +695,7 @@ function onCtxMenuSelect(key: string) {
     else if (key === "local-touch") openLocalTouch()
     else if (key === "local-paste") void pasteLocal()
     else if (key === "local-select-all") selectAll()
+    else if (key === "local-open-in-terminal") emit("open-in-terminal", currentPath.value)
     return
   }
   if (key === "copy-path") {
@@ -666,6 +703,11 @@ function onCtxMenuSelect(key: string) {
       .writeText(row.full_path)
       .then(() => message.success(t("sftp.message.copied")))
       .catch(() => message.error(t("sftp.message.copyFailed")))
+  } else if (key === "open-in-terminal") {
+    // 目录进该目录；文件取其父目录
+    const target =
+      row.file_type === "dir" ? row.full_path : localParentPath(row.full_path)
+    emit("open-in-terminal", target)
   } else if (key === "upload") {
     if (row.file_type === "file") {
       emit("transfer-up", [row])
@@ -981,6 +1023,33 @@ async function importOsFiles(topFiles: File[], folders: OsDropFolder[]) {
   }
 
   const dir = currentPath.value
+  // 独立模式（本地文件抽屉）：无下载列表面板可展示进度，直接落盘
+  if (props.standalone) {
+    let okCount = 0
+    let failCount = 0
+    const writePlain = async (file: File, rel: string) => {
+      try {
+        await saveLocalFile(dir, rel, file)
+        okCount++
+      } catch {
+        failCount++
+      }
+    }
+    for (const f of topFiles) await writePlain(f, f.name)
+    for (const folder of folders) {
+      for (const ent of folder.entries) await writePlain(ent.file, ent.relPath)
+    }
+    await refresh()
+    if (okCount + failCount === 0) return
+    if (failCount === 0) {
+      message.success(t("sftp.localPane.importDone", { count: okCount }))
+    } else {
+      message.warning(
+        t("sftp.localPane.importPartial", { ok: okCount, fail: failCount }),
+      )
+    }
+    return
+  }
   const sid = props.sid
   if (!sid) return
   emit("copy-started")
@@ -1077,7 +1146,8 @@ onMounted(() => {
 <template>
   <div class="local-pane" data-drop-zone="local" @contextmenu="onBlankContextMenu">
     <div class="path-bar">
-      <span class="pane-label">{{ t("sftp.localPane.title") }}</span>
+      <!-- 独立模式（本地文件抽屉）：抽屉标题栏已表明身份，省掉标签与关闭按钮 -->
+      <span v-if="!standalone" class="pane-label">{{ t("sftp.localPane.title") }}</span>
       <NButton
         size="small"
         quaternary
@@ -1140,6 +1210,7 @@ onMounted(() => {
         </template>
       </NButton>
       <NButton
+        v-if="!standalone"
         size="small"
         quaternary
         circle
@@ -1216,6 +1287,7 @@ onMounted(() => {
         </template>
       </NButton>
       <NButton
+        v-if="!standalone"
         size="small"
         quaternary
         circle
@@ -1275,6 +1347,7 @@ onMounted(() => {
         :row-props="rowProps"
         :bordered="false"
         :single-line="false"
+        :scroll-x="404"
         flex-height
         class="file-table"
         @update:sorter="onLocalSort"
@@ -1489,14 +1562,17 @@ onMounted(() => {
   opacity: 0.45;
 }
 
-.name-cell {
+/* 名称单元格由 h() 渲染函数在 NDataTable 内部创建，拿不到本组件的 scoped
+   属性，必须借 .file-table 前缀用 :deep 穿透（与 .row-selected 同理）。
+   gap 与 SftpDrawer 远程栏的 .name-cell（8px）保持一致，双栏时两栏观感相同 */
+.file-table :deep(.name-cell) {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
-.name-text {
+.file-table :deep(.name-cell .name-text) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

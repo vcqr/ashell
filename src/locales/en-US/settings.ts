@@ -224,6 +224,8 @@ export default {
     localInitCommand: "Local terminal init command",
     localInitCommandPlaceholder: "e.g. cd ~/projects",
     localInitCommandHint: "Run automatically once each new local terminal connects. Leave empty to disable.",
+    cwdFollow: "Local files directory follow",
+    cwdFollowHint: "The local files drawer automatically jumps to the active local terminal's working directory.",
   },
   ai: {
     title: "AI Assistant",

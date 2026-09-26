@@ -241,6 +241,18 @@ export function useTabs() {
     return t.status === "connected" ? t : undefined;
   });
 
+  /**
+   * 当前激活的本地 PTY tab：本地文件浏览器抽屉的挂载条件。
+   * 不要求 sid / connected——文件浏览器走独立 HTTP API，只认 tab 类型。
+   */
+  const activeLocalTab = computed<TerminalTab | undefined>(() => {
+    const t = activeTab.value;
+    return t && t.kind === "local" ? t : undefined;
+  });
+
+  /** 是否还存在本地 PTY tab（不要求激活）：本地文件面板的销毁条件 */
+  const hasLocalTab = computed(() => tabs.value.some((t) => t.kind === "local"));
+
   function openHost(node: HostNode, forceNew = false) {
     if (node.type !== "host") return;
     if (!forceNew) {
@@ -480,6 +492,12 @@ export function useTabs() {
     if (t) t.title = title;
   }
 
+  /** shell 上报 cwd（OSC 9;9 / OSC 7）：仅本地 tab 记录，驱动本地文件抽屉跟随 */
+  function onCwdChange(tabKey: string, cwd: string) {
+    const t = tabs.value.find((x) => x.key === tabKey);
+    if (t && t.kind === "local") t.cwd = cwd;
+  }
+
   function closeHostsIfOpen() {
     // 固定模式下主界面已让位并排显示，点主界面不应收起
     if (hostsPinned.value) return;
@@ -532,6 +550,8 @@ export function useTabs() {
     activeSftpTab,
     activeAiTab,
     activeTerminalTab,
+    activeLocalTab,
+    hasLocalTab,
     restoredTabKeys,
     terminalRefs,
     aiAssistantRef,
@@ -553,6 +573,7 @@ export function useTabs() {
     onSidReady,
     onStatusChange,
     onTitleChange,
+    onCwdChange,
     closeHostsIfOpen,
     toggleHosts,
     sendCommandToActive,

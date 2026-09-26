@@ -318,7 +318,9 @@ async function onDelete(id: number) {
   display: flex;
   flex-direction: column;
   z-index: 1000;
-  transform: translateX(100%);
+  /* 关闭态平移叠加活动栏宽度：面板锚定 right: var(--ashell-activity-w)，
+     只平移自身宽度会残留一条活动栏宽度的面板左缘盖住活动栏 */
+  transform: translateX(calc(100% + var(--ashell-activity-w, 0px)));
   transition: transform 0.25s ease, box-shadow 0.15s ease;
   user-select: text;
 }

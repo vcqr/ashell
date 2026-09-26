@@ -64,5 +64,14 @@ const shellOptions = computed(() =>
         @update:value="(v: string) => startupStore.setLocalInitCommand(v)"
       />
     </NFormItem>
+    <NFormItem
+      :label="t('settings.startup.cwdFollow')"
+      :feedback="t('settings.startup.cwdFollowHint')"
+    >
+      <NSwitch
+        :value="startupStore.cwdFollowEnabled"
+        @update:value="(v: boolean) => startupStore.setCwdFollowEnabled(v)"
+      />
+    </NFormItem>
   </NForm>
 </template>

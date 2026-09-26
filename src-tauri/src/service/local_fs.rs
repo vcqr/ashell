@@ -100,6 +100,22 @@ pub async fn list(path: Option<String>) -> AppResult<SftpListResp> {
 
         let ft = entry.file_type().await.map_err(|e| io_err("file_type", e))?;
 
+        // 隐藏/系统判定看条目自身（不跟随 symlink：用户目录下的兼容性
+        // junction 自带 HIDDEN+SYSTEM，跟随目标会丢掉该标记）。
+        // Windows 下 DirEntry::metadata 直接用 ReadDirectoryW 缓存数据，无额外系统调用
+        #[cfg(windows)]
+        let hidden = {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+            const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+            let dmd = entry.metadata().await.map_err(|e| io_err("metadata", e))?;
+            let attrs = dmd.file_attributes();
+            attrs & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != 0
+                || name.starts_with('.')
+        };
+        #[cfg(not(windows))]
+        let hidden = name.starts_with('.');
+
         let (file_type, link_path, md) = if ft.is_symlink() {
             let target = tokio::fs::read_link(&entry.path())
                 .await
@@ -135,6 +151,7 @@ pub async fn list(path: Option<String>) -> AppResult<SftpListResp> {
             permissions: permission_string(&md),
             atime: mtime_secs(&md),
             mtime: mtime_secs(&md),
+            hidden,
         });
     }
 
@@ -177,6 +194,7 @@ pub async fn roots() -> AppResult<SftpListResp> {
                     permissions: String::new(),
                     atime: None,
                     mtime: None,
+                    hidden: false,
                 });
             }
         }
@@ -196,6 +214,7 @@ pub async fn roots() -> AppResult<SftpListResp> {
             permissions: String::new(),
             atime: None,
             mtime: None,
+            hidden: false,
         });
     }
 

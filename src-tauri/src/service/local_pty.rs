@@ -15,7 +15,9 @@
 //!   残缺的 PATH 显式 setenv 给子进程，避免覆盖 shell 启动脚本重建的 PATH。
 //! - 用户传 `\r\n` 或 `\n` 时统一规一化为 `\r`，匹配 ConPTY / 大多数 \*nix shell 的行尾期望。
 
+use base64::Engine as _;
 use std::io::{Read, Write};
+use std::sync::OnceLock;
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
@@ -24,6 +26,31 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::service::ssh as ssh_svc;
+
+/// 识别出的 shell 类别，决定 cwd 上报（OSC 9;9）的注入方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellKind {
+    PowerShell,
+    Cmd,
+    Bash,
+    Zsh,
+    Other,
+}
+
+fn kind_of(program: &str) -> ShellKind {
+    let name = std::path::Path::new(program)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match name.as_str() {
+        "powershell" | "pwsh" => ShellKind::PowerShell,
+        "cmd" => ShellKind::Cmd,
+        "bash" => ShellKind::Bash,
+        "zsh" => ShellKind::Zsh,
+        _ => ShellKind::Other,
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -42,8 +69,8 @@ struct ReadyMsg<'a> {
 }
 
 /// `shell` 形如 `"powershell"` / `"pwsh"` / `"cmd"` / `"bash"` / `"zsh"` / 绝对路径。
-/// 传 `None` 走平台默认。
-fn resolve_command(shell: Option<&str>) -> CommandBuilder {
+/// 传 `None` 走平台默认。返回命令与识别出的 shell 类别（用于 cwd 上报注入）。
+fn resolve_command(shell: Option<&str>) -> (CommandBuilder, ShellKind) {
     let pick = shell.map(str::trim).filter(|s| !s.is_empty());
 
     if cfg!(windows) {
@@ -53,39 +80,39 @@ fn resolve_command(shell: Option<&str>) -> CommandBuilder {
                 if which_in_path("powershell.exe").is_some() {
                     let mut c = CommandBuilder::new("powershell.exe");
                     c.arg("-NoLogo");
-                    c
+                    (c, ShellKind::PowerShell)
                 } else {
-                    CommandBuilder::new("cmd.exe")
+                    (CommandBuilder::new("cmd.exe"), ShellKind::Cmd)
                 }
             }
             "powershell" => {
                 let mut c = CommandBuilder::new("powershell.exe");
                 c.arg("-NoLogo");
-                c
+                (c, ShellKind::PowerShell)
             }
             "pwsh" => {
                 let mut c = CommandBuilder::new("pwsh.exe");
                 c.arg("-NoLogo");
-                c
+                (c, ShellKind::PowerShell)
             }
-            "cmd" => CommandBuilder::new("cmd.exe"),
+            "cmd" => (CommandBuilder::new("cmd.exe"), ShellKind::Cmd),
             "git-bash" | "bash" => {
-                // Git Bash 常见路径
+                // Git Bash 常见路径。注意：这里不加 -i，由 apply_cwd_reporting
+                // 统一追加（--rcfile 必须排在 -i 之前，见其注释）
                 for p in [
                     "C:\\Program Files\\Git\\bin\\bash.exe",
                     "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
                 ] {
                     if std::path::Path::new(p).exists() {
-                        let mut c = CommandBuilder::new(p);
-                        c.arg("-i");
-                        return c;
+                        return (CommandBuilder::new(p), ShellKind::Bash);
                     }
                 }
-                let mut c = CommandBuilder::new("bash.exe");
-                c.arg("-i");
-                c
+                (CommandBuilder::new("bash.exe"), ShellKind::Bash)
             }
-            other => CommandBuilder::new(other),
+            other => {
+                let kind = kind_of(other);
+                (CommandBuilder::new(other), kind)
+            }
         }
     } else {
         // macOS/Linux：必须以登录交互 shell 启动（`-l -i`），否则 ~/.zprofile / ~/.zshrc
@@ -117,22 +144,34 @@ fn resolve_command(shell: Option<&str>) -> CommandBuilder {
                 let s = shell_env.unwrap_or_else(|| {
                     first_existing(&["/bin/bash", "/bin/zsh", "/usr/bin/fish", "/bin/sh"])
                 });
-                make_login_interactive(&s)
+                let kind = kind_of(&s);
+                (make_login_interactive(&s), kind)
             }
-            "bash" => make_login_interactive(&first_existing(&["/bin/bash", "/usr/bin/bash"])),
-            "zsh" => make_login_interactive(&first_existing(&["/bin/zsh", "/usr/bin/zsh"])),
+            "bash" => {
+                let s = first_existing(&["/bin/bash", "/usr/bin/bash"]);
+                (make_login_interactive(&s), ShellKind::Bash)
+            }
+            "zsh" => {
+                let s = first_existing(&["/bin/zsh", "/usr/bin/zsh"]);
+                (make_login_interactive(&s), ShellKind::Zsh)
+            }
             "sh" => {
                 // sh 没有 -l/-i 的稳定语义，直接起裸 sh
-                CommandBuilder::new("/bin/sh")
+                (CommandBuilder::new("/bin/sh"), ShellKind::Other)
             }
-            "fish" => make_login_interactive(&first_existing(&["/usr/bin/fish", "/bin/fish"])),
+            "fish" => {
+                let s = first_existing(&["/usr/bin/fish", "/bin/fish"]);
+                (make_login_interactive(&s), ShellKind::Other)
+            }
             other => {
                 if std::path::Path::new(other).exists() {
-                    make_login_interactive(other)
+                    let kind = kind_of(other);
+                    (make_login_interactive(other), kind)
                 } else {
                     log::warn!("shell {other} 不存在，回退系统默认候选");
                     let s = first_existing(&["/bin/bash", "/bin/zsh", "/bin/sh"]);
-                    make_login_interactive(&s)
+                    let kind = kind_of(&s);
+                    (make_login_interactive(&s), kind)
                 }
             }
         }
@@ -149,6 +188,145 @@ fn which_in_path(name: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+/* ---------- cwd 上报注入（OSC 9;9，ConEmu 风格） ----------
+ *
+ * 本地终端要驱动右侧"本地文件"抽屉做目录跟随，shell 需要在每次出提示符时
+ * 把当前目录报给终端模拟器。选 OSC 9;9（纯转义序列，不改变可见提示符；
+ * Windows Terminal / VS Code 同款机制，ConPTY 会原样透传给读取端）。
+ * PowerShell 的 Set-Location 不同步进程 cwd，轮询进程行不通，只能走提示符注入。
+ * 各 shell 的注入载体：
+ * - PowerShell：-EncodedCommand 包一层 prompt 函数（profile 加载后执行，
+ *   包住用户已有 prompt；-NoExit 保证注入后仍进入交互模式）
+ * - cmd：PROMPT 环境变量（每次显示提示符都会重新展开，$P 即当前目录）
+ * - bash：PROMPT_COMMAND 环境变量（rc 文件若重新赋值则失效，优雅降级）
+ * - zsh：无环境变量钩子，用 ZDOTDIR 指向垫片目录（逐文件 source 原配置后
+ *   挂 precmd 钩子；用户已自定义 ZDOTDIR 时不注入，避免破坏其配置）
+ * 注入失败/被覆盖的后果只是"目录不跟随"，文件浏览器本身不受影响。
+ */
+
+const PS_CWD_SNIPPET: &str = r#"$global:__ashellOrigPrompt = $function:prompt
+if ($null -eq $global:__ashellOrigPrompt) { $global:__ashellOrigPrompt = { "PS " } }
+function global:prompt {
+  $d = $executionContext.SessionState.Path.CurrentLocation.ProviderPath
+  $o = & $global:__ashellOrigPrompt
+  "$([char]27)]9;9;$d$([char]7)$o"
+}
+"#;
+
+/// PowerShell 要求 -EncodedCommand 为 UTF-16LE 的 base64。
+fn ps_encoded_command() -> String {
+    let bytes: Vec<u8> = PS_CWD_SNIPPET
+        .encode_utf16()
+        .flat_map(|u| u.to_le_bytes())
+        .collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// zsh 垫片目录：内容为静态脚本，进程生命周期内只需生成一次。
+fn zsh_shim_dir() -> &'static Option<std::path::PathBuf> {
+    static SHIM: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    SHIM.get_or_init(|| {
+        let dir = std::env::temp_dir().join("ashell-zsh-shim");
+        if std::fs::create_dir_all(&dir).is_err() {
+            return None;
+        }
+        // 登录 shell 会依次读 ZDOTDIR 下的 .zshenv/.zprofile/.zshrc/.zlogin；
+        // 垫片逐个 source 家目录的原文件，保证用户启动脚本链不缺
+        let source_home = |name: &str| {
+            format!(
+                "[[ -f \"$HOME/{name}\" ]] && source \"$HOME/{name}\"\n"
+            )
+        };
+        let files: [(&str, String); 4] = [
+            (".zshenv", source_home(".zshenv")),
+            (".zprofile", source_home(".zprofile")),
+            (
+                ".zshrc",
+                format!(
+                    "{}ashell_report_cwd() {{ printf '\\033]9;9;%s\\007' \"$PWD\" }}\nprecmd_functions+=(ashell_report_cwd)\n",
+                    source_home(".zshrc")
+                ),
+            ),
+            (".zlogin", source_home(".zlogin")),
+        ];
+        for (name, body) in files {
+            if std::fs::write(dir.join(name), body).is_err() {
+                return None;
+            }
+        }
+        Some(dir)
+    })
+}
+
+/// Windows git-bash 的 rcfile：等价复刻非登录交互 shell 的启动脚本链
+/// （/etc/bash.bashrc + ~/.bashrc），再挂上报钩子。
+/// 不走 PROMPT_COMMAND 环境变量：git-bash 的 /etc/profile.d/git-prompt.sh
+/// 会覆盖它；且 $PWD 是 MSYS 风格（/c/...），须用 cygpath 转成 Windows 路径。
+fn bash_rcfile() -> &'static Option<std::path::PathBuf> {
+    static RC: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    RC.get_or_init(|| {
+        let dir = std::env::temp_dir().join("ashell-bash-rc");
+        if std::fs::create_dir_all(&dir).is_err() {
+            return None;
+        }
+        let rc = dir.join("ashell-rcfile");
+        let body = concat!(
+            "[[ -f /etc/bash.bashrc ]] && . /etc/bash.bashrc\n",
+            "[[ -f ~/.bashrc ]] && . ~/.bashrc\n",
+            "__ashell_report_cwd() { printf '\\033]9;9;%s\\007' \"$(cygpath -w \"$PWD\" 2>/dev/null || printf '%s' \"$PWD\")\"; }\n",
+            // 前插我们的钩子并保留 rc 链里已设置的 PROMPT_COMMAND（含数组形式）
+            "PROMPT_COMMAND=\"__ashell_report_cwd${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n",
+        );
+        if std::fs::write(&rc, body).is_err() {
+            return None;
+        }
+        Some(rc)
+    })
+}
+
+fn apply_cwd_reporting(cmd: &mut CommandBuilder, kind: ShellKind) {
+    match kind {
+        ShellKind::PowerShell => {
+            if cfg!(windows) {
+                cmd.arg("-NoExit");
+                cmd.arg("-EncodedCommand");
+                cmd.arg(ps_encoded_command());
+            }
+        }
+        ShellKind::Cmd => {
+            if cfg!(windows) {
+                // $E]9;9;$P$E\ = ESC ] 9;9;<当前目录> ESC \（ST 结尾）；
+                // 尾部 $P$G 保持 cmd 默认可见提示符不变
+                cmd.env("PROMPT", "$E]9;9;$P$E\\$P$G");
+            }
+        }
+        ShellKind::Bash => {
+            if cfg!(windows) {
+                // --rcfile 只对非登录交互 shell 生效，git-bash（bash.exe -i）正是该形态；
+                // MSYS bash 接受正斜杠的 Windows 路径。
+                // 参数顺序必须是 --rcfile 在前、-i 在后：cygwin bash 5.3（Git for
+                // Windows 当前版本）在 `-i --rcfile X` 的顺序下解析失败，直接
+                // 打印用法退出（终端闪退）。
+                if let Some(rc) = bash_rcfile() {
+                    cmd.arg("--rcfile");
+                    cmd.arg(rc.to_string_lossy().replace('\\', "/"));
+                }
+                cmd.arg("-i");
+            } else {
+                cmd.env("PROMPT_COMMAND", r#"printf '\033]9;9;%s\007' "$PWD""#);
+            }
+        }
+        ShellKind::Zsh => {
+            if std::env::var_os("ZDOTDIR").is_none() {
+                if let Some(dir) = zsh_shim_dir() {
+                    cmd.env("ZDOTDIR", dir);
+                }
+            }
+        }
+        ShellKind::Other => {}
+    }
 }
 
 fn inherit_env(cmd: &mut CommandBuilder) {
@@ -195,8 +373,9 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
     };
 
     // 2) 拼命令
-    let mut cmd = resolve_command(shell.as_deref());
+    let (mut cmd, shell_kind) = resolve_command(shell.as_deref());
     inherit_env(&mut cmd);
+    apply_cwd_reporting(&mut cmd, shell_kind);
     if let Ok(home) = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
         cmd.cwd(home);
     }
