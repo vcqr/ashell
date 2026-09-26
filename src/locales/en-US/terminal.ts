@@ -42,6 +42,8 @@ export default {
   localFiles: {
     pin: "Pin to right",
     unpin: "Unpin",
+    followOn: "Directory follow is on, click to turn off",
+    followOff: "Directory follow is off, click to turn on",
   },
   activityBar: {
     broadcast: "Broadcast input",

@@ -30,6 +30,7 @@ import {
   EyeOutline,
   FolderOpenOutline,
   HomeOutline,
+  LocateOutline,
   OpenOutline,
   RefreshOutline,
   SearchOutline,
@@ -57,6 +58,7 @@ import MkdirDialog from "@/components/sftp/MkdirDialog.vue"
 import RenameDialog from "@/components/sftp/RenameDialog.vue"
 import { isAbortError } from "@/api/sftp"
 import { useSftpStore } from "@/stores/sftp"
+import { useStartupStore } from "@/stores/startup"
 import type { OsDropFolder, SftpFile, TransferTask } from "@/types"
 import { formatUnix } from "@/utils/time"
 import { humanSize } from "@/utils/humanSize"
@@ -96,6 +98,8 @@ const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
 const store = useSftpStore()
+/** 目录跟随开关（仅独立抽屉使用）：开启时抽屉自动跳到当前终端 cwd */
+const startupStore = useStartupStore()
 
 const files = ref<SftpFile[]>([])
 const loading = ref(false)
@@ -1207,6 +1211,20 @@ onMounted(() => {
             <EyeOffOutline v-if="showHidden" />
             <EyeOutline v-else />
           </NIcon>
+        </template>
+      </NButton>
+      <!-- 目录跟随开关（仅独立抽屉）：开启后地址栏随终端 cwd 跳动 -->
+      <NButton
+        v-if="standalone"
+        size="small"
+        quaternary
+        circle
+        :type="startupStore.cwdFollowEnabled ? 'primary' : 'default'"
+        :title="startupStore.cwdFollowEnabled ? t('terminal.localFiles.followOn') : t('terminal.localFiles.followOff')"
+        @click="startupStore.setCwdFollowEnabled(!startupStore.cwdFollowEnabled)"
+      >
+        <template #icon>
+          <NIcon><LocateOutline /></NIcon>
         </template>
       </NButton>
       <NButton

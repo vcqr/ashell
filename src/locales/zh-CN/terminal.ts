@@ -42,6 +42,8 @@ export default {
   localFiles: {
     pin: "固定到右侧",
     unpin: "取消固定",
+    followOn: "目录跟随已开启，点击关闭",
+    followOff: "目录跟随已关闭，点击开启",
   },
   activityBar: {
     broadcast: "广播输入",
