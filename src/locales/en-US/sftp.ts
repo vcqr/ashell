@@ -19,6 +19,9 @@ export default {
   clearCompleted: "Clear completed",
   remotePaneTitle: "Remote",
   clickToEditPath: "Click the blank area to type a path",
+  followOn: "Directory follow is on (tracks the terminal's working directory), click to turn off",
+  followOff: "Directory follow is off, click to track the terminal's working directory",
+  followNeedReconnect: "This terminal session doesn't report its working directory yet. Reconnect the terminal to enable directory follow.",
   filterPlaceholder: "Filter current directory…",
   nav: {
     back: "Back",

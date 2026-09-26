@@ -334,7 +334,15 @@ export async function writeText(
 /** 终端 WebSocket URL */
 export function buildTerminalWsUrl(
   hostId: number,
-  query: { sid?: string; cols?: number; rows?: number; term?: string } = {},
+  query: {
+    sid?: string
+    cols?: number
+    rows?: number
+    term?: string
+    /** 连接时注入远端 shell cwd 上报钩子（SFTP 远程栏目录跟随用）；
+     *  键名须与后端 TerminalQuery 的 snake_case 字段一致 */
+    cwd_report?: boolean
+  } = {},
 ): Promise<string> {
   return buildWsUrl(`/api/ssh/terminal/${hostId}`, query)
 }

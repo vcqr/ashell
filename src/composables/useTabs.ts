@@ -492,10 +492,14 @@ export function useTabs() {
     if (t) t.title = title;
   }
 
-  /** shell 上报 cwd（OSC 9;9 / OSC 7）：仅本地 tab 记录，驱动本地文件抽屉跟随 */
+  /**
+   * shell 上报 cwd（OSC 9;9 / OSC 7）：本地 tab 由后端按 shell 注入上报，
+   * 远程 tab 依赖用户自配的 shell 集成。记录到所属 tab，
+   * 驱动本地文件抽屉与 SFTP 远程栏的目录跟随。
+   */
   function onCwdChange(tabKey: string, cwd: string) {
     const t = tabs.value.find((x) => x.key === tabKey);
-    if (t && t.kind === "local") t.cwd = cwd;
+    if (t) t.cwd = cwd;
   }
 
   function closeHostsIfOpen() {

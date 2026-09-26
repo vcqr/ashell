@@ -98,7 +98,7 @@ const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
 const store = useSftpStore()
-/** 目录跟随开关（仅独立抽屉使用）：开启时抽屉自动跳到当前终端 cwd */
+/** 目录跟随全局开关（设置→启动→本地文件目录跟随）：开启时本地栏自动跳到当前本地终端 cwd */
 const startupStore = useStartupStore()
 
 const files = ref<SftpFile[]>([])
@@ -1188,15 +1188,18 @@ onMounted(() => {
           {{ displayPath }}
         </div>
       </div>
+      <!-- 目录跟随开关：双栏本地栏 / 独立抽屉共用全局开关（设置→启动→本地文件目录跟随），
+           开启后地址栏随当前本地终端 cwd 跳动；与远程栏一致，紧邻地址栏 -->
       <NButton
         size="small"
         quaternary
         circle
-        :title="t('sftp.refresh')"
-        @click="refresh"
+        :type="startupStore.cwdFollowEnabled ? 'primary' : 'default'"
+        :title="startupStore.cwdFollowEnabled ? t('terminal.localFiles.followOn') : t('terminal.localFiles.followOff')"
+        @click="startupStore.setCwdFollowEnabled(!startupStore.cwdFollowEnabled)"
       >
         <template #icon>
-          <NIcon><RefreshOutline /></NIcon>
+          <NIcon><LocateOutline /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1213,18 +1216,15 @@ onMounted(() => {
           </NIcon>
         </template>
       </NButton>
-      <!-- 目录跟随开关（仅独立抽屉）：开启后地址栏随终端 cwd 跳动 -->
       <NButton
-        v-if="standalone"
         size="small"
         quaternary
         circle
-        :type="startupStore.cwdFollowEnabled ? 'primary' : 'default'"
-        :title="startupStore.cwdFollowEnabled ? t('terminal.localFiles.followOn') : t('terminal.localFiles.followOff')"
-        @click="startupStore.setCwdFollowEnabled(!startupStore.cwdFollowEnabled)"
+        :title="t('sftp.refresh')"
+        @click="refresh"
       >
         <template #icon>
-          <NIcon><LocateOutline /></NIcon>
+          <NIcon><RefreshOutline /></NIcon>
         </template>
       </NButton>
       <NButton

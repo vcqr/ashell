@@ -19,6 +19,9 @@ export default {
   clearCompleted: "清空已完成",
   remotePaneTitle: "远程",
   clickToEditPath: "点击空白处输入路径",
+  followOn: "目录跟随已开启，随终端工作目录跳动，点击关闭",
+  followOff: "目录跟随已关闭，点击开启后远程栏随终端工作目录跳转",
+  followNeedReconnect: "当前终端会话未上报工作目录：重连终端后自动上报，目录跟随即生效",
   filterPlaceholder: "过滤当前目录…",
   nav: {
     back: "后退",

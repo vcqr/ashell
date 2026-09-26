@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -27,6 +27,9 @@ pub struct TerminalQuery {
     pub rows: u32,
     #[serde(default = "default_term")]
     pub term: String,
+    /// 是否注入 cwd 上报钩子（前端按 SFTP 目录跟随开关在连接时声明）
+    #[serde(default)]
+    pub cwd_report: bool,
 }
 
 fn default_cols() -> u32 {
@@ -250,6 +253,153 @@ async fn request_hostkey_confirm(
 
 const PROMPT_BUF_LIMIT: usize = 1024;
 const INPUT_BUF_LIMIT: usize = 512;
+
+/* ---------- SSH 会话 cwd 上报注入（OSC 9;9，ConEmu 风格） ----------
+ *
+ * SFTP 远程栏目录跟随需要终端上报工作目录：本地 PTY 由后端按 shell 注入，
+ * SSH 会话默认没有任何上报（远端 shell 除非用户自配 osc7 集成）。前端按
+ * 跟随开关在连接时声明 cwd_report，这里在 shell 就绪后向交互会话写入一行
+ * 提示符钩子。与本地 PTY 的环境变量预置不同，注入发生在 rc 文件加载完之后
+ * （首个提示符处执行），不会被用户 rc 覆盖，且只对声明了 cwd_report 的
+ * 会话生效——未开启跟随的会话零变化。
+ *
+ * 已知代价：写入的一行命令会被 pty 内核回显或 readline 重显进输出流。
+ * 后端在转发给前端前用 [`CwdEchoStripper`] 移除其首次出现（容忍折行处
+ * 插入的 \r\n，超时放弃），正常情况下用户不可见；剥离失败退化为会话
+ * 开头多显示一行。行首带空格，HISTCONTROL=ignorespace 的 bash 不会
+ * 记入历史。fish/csh 等无法安全注入的 shell 通过 exec 探测 $SHELL 后
+ * 跳过（降级为不跟随）；探测用的 exec 无 pty，不打印 MOTD/Last login，
+ * 不影响「shell 优先打开」的欢迎信息顺序。
+ */
+
+/// bash：前插上报钩子并保留 rc 链里已有的 PROMPT_COMMAND（含后续用户改动）
+const SSH_BASH_CWD_LINE: &str = " __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; PROMPT_COMMAND=\"__ashell_rc${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n";
+
+/// zsh：挂 precmd 钩子（运行时追加，兼容 oh-my-zsh 等框架）
+const SSH_ZSH_CWD_LINE: &str = " __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; precmd_functions+=(__ashell_rc)\n";
+
+/// 注入行回显剥离的放弃时限：正常情况下回显在建连后一两秒内出现
+const CWD_ECHO_STRIP_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// 在输出流中剥离 cwd 注入行的回显。匹配策略：目标行前缀必须连续命中
+/// （锁定），其后容忍终端按列宽折行插入的 \r\n（有连续长度上限），
+/// 命中后顺带吃掉紧随的回车换行。目标行可能分块到达：转发时扣留尾部
+/// 字节跨块重试；超时未命中则原样放行（退化为多显示一行）。
+struct CwdEchoStripper {
+    /// 注入行原文（不含行尾 \n）
+    target: Vec<u8>,
+    /// 跨块扣留的输出尾巴
+    pending: Vec<u8>,
+    deadline: Instant,
+    done: bool,
+}
+
+enum FindEcho {
+    /// 完整命中：[start, end) 为含回显及其回车的待剥区间
+    Complete { start: usize, end: usize },
+    /// 锁定前缀但目标未走完（分块边界）：从 start 起扣留待续
+    Partial { start: usize },
+    None,
+}
+
+impl CwdEchoStripper {
+    fn new(target: &str) -> Self {
+        Self::with_timeout(target, CWD_ECHO_STRIP_TIMEOUT)
+    }
+
+    fn with_timeout(target: &str, timeout: Duration) -> Self {
+        Self {
+            target: target.as_bytes().to_vec(),
+            pending: Vec::new(),
+            deadline: Instant::now() + timeout,
+            done: false,
+        }
+    }
+
+    /// 喂入一块输出，返回应转发给前端的字节
+    fn feed(&mut self, data: &[u8]) -> Vec<u8> {
+        if self.done {
+            return data.to_vec();
+        }
+        if Instant::now() >= self.deadline {
+            self.done = true;
+            let mut out = std::mem::take(&mut self.pending);
+            out.extend_from_slice(data);
+            return out;
+        }
+        let mut buf = std::mem::take(&mut self.pending);
+        buf.extend_from_slice(data);
+        match Self::find(&buf, &self.target) {
+            FindEcho::Complete { start, end } => {
+                self.done = true;
+                let mut out = buf[..start].to_vec();
+                out.extend_from_slice(&buf[end..]);
+                out
+            }
+            FindEcho::Partial { start } => {
+                let out = buf[..start].to_vec();
+                self.pending = buf[start..].to_vec();
+                out
+            }
+            FindEcho::None => {
+                // 扣留尾部等待跨块匹配：锁定前缀 8 字节 + 折行余量
+                let keep = 40.min(buf.len());
+                let split = buf.len() - keep;
+                let out = buf[..split].to_vec();
+                self.pending = buf[split..].to_vec();
+                out
+            }
+        }
+    }
+
+    fn find(buf: &[u8], target: &[u8]) -> FindEcho {
+        const LOCK: usize = 8;
+        /// 折行插入的 \r\n 连续字节数上限（列宽再窄一次折行也只有 2 字节）
+        const MAX_WRAP_RUN: usize = 8;
+        if buf.len() < LOCK || target.len() <= LOCK {
+            return FindEcho::None;
+        }
+        let mut i = 0usize;
+        'scan: while i + LOCK <= buf.len() {
+            if buf[i..i + LOCK] != target[..LOCK] {
+                i += 1;
+                continue;
+            }
+            // 锁定后容忍 \r\n 插入，走完剩余目标
+            let (mut k, mut j, mut run) = (i + LOCK, LOCK, 0usize);
+            loop {
+                if j >= target.len() {
+                    // 命中：顺带吃掉紧随的回车换行（回显的 Enter）
+                    let mut end = k;
+                    let mut eaten = 0usize;
+                    while end < buf.len()
+                        && eaten < 4
+                        && (buf[end] == b'\r' || buf[end] == b'\n')
+                    {
+                        end += 1;
+                        eaten += 1;
+                    }
+                    return FindEcho::Complete { start: i, end };
+                }
+                if k >= buf.len() {
+                    return FindEcho::Partial { start: i };
+                }
+                if buf[k] == target[j] {
+                    k += 1;
+                    j += 1;
+                    run = 0;
+                } else if (buf[k] == b'\r' || buf[k] == b'\n') && run < MAX_WRAP_RUN {
+                    k += 1;
+                    run += 1;
+                } else {
+                    i += 1;
+                    continue 'scan;
+                }
+            }
+        }
+        FindEcho::None
+    }
+}
 
 /// 去掉终端输出里的 ANSI 控制序列，让 sudo 提示识别不被颜色/光标序列打断。
 fn sanitize_prompt_text(bytes: &[u8]) -> String {
@@ -555,6 +705,39 @@ async fn run_terminal(
         }
     }
 
+    // cwd 上报注入：探测远端登录 shell（exec 无 pty，不影响欢迎信息），
+    // bash/zsh 写入提示符钩子，其余 shell 优雅跳过（降级为不跟随）。
+    // 经 cmd_tx 写入：中继循环启动后它是写进交互 channel 的第一笔数据，
+    // 此时用户尚未来得及输入，不会与用户命令行交错。
+    let mut cwd_echo_strip: Option<CwdEchoStripper> = None;
+    if q.cwd_report {
+        match session_arc.execute("echo \"$SHELL\"").await {
+            Ok(res) => {
+                let sh = res.stdout.trim();
+                let base = sh.rsplit('/').next().unwrap_or(sh);
+                let line = if base.contains("zsh") {
+                    SSH_ZSH_CWD_LINE
+                } else if base.contains("bash") {
+                    SSH_BASH_CWD_LINE
+                } else {
+                    ""
+                };
+                if !line.is_empty() {
+                    match ssh_svc::get_terminal_sender(sid).await {
+                        Ok(sender) => {
+                            let _ = sender.send(line.to_string());
+                            // 注入行会被回显进输出流：武装剥离器，转发前移除其首次出现
+                            cwd_echo_strip =
+                                Some(CwdEchoStripper::new(line.trim_end_matches('\n')));
+                        }
+                        Err(e) => log::debug!("terminal sender missing for cwd report: {e}"),
+                    }
+                }
+            }
+            Err(e) => log::debug!("detect remote shell for cwd report failed: {e}"),
+        }
+    }
+
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
 
@@ -639,9 +822,20 @@ async fn run_terminal(
             ssh_msg = channel.wait() => {
                 match ssh_msg {
                     Some(ChannelMsg::Data { ref data }) => {
-                        let bytes = data.to_vec();
+                        // cwd 注入行回显剥离：未武装时原样透传
+                        let bytes = match cwd_echo_strip.as_mut() {
+                            Some(s) => s.feed(data),
+                            None => data.to_vec(),
+                        };
                         let _ = output_tx.send(String::from_utf8_lossy(&bytes).to_string());
-                        if ws_tx.send(Message::Binary(bytes.clone().into())).await.is_err() { break; }
+                        if !bytes.is_empty()
+                            && ws_tx
+                                .send(Message::Binary(bytes.clone().into()))
+                                .await
+                                .is_err()
+                        {
+                            break;
+                        }
 
                         push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
                         if detect_sudo_password_prompt(&sudo_buf, &terminal_input_buf)
@@ -772,6 +966,76 @@ mod tests {
             b"[sudo] password for user: ",
             &empty_input
         ));
+    }
+
+    /* ---------- cwd 注入行回显剥离 ---------- */
+
+    /// 构造一段「MOTD + 提示符 + 注入行回显 + 新提示符」的输出流
+    fn echo_stream(target: &str, wrap_at: Option<usize>) -> Vec<u8> {
+        let mut stream = b"Last login: ...".to_vec();
+        stream.extend_from_slice(b"\r\nhost:~$ ");
+        let t = target.as_bytes();
+        match wrap_at {
+            // 模拟终端按列宽折行：目标行中段插入 \r\n
+            Some(at) => {
+                stream.extend_from_slice(&t[..at]);
+                stream.extend_from_slice(b"\r\n");
+                stream.extend_from_slice(&t[at..]);
+            }
+            None => stream.extend_from_slice(t),
+        }
+        stream.extend_from_slice(b"\r\nhost:~$ ");
+        stream
+    }
+
+    #[test]
+    fn cwd_echo_stripped_in_single_chunk() {
+        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::new(target);
+        let out = s.feed(&echo_stream(target, None));
+        assert_eq!(String::from_utf8_lossy(&out), "Last login: ...\r\nhost:~$ host:~$ ");
+    }
+
+    #[test]
+    fn cwd_echo_stripped_across_chunks() {
+        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::new(target);
+        let stream = echo_stream(target, None);
+        let mid = 20;
+        let out1 = s.feed(&stream[..mid]);
+        assert!(out1.is_empty());
+        let out2 = s.feed(&stream[mid..]);
+        let mut all = out1;
+        all.extend_from_slice(&out2);
+        assert_eq!(String::from_utf8_lossy(&all), "Last login: ...\r\nhost:~$ host:~$ ");
+    }
+
+    #[test]
+    fn cwd_echo_stripped_with_line_wrap() {
+        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::new(target);
+        let out = s.feed(&echo_stream(target, Some(30)));
+        assert_eq!(String::from_utf8_lossy(&out), "Last login: ...\r\nhost:~$ host:~$ ");
+    }
+
+    #[test]
+    fn cwd_echo_strip_gives_up_after_timeout() {
+        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::with_timeout(target, Duration::ZERO);
+        let data = b"plain output without echo";
+        assert_eq!(s.feed(data), data.to_vec());
+        // 超时后彻底放行，不再扣留
+        assert_eq!(s.feed(b"more"), b"more".to_vec());
+    }
+
+    #[test]
+    fn cwd_echo_strip_forwards_unrelated_output() {
+        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::new(target);
+        let o1 = s.feed(b"abc");
+        assert!(o1.is_empty());
+        let o2 = s.feed(&vec![b'x'; 100]);
+        assert_eq!(&o2[..3], b"abc");
     }
 }
 

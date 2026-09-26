@@ -241,7 +241,7 @@ export interface TerminalTab {
   status?: 'connecting' | 'connected' | 'closed' | 'error'
   /** 本地 PTY tab 使用的 shell 名（powershell/pwsh/cmd/bash/zsh/...）。 */
   shell?: string | null
-  /** 本地终端当前工作目录（shell 以 OSC 9;9 上报，驱动本地文件抽屉目录跟随；不持久化） */
+  /** 终端当前工作目录（本地 shell 由后端注入 OSC 9;9 上报，远程依赖用户 shell 集成；驱动本地文件抽屉与 SFTP 远程栏目录跟随；不持久化） */
   cwd?: string
   /** 主机展示信息（断线重连时复用） */
   hostInfo?: {

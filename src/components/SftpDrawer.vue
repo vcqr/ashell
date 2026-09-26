@@ -44,6 +44,7 @@ import {
   EyeOutline,
   FolderOpenOutline,
   LaptopOutline,
+  LocateOutline,
   OpenOutline,
   RefreshOutline,
   SearchOutline,
@@ -100,6 +101,7 @@ import {
 import { openSftpInNewWindow } from "@/utils/newWindow"
 import { useFileDrag } from "@/composables/useFileDrag"
 import { useMultiSelect } from "@/composables/useMultiSelect"
+import { useSftpCwdFollow } from "@/composables/useSftpCwdFollow"
 
 interface Props {
   open: boolean
@@ -108,6 +110,10 @@ interface Props {
   hostAddr?: string
   /** 关联主机 id（提权时后端凭此取主机密码作为 sudo 密码回退） */
   hostId?: number | null
+  /** 绑定终端上报的工作目录（OSC 9;9 / OSC 7）：目录跟随开启时远程栏随之跳转 */
+  cwd?: string
+  /** 激活本地终端上报的工作目录（OSC 9;9）：双栏本地栏目录跟随用 */
+  localCwd?: string
   /** 独立窗口模式：面板铺满窗口、无宽度拖拽，关闭按钮直接关窗口 */
   standalone?: boolean
 }
@@ -2723,6 +2729,45 @@ function onNewSelect(key: string | number) {
   else if (key === "touch") openTouch()
 }
 
+/* ---------- 远程栏目录跟随（随绑定终端上报的 cwd 跳转） ----------
+ * 与本地文件抽屉同策略：仅抽屉打开时生效，关闭期间 cwd 变化不产生请求。
+ * 会话是否上报 cwd 由建连时的 cwd_report 决定（跟随开关当时开启才注入），
+ * 会话中途开启跟随需重连终端。 */
+
+/** 跟随开关（路径栏定位图标按钮）：模块级单例，localStorage 持久化 */
+const cwdFollow = useSftpCwdFollow()
+
+function toggleCwdFollow() {
+  const turningOn = !cwdFollow.value
+  cwdFollow.value = turningOn
+  // 开启瞬间立即向当前 cwd 同步一次，不用等下一次 cd（与抽屉开启开关同语义）
+  const cwd = props.cwd
+  if (
+    turningOn &&
+    props.open &&
+    props.sid &&
+    cwd &&
+    !pathEditing.value &&
+    normalizePath(cwd) !== normalizePath(currentPath.value)
+  ) {
+    void load(cwd)
+  } else if (turningOn && props.open && props.sid && !cwd) {
+    // 会话建连时未声明上报（当时跟随开关是关的）：提示重连后生效
+    message.info(t("sftp.followNeedReconnect"))
+  }
+}
+
+// cwd 变化跟随：开关、抽屉打开、有绑定会话三重门控；路径归一化后相同不重复
+// 加载（shell 每次出提示符都重报同一 cwd）；路径编辑中不抢地址栏
+watch(
+  () => props.cwd,
+  (next) => {
+    if (!cwdFollow.value || !props.open || !props.sid) return
+    if (!next || pathEditing.value) return
+    if (normalizePath(next) !== normalizePath(currentPath.value)) void load(next)
+  },
+)
+
 /* ---------- 监听打开 ---------- */
 
 watch(
@@ -2730,8 +2775,11 @@ watch(
   ([open, sid]) => {
     if (open && sid) {
       const stored = store.getPath(sid)
-      currentPath.value = stored
-      void load(stored)
+      // 跟随开启且有上报 cwd 时优先跳终端当前目录，否则回退上次记忆路径
+      const cwd = cwdFollow.value ? props.cwd : ""
+      const target = cwd || stored
+      currentPath.value = target
+      void load(target)
     }
   },
   { immediate: true },
@@ -2772,6 +2820,30 @@ function persistLocalDir(v: string) {
     // ignore
   }
 }
+
+/* ---------- 本地栏目录跟随（双栏时随激活本地终端 cwd 跳动） ----------
+ * 复用全局「本地文件目录跟随」开关（与本地文件抽屉同一开关同一语义）：
+ * 仅抽屉打开且双栏时生效，关闭期间 cwd 变化不产生目录请求；
+ * 重新打开抽屉 / 开启开关时立即向当前 cwd 同步一次。 */
+
+watch(
+  () => props.localCwd,
+  (next) => {
+    if (!startupStore.cwdFollowEnabled || !props.open || !dualPane.value) return
+    if (!next || next === localDir.value) return
+    persistLocalDir(next)
+  },
+)
+
+watch(
+  [() => props.open, dualPane, () => startupStore.cwdFollowEnabled],
+  ([open, dual, on]) => {
+    if (!open || !dual || !on) return
+    const cwd = props.localCwd
+    if (cwd && cwd !== localDir.value) persistLocalDir(cwd)
+  },
+  { immediate: true },
+)
 
 const localPaneRef = ref<InstanceType<typeof LocalPane> | null>(null)
 
@@ -3160,6 +3232,22 @@ function openInStandaloneWindow() {
                 >{{ seg.name }}</span>
               </div>
             </div>
+            <!-- 目录跟随开关：管地址栏行为（随绑定终端 cwd 跳动），紧邻地址栏；
+                 独立窗口无绑定终端（无 cwd 来源），不显示 -->
+            <NButton
+              v-if="!standalone"
+              size="small"
+              quaternary
+              circle
+              :type="cwdFollow ? 'primary' : 'default'"
+              :title="cwdFollow ? t('sftp.followOn') : t('sftp.followOff')"
+              :disabled="pathEditing"
+              @click="toggleCwdFollow"
+            >
+              <template #icon>
+                <NIcon><LocateOutline /></NIcon>
+              </template>
+            </NButton>
             <NPopover trigger="click" placement="bottom-end" :show-arrow="false">
               <template #trigger>
                 <NButton
@@ -3175,6 +3263,16 @@ function openInStandaloneWindow() {
                 </NButton>
               </template>
               <div class="bm-pop">
+                <!-- 收藏/取消收藏当前目录：星标从路径栏收进浮层，路径栏少一个图标 -->
+                <div class="bm-add" @click="toggleBookmark">
+                  <NIcon :size="14" :color="isBookmarked ? '#f1c27d' : undefined">
+                    <Star v-if="isBookmarked" />
+                    <StarOutline v-else />
+                  </NIcon>
+                  <span>{{
+                    isBookmarked ? t("sftp.bookmarks.remove") : t("sftp.bookmarks.add")
+                  }}</span>
+                </div>
                 <div class="bm-section">{{ t("sftp.bookmarks.title") }}</div>
                 <template v-if="bookmarks.length > 0">
                   <div v-for="b in bookmarks" :key="b.path" class="bm-item">
@@ -3214,15 +3312,12 @@ function openInStandaloneWindow() {
               size="small"
               quaternary
               circle
-              :title="isBookmarked ? t('sftp.bookmarks.remove') : t('sftp.bookmarks.add')"
+              :title="t('sftp.copyPath')"
               :disabled="pathEditing"
-              @click="toggleBookmark"
+              @click="copyCurrentPath"
             >
               <template #icon>
-                <NIcon :color="isBookmarked ? '#f1c27d' : undefined">
-                  <Star v-if="isBookmarked" />
-                  <StarOutline v-else />
-                </NIcon>
+                <NIcon><CopyOutline /></NIcon>
               </template>
             </NButton>
             <NButton
@@ -3238,18 +3333,6 @@ function openInStandaloneWindow() {
                   <EyeOffOutline v-if="showHidden" />
                   <EyeOutline v-else />
                 </NIcon>
-              </template>
-            </NButton>
-            <NButton
-              size="small"
-              quaternary
-              circle
-              :title="t('sftp.copyPath')"
-              :disabled="pathEditing"
-              @click="copyCurrentPath"
-            >
-              <template #icon>
-                <NIcon><CopyOutline /></NIcon>
               </template>
             </NButton>
             <NButton
@@ -3972,6 +4055,23 @@ function openInStandaloneWindow() {
   font-size: 12px;
   color: var(--ashell-text-subtle);
   padding: 4px 6px;
+}
+
+/* 浮层顶部"收藏/取消收藏当前目录"动作行（星标从路径栏收进浮层） */
+.bm-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--ashell-text-strong);
+  cursor: pointer;
+}
+
+.bm-add:hover {
+  background: var(--ashell-row-hover, rgba(255, 255, 255, 0.06));
+  color: var(--ashell-accent, #7c5cff);
 }
 
 .filter-input {
