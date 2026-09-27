@@ -133,7 +133,7 @@ function close() {
 <template>
   <NModal :show="open" :mask-closable="false" @update:show="(v: boolean) => emit('update:open', v)">
     <NCard
-      style="width: min(1060px, 94vw); height: min(800px, 92vh)"
+      style="width: 100vw; height: 100vh; border-radius: 0"
       :title="t('settings.title')"
       size="medium"
       :bordered="false"
@@ -277,6 +277,10 @@ function close() {
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
+  /* 全屏后限制内容列宽度并居中，避免超宽屏下表单被拉得过散 */
+  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 </style>
 
