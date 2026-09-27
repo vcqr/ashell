@@ -178,25 +178,27 @@ function close() {
         </nav>
 
         <div class="settings-content">
-          <GeneralSection v-if="activeTab === 'general'" />
-          <ThemeSection
-            v-else-if="activeTab === 'theme'"
-            :theme-mode="themeMode"
-            :resolved-theme="resolvedTheme"
-            :theme-title="themeTitle"
-            @update:theme-mode="(v: ThemeMode) => emit('update:themeMode', v)"
-          />
-          <TerminalSection v-else-if="activeTab === 'terminal'" />
-          <ShortcutsSection v-else-if="activeTab === 'shortcuts'" />
-          <WindowSection v-else-if="activeTab === 'window'" />
-          <TraySection v-else-if="activeTab === 'tray'" />
-          <IconsSection v-else-if="activeTab === 'icons'" />
-          <StartupSection v-else-if="activeTab === 'startup'" />
-          <AiProvidersSection v-else-if="activeTab === 'ai-providers'" />
-          <AiSection v-else-if="activeTab === 'ai'" />
-          <SecuritySection v-else-if="activeTab === 'security'" />
-          <BackupSection v-else-if="activeTab === 'backup'" />
-          <AboutSection v-else-if="activeTab === 'about'" />
+          <div class="settings-content-inner">
+            <GeneralSection v-if="activeTab === 'general'" />
+            <ThemeSection
+              v-else-if="activeTab === 'theme'"
+              :theme-mode="themeMode"
+              :resolved-theme="resolvedTheme"
+              :theme-title="themeTitle"
+              @update:theme-mode="(v: ThemeMode) => emit('update:themeMode', v)"
+            />
+            <TerminalSection v-else-if="activeTab === 'terminal'" />
+            <ShortcutsSection v-else-if="activeTab === 'shortcuts'" />
+            <WindowSection v-else-if="activeTab === 'window'" />
+            <TraySection v-else-if="activeTab === 'tray'" />
+            <IconsSection v-else-if="activeTab === 'icons'" />
+            <StartupSection v-else-if="activeTab === 'startup'" />
+            <AiProvidersSection v-else-if="activeTab === 'ai-providers'" />
+            <AiSection v-else-if="activeTab === 'ai'" />
+            <SecuritySection v-else-if="activeTab === 'security'" />
+            <BackupSection v-else-if="activeTab === 'backup'" />
+            <AboutSection v-else-if="activeTab === 'about'" />
+          </div>
         </div>
       </div>
     </NCard>
@@ -209,10 +211,6 @@ function close() {
   gap: 24px;
   flex: 1;
   min-height: 0;
-  /* 全屏下整个布局（导航 + 内容）限宽居中，内容列不再散开 */
-  width: 100%;
-  max-width: 1000px;
-  margin: 0 auto;
 }
 
 .settings-tabs {
@@ -281,6 +279,16 @@ function close() {
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
+}
+
+/* 右栏内部内容限宽并居中：导航贴左，表单不至于在全屏下横向拉散 */
+.settings-content-inner {
+  width: 100%;
+  max-width: 760px;
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
 }
 </style>
 

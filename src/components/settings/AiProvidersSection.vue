@@ -282,7 +282,10 @@ onMounted(() => {
 
 <style scoped>
 .providers-section {
+  /* 设置分区（min-height:100% 的 flex 容器）与弹窗（定高 flex 容器）内都撑满可用高度 */
   height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }

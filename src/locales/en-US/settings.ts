@@ -240,7 +240,7 @@ export default {
       title: "Engine",
       active: "Active Engine",
       provider: "Linked Model Provider",
-      providerPlaceholder: "Select a model provider (add one in the header dialog)",
+      providerPlaceholder: "Select a model provider (add one under Model Providers)",
       thinkingLevel: "Thinking Level",
       hint: "Engine, model provider and model changes are written immediately and take effect on the next new session; running sessions are unaffected.",
     },
