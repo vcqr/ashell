@@ -209,6 +209,10 @@ function close() {
   gap: 24px;
   flex: 1;
   min-height: 0;
+  /* 全屏下整个布局（导航 + 内容）限宽居中，内容列不再散开 */
+  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .settings-tabs {
@@ -277,10 +281,6 @@ function close() {
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
-  /* 全屏后限制内容列宽度并居中，避免超宽屏下表单被拉得过散 */
-  width: 100%;
-  max-width: 1000px;
-  margin: 0 auto;
 }
 </style>
 
