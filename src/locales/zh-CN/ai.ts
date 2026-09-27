@@ -9,6 +9,8 @@ export default {
   settings: "Settings",
   close: "Close",
   openInNewWindow: "在新窗口打开",
+  pin: "固定到右侧",
+  unpin: "取消固定",
   needSession: "请先打开一个终端会话",
   placeholder: "和 AI 聊点什么吧～",
   inputPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",

@@ -2,6 +2,7 @@ import { nextTick, ref, watch, type ComputedRef, type Ref } from "vue";
 import type { TerminalTab } from "@/types";
 import type { AiAssistantExposed } from "./useTabs";
 import { useLocalFilesPin } from "./useLocalFilesPin";
+import { useAiPin } from "./useAiPin";
 
 const ACTIVITY_BAR_KEY = "ashell:activity-bar-visible";
 
@@ -46,6 +47,15 @@ export function usePanels(
     localFilesOpen.value = false;
   }
 
+  // AI 面板固定（停靠）态：语义与本地文件抽屉的图钉一致
+  const aiPinned = useAiPin();
+
+  /** 自动收起 AI 面板的唯一入口；固定态跳过（用户点关闭/图钉才收） */
+  function dismissAi() {
+    if (aiPinned.value) return;
+    aiOpen.value = false;
+  }
+
   watch(activityBarVisible, (v) => {
     try {
       localStorage.setItem(ACTIVITY_BAR_KEY, String(v));
@@ -86,7 +96,7 @@ export function usePanels(
     if (!activeSftpTab.value) return;
     sftpOpen.value = !sftpOpen.value;
     if (sftpOpen.value) {
-      aiOpen.value = false;
+      dismissAi();
       hostInfoOpen.value = false;
       forwardOpen.value = false;
       templateOpen.value = false;
@@ -98,7 +108,7 @@ export function usePanels(
     if (!activeSftpTab.value) return;
     hostInfoOpen.value = !hostInfoOpen.value;
     if (hostInfoOpen.value) {
-      aiOpen.value = false;
+      dismissAi();
       sftpOpen.value = false;
       forwardOpen.value = false;
       templateOpen.value = false;
@@ -110,7 +120,7 @@ export function usePanels(
     if (!activeSftpTab.value) return;
     forwardOpen.value = !forwardOpen.value;
     if (forwardOpen.value) {
-      aiOpen.value = false;
+      dismissAi();
       sftpOpen.value = false;
       hostInfoOpen.value = false;
       templateOpen.value = false;
@@ -122,7 +132,7 @@ export function usePanels(
     if (!activeTerminalTab.value) return;
     templateOpen.value = !templateOpen.value;
     if (templateOpen.value) {
-      aiOpen.value = false;
+      dismissAi();
       sftpOpen.value = false;
       hostInfoOpen.value = false;
       forwardOpen.value = false;
@@ -134,7 +144,7 @@ export function usePanels(
     if (!activeLocalTab.value) return;
     localFilesOpen.value = !localFilesOpen.value;
     if (localFilesOpen.value) {
-      aiOpen.value = false;
+      dismissAi();
       sftpOpen.value = false;
       hostInfoOpen.value = false;
       forwardOpen.value = false;
@@ -186,9 +196,10 @@ export function usePanels(
     }
   });
 
-  // AI 面板跟随 activeAiTab：切到无可用 sid 的 tab 时收起，避免悬空。
+  // AI 面板跟随 activeAiTab：切到无可用 sid 的 tab 时收起，避免悬空
+  // （固定停靠态除外，与本地文件抽屉的图钉语义一致）
   watch(activeAiTab, (tab) => {
-    if (!tab) aiOpen.value = false;
+    if (!tab) dismissAi();
   });
 
   return {

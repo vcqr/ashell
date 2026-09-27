@@ -9,6 +9,8 @@ export default {
   settings: "Settings",
   close: "Close",
   openInNewWindow: "Open in new window",
+  pin: "Pin to right",
+  unpin: "Unpin",
   needSession: "Please open a terminal session first",
   placeholder: "Chat with AI…",
   inputPlaceholder: "Type a message, Enter to send, Shift+Enter for newline",

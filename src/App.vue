@@ -419,7 +419,7 @@ if (!isTauri) {
                   top: 'var(--ashell-header-h)',
                   left: 'var(--ashell-hosts-width, 0px)',
                   right:
-                    'calc(var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px))',
+                    'calc(var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px) + var(--ashell-ai-w, 0px))',
                   bottom: 0,
                 }"
                 @mousedown="closeHostsIfOpen"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, watchEffect } from "vue";
 import { storeToRefs } from "pinia";
 import type { UnlistenFn } from "@/utils/eventBus";
 import { busListen } from "@/utils/eventBus";
@@ -39,6 +39,7 @@ import {
   CopyOutline,
   SettingsOutline,
 } from "@vicons/ionicons5";
+import { PushpinFilled, PushpinOutlined } from "@vicons/antd";
 import { copyText as copyToClipboard } from "@/utils/clipboard";
 import { useI18n } from "vue-i18n";
 import type { ChatMessage, ProcessStep } from "@/types";
@@ -49,6 +50,7 @@ import { usePhraseStore } from "@/stores/phrases";
 import { getApiInfo } from "@/api/client";
 import { openAiInNewWindow } from "@/utils/newWindow";
 import { parseModelIds } from "@/composables/useAiConfig";
+import { useAiPin } from "@/composables/useAiPin";
 
 const props = defineProps<{
   open: boolean;
@@ -249,17 +251,38 @@ function onResizeEnd() {
 
 onBeforeUnmount(onResizeEnd);
 
+/** 固定（停靠）态：主内容区让位并排显示，切 tab / 开其他面板不自动收起 */
+const aiPinned = useAiPin();
+
+// 固定时内容区让位（App 的 .app-content right 读同一变量）；独立窗口无停靠。
+// 锚点叠加本地文件停靠宽度：两个面板同时停靠时 AI 排在本地文件左侧
+watchEffect(() => {
+  const docked = props.open && aiPinned.value && !props.standalone;
+  document.documentElement.style.setProperty(
+    "--ashell-ai-w",
+    docked ? `${width.value}px` : "0px",
+  );
+});
+
+onBeforeUnmount(() => {
+  document.documentElement.style.setProperty("--ashell-ai-w", "0px");
+});
+
 const panelStyle = computed(() => {
   // 独立窗口模式：铺满窗口，由 .standalone 类接管布局
   if (props.standalone) return {}
   return {
     width: `${width.value}px`,
-    transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
-    // 关闭态平移要叠加活动栏宽度：面板锚定 right: var(--ashell-activity-w)，
-    // 只平移自身宽度会残留一条活动栏宽度的面板左缘盖住活动栏
+    // 固定（停靠）态不做滑入动画：内容区让位变量已就位，
+    // 滑入期间会看到面板盖在已让位的空白上（与 LocalFilesDrawer 同理）
+    transition: resizing.value || aiPinned.value
+      ? "none"
+      : "transform 0.25s ease, box-shadow 0.15s ease",
+    // 关闭态平移要叠加活动栏宽度 + 本地文件停靠宽度：面板锚定
+    // right: calc(活动栏 + 本地文件停靠宽)，只平移自身宽度会有残留
     transform: props.open
       ? "translateX(0)"
-      : "translateX(calc(100% + var(--ashell-activity-w, 0px)))",
+      : "translateX(calc(100% + var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px)))",
   }
 });
 
@@ -1011,7 +1034,7 @@ defineExpose({
   <Teleport to="body">
     <aside
       class="ai-panel"
-      :class="{ open: props.open, resizing: resizing, standalone: props.standalone }"
+      :class="{ open: props.open, resizing: resizing, standalone: props.standalone, pinned: aiPinned }"
       :style="panelStyle"
       :aria-hidden="!props.open"
     >
@@ -1035,6 +1058,20 @@ defineExpose({
           </div>
         </NSpace>
         <NSpace :size="4">
+          <NButton
+            quaternary
+            circle
+            size="small"
+            :type="aiPinned ? 'primary' : 'default'"
+            :title="aiPinned ? t('ai.unpin') : t('ai.pin')"
+            @click="aiPinned = !aiPinned"
+          >
+            <template #icon>
+              <NIcon>
+                <component :is="aiPinned ? PushpinFilled : PushpinOutlined" />
+              </NIcon>
+            </template>
+          </NButton>
           <NButton
             quaternary
             circle
@@ -1406,7 +1443,10 @@ defineExpose({
 .ai-panel {
   position: fixed;
   top: var(--ashell-header-h);
-  right: var(--ashell-activity-w, 0px);
+  /* 锚点叠加本地文件停靠宽度：两者同时停靠时 AI 排在本地文件左侧 */
+  right: calc(
+    var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px)
+  );
   bottom: 0;
   background: var(--ashell-panel-bg);
   border-left: 1px solid var(--ashell-border);
@@ -1418,6 +1458,11 @@ defineExpose({
 
 .ai-panel.open {
   box-shadow: -8px 0 24px var(--ashell-shadow);
+}
+
+/* 固定（停靠）态：与主内容并排，不再悬浮 */
+.ai-panel.pinned.open {
+  box-shadow: none;
 }
 
 /* 独立窗口模式：面板铺满窗口（顶部让位给窗口标题栏），无侧边阴影 */
