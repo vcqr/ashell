@@ -46,7 +46,7 @@ pub async fn delete(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    crate::service::ai_provider::delete(&s.db, &id).await?;
+    crate::service::ai_provider::delete(&s.db, &s.config.crypto_key, &id).await?;
     Ok(Json(ApiResponse {
         code: 0,
         message: "deleted".into(),

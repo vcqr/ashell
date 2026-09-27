@@ -154,24 +154,33 @@ pub async fn update(
     Ok(provider)
 }
 
-pub async fn delete(pool: &DbPool, id: &str) -> AppResult<()> {
-    let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ai_engines WHERE provider_id = ?")
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-    if refs > 0 {
-        return Err(AppError::BadRequest(
-            "供应商仍被引擎引用，请先在引擎设置中解除关联".into(),
-        ));
-    }
+pub async fn delete(pool: &DbPool, key: &[u8; 32], id: &str) -> AppResult<()> {
+    // 引擎对供应商的引用自动解除（激活模型一并清空）：未绑定供应商是引导
+    // 卡片可就地修复的一等状态，无需要求用户先手动解绑再删除。非激活引擎
+    // 的残留引用在 UI 上不可见，曾导致"最后一个供应商永远删不掉"。
+    let mut tx = pool.begin().await?;
+    let unbound = sqlx::query(
+        "UPDATE ai_engines SET provider_id = NULL, active_model_id = '' WHERE provider_id = ?",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
 
     let result =
         sqlx::query("UPDATE ai_providers SET is_del = 1, updated_at = datetime('now') WHERE id = ?")
             .bind(id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
     if result.rows_affected() == 0 {
+        // 供应商不存在：不提交，解绑一并回滚
         return Err(AppError::NotFound("AI provider not found".into()));
+    }
+    tx.commit().await?;
+
+    if unbound > 0 {
+        // 受影响的引擎可能包含当前激活引擎，重新物化 .env
+        materialize_env(pool, key).await?;
     }
     Ok(())
 }
