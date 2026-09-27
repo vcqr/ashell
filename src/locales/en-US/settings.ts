@@ -226,6 +226,9 @@ export default {
     localInitCommandHint: "Run automatically once each new local terminal connects. Leave empty to disable.",
     cwdFollow: "Local files directory follow",
     cwdFollowHint: "The local files drawer automatically jumps to the active local terminal's working directory.",
+    sftpCwdFollow: "SFTP remote pane directory follow",
+    sftpCwdFollowHint:
+      "The SFTP remote pane follows the SSH terminal's reported working directory. Takes effect when a terminal connects; reconnect the terminal after enabling.",
   },
   ai: {
     title: "AI Assistant",

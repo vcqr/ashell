@@ -73,5 +73,14 @@ const shellOptions = computed(() =>
         @update:value="(v: boolean) => startupStore.setCwdFollowEnabled(v)"
       />
     </NFormItem>
+    <NFormItem
+      :label="t('settings.startup.sftpCwdFollow')"
+      :feedback="t('settings.startup.sftpCwdFollowHint')"
+    >
+      <NSwitch
+        :value="startupStore.sftpCwdFollowEnabled"
+        @update:value="(v: boolean) => startupStore.setSftpCwdFollowEnabled(v)"
+      />
+    </NFormItem>
   </NForm>
 </template>

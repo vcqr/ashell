@@ -18,6 +18,8 @@ export interface StartupConfig {
   localInitCommand: string
   /** 本地文件抽屉目录跟随：开启后抽屉自动跳到当前终端上报的工作目录。 */
   cwdFollowEnabled: boolean
+  /** SFTP 远程栏目录跟随：开启后远程栏随 SSH 终端上报的 cwd 跳动（cwd 上报在终端连接时启用）。 */
+  sftpCwdFollowEnabled: boolean
 }
 
 const STORAGE_KEY = "ashell:startup-config"
@@ -32,6 +34,13 @@ const DEFAULT_CONFIG: StartupConfig = {
   aiAssistantEnabled: true,
   localInitCommand: "",
   cwdFollowEnabled: false,
+  sftpCwdFollowEnabled: false,
+}
+
+/** 迁移：旧的按钮级开关（ashell:sftp-cwd-follow）迁为设置项；新配置落盘后此键不再被读取 */
+function loadLegacySftpFollow(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  return localStorage.getItem("ashell:sftp-cwd-follow") === "1";
 }
 
 function loadConfig(): StartupConfig {
@@ -69,6 +78,10 @@ function loadConfig(): StartupConfig {
         typeof parsed.cwdFollowEnabled === "boolean"
           ? parsed.cwdFollowEnabled
           : DEFAULT_CONFIG.cwdFollowEnabled,
+      sftpCwdFollowEnabled:
+        typeof parsed.sftpCwdFollowEnabled === "boolean"
+          ? parsed.sftpCwdFollowEnabled
+          : loadLegacySftpFollow(),
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -114,6 +127,7 @@ export const useStartupStore = defineStore("startup", () => {
   const aiAssistantEnabled = ref<boolean>(initial.aiAssistantEnabled)
   const localInitCommand = ref<string>(initial.localInitCommand)
   const cwdFollowEnabled = ref<boolean>(initial.cwdFollowEnabled)
+  const sftpCwdFollowEnabled = ref<boolean>(initial.sftpCwdFollowEnabled)
 
   function persist() {
     if (typeof localStorage === "undefined") return
@@ -126,6 +140,7 @@ export const useStartupStore = defineStore("startup", () => {
         aiAssistantEnabled: aiAssistantEnabled.value,
         localInitCommand: localInitCommand.value,
         cwdFollowEnabled: cwdFollowEnabled.value,
+        sftpCwdFollowEnabled: sftpCwdFollowEnabled.value,
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
     } catch {
@@ -142,6 +157,7 @@ export const useStartupStore = defineStore("startup", () => {
       aiAssistantEnabled,
       localInitCommand,
       cwdFollowEnabled,
+      sftpCwdFollowEnabled,
     ],
     persist,
   )
@@ -167,6 +183,9 @@ export const useStartupStore = defineStore("startup", () => {
   function setCwdFollowEnabled(v: boolean) {
     cwdFollowEnabled.value = v
   }
+  function setSftpCwdFollowEnabled(v: boolean) {
+    sftpCwdFollowEnabled.value = v
+  }
 
   return {
     openLocalOnStart,
@@ -176,6 +195,7 @@ export const useStartupStore = defineStore("startup", () => {
     aiAssistantEnabled,
     localInitCommand,
     cwdFollowEnabled,
+    sftpCwdFollowEnabled,
     setOpenLocalOnStart,
     setDefaultShell,
     setRestoreTabs,
@@ -183,5 +203,6 @@ export const useStartupStore = defineStore("startup", () => {
     setAiAssistantEnabled,
     setLocalInitCommand,
     setCwdFollowEnabled,
+    setSftpCwdFollowEnabled,
   }
 })

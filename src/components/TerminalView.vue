@@ -32,7 +32,6 @@ import { useAiSelection } from "@/composables/useAiSelection"
 import { useTerminalSearch } from "@/composables/useTerminalSearch"
 import { useTerminalProgress } from "@/composables/useTerminalProgress"
 import { useCommandSuggest } from "@/composables/useCommandSuggest"
-import { useSftpCwdFollow } from "@/composables/useSftpCwdFollow"
 import HostKeyConfirmModal, { type HostKeyInfo } from "@/components/HostKeyConfirmModal.vue"
 import type { Locale } from "@/data/commandDict"
 import { buildTerminalWsUrl } from "@/api/sftp"
@@ -1100,8 +1099,8 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         sid: opts.newSession ? undefined : props.tab.sid,
         cols,
         rows,
-        // 连接时按 SFTP 远程栏跟随开关声明上报：会话中途开启跟随需重连生效
-        cwd_report: useSftpCwdFollow().value || undefined,
+        // 连接时按「SFTP 远程栏目录跟随」全局开关声明上报：会话中途开启需重连生效
+        cwd_report: startupStore.sftpCwdFollowEnabled || undefined,
       })
     }
   } catch (e) {

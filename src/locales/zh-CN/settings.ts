@@ -225,6 +225,9 @@ export default {
     localInitCommandHint: "每个新建的本地终端连接就绪后自动执行一次；留空不执行。",
     cwdFollow: "本地文件目录跟随",
     cwdFollowHint: "开启后，「本地文件」抽屉自动跳转到当前本地终端的工作目录。",
+    sftpCwdFollow: "SFTP 远程栏目录跟随",
+    sftpCwdFollowHint:
+      "开启后，SFTP 远程栏自动跳转到 SSH 终端上报的工作目录；开关在终端连接时生效，中途开启需重连终端。",
   },
   ai: {
     title: "AI 助手",

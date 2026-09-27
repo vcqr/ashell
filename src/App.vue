@@ -481,7 +481,6 @@ if (!isTauri) {
                 :host-addr="activeSftpTab?.hostInfo?.addr"
                 :host-id="activeSftpTab?.hostId ?? null"
                 :cwd="activeSftpTab?.cwd ?? ''"
-                :local-cwd="activeLocalTab?.cwd ?? ''"
                 @send-to-ai="onSftpSendToAi"
                 @open-terminal-here="onSftpOpenTerminalHere"
               />

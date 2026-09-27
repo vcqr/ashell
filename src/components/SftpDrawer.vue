@@ -101,7 +101,6 @@ import {
 import { openSftpInNewWindow } from "@/utils/newWindow"
 import { useFileDrag } from "@/composables/useFileDrag"
 import { useMultiSelect } from "@/composables/useMultiSelect"
-import { useSftpCwdFollow } from "@/composables/useSftpCwdFollow"
 
 interface Props {
   open: boolean
@@ -112,8 +111,6 @@ interface Props {
   hostId?: number | null
   /** 绑定终端上报的工作目录（OSC 9;9 / OSC 7）：目录跟随开启时远程栏随之跳转 */
   cwd?: string
-  /** 激活本地终端上报的工作目录（OSC 9;9）：双栏本地栏目录跟随用 */
-  localCwd?: string
   /** 独立窗口模式：面板铺满窗口、无宽度拖拽，关闭按钮直接关窗口 */
   standalone?: boolean
 }
@@ -2731,15 +2728,12 @@ function onNewSelect(key: string | number) {
 
 /* ---------- 远程栏目录跟随（随绑定终端上报的 cwd 跳转） ----------
  * 与本地文件抽屉同策略：仅抽屉打开时生效，关闭期间 cwd 变化不产生请求。
- * 会话是否上报 cwd 由建连时的 cwd_report 决定（跟随开关当时开启才注入），
- * 会话中途开启跟随需重连终端。 */
-
-/** 跟随开关（路径栏定位图标按钮）：模块级单例，localStorage 持久化 */
-const cwdFollow = useSftpCwdFollow()
+ * 全局开关在「设置→启动→SFTP 远程栏目录跟随」；会话是否上报 cwd 由建连时
+ * 的 cwd_report 决定（跟随开关当时开启才注入），会话中途开启跟随需重连终端。 */
 
 function toggleCwdFollow() {
-  const turningOn = !cwdFollow.value
-  cwdFollow.value = turningOn
+  const turningOn = !startupStore.sftpCwdFollowEnabled
+  startupStore.setSftpCwdFollowEnabled(turningOn)
   // 开启瞬间立即向当前 cwd 同步一次，不用等下一次 cd（与抽屉开启开关同语义）
   const cwd = props.cwd
   if (
@@ -2762,7 +2756,7 @@ function toggleCwdFollow() {
 watch(
   () => props.cwd,
   (next) => {
-    if (!cwdFollow.value || !props.open || !props.sid) return
+    if (!startupStore.sftpCwdFollowEnabled || !props.open || !props.sid) return
     if (!next || pathEditing.value) return
     if (normalizePath(next) !== normalizePath(currentPath.value)) void load(next)
   },
@@ -2776,7 +2770,7 @@ watch(
     if (open && sid) {
       const stored = store.getPath(sid)
       // 跟随开启且有上报 cwd 时优先跳终端当前目录，否则回退上次记忆路径
-      const cwd = cwdFollow.value ? props.cwd : ""
+      const cwd = startupStore.sftpCwdFollowEnabled ? props.cwd : ""
       const target = cwd || stored
       currentPath.value = target
       void load(target)
@@ -2820,30 +2814,6 @@ function persistLocalDir(v: string) {
     // ignore
   }
 }
-
-/* ---------- 本地栏目录跟随（双栏时随激活本地终端 cwd 跳动） ----------
- * 复用全局「本地文件目录跟随」开关（与本地文件抽屉同一开关同一语义）：
- * 仅抽屉打开且双栏时生效，关闭期间 cwd 变化不产生目录请求；
- * 重新打开抽屉 / 开启开关时立即向当前 cwd 同步一次。 */
-
-watch(
-  () => props.localCwd,
-  (next) => {
-    if (!startupStore.cwdFollowEnabled || !props.open || !dualPane.value) return
-    if (!next || next === localDir.value) return
-    persistLocalDir(next)
-  },
-)
-
-watch(
-  [() => props.open, dualPane, () => startupStore.cwdFollowEnabled],
-  ([open, dual, on]) => {
-    if (!open || !dual || !on) return
-    const cwd = props.localCwd
-    if (cwd && cwd !== localDir.value) persistLocalDir(cwd)
-  },
-  { immediate: true },
-)
 
 const localPaneRef = ref<InstanceType<typeof LocalPane> | null>(null)
 
@@ -3233,14 +3203,14 @@ function openInStandaloneWindow() {
               </div>
             </div>
             <!-- 目录跟随开关：管地址栏行为（随绑定终端 cwd 跳动），紧邻地址栏；
-                 独立窗口无绑定终端（无 cwd 来源），不显示 -->
+                 全局开关在「设置→启动」，独立窗口无绑定终端（无 cwd 来源），不显示 -->
             <NButton
               v-if="!standalone"
               size="small"
               quaternary
               circle
-              :type="cwdFollow ? 'primary' : 'default'"
-              :title="cwdFollow ? t('sftp.followOn') : t('sftp.followOff')"
+              :type="startupStore.sftpCwdFollowEnabled ? 'primary' : 'default'"
+              :title="startupStore.sftpCwdFollowEnabled ? t('sftp.followOn') : t('sftp.followOff')"
               :disabled="pathEditing"
               @click="toggleCwdFollow"
             >
