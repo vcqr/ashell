@@ -22,9 +22,10 @@ export function resolveActiveModelId(
   return list.includes(activeModelId) ? activeModelId : (list[0] ?? "");
 }
 
+// Pi 是默认引擎，排在选项首位
 export const sidecarTypeOptions = [
-  { label: "Claude Agent SDK", value: "claude" },
   { label: "Pi Coding Agent", value: "pi" },
+  { label: "Claude Agent SDK", value: "claude" },
 ];
 
 export const apiTypeOptions = [

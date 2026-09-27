@@ -473,7 +473,7 @@ fn send_with_ack(
 ///
 /// - 同一 ssid 重复 spawn：先下发 close 回收旧会话（用户「新对话」场景）
 /// - ssid 为空字符串时返回错误（无终端时不允许启动）
-/// - sidecar_type 决定会话引擎（"claude" / "pi"），None 默认 "claude"
+/// - sidecar_type 决定会话引擎（"claude" / "pi"），None 默认 "pi"
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn spawn_sidecar(
@@ -510,7 +510,7 @@ async fn spawn_sidecar_impl(
         return Err("ssid is required to spawn sidecar".to_string());
     }
 
-    let engine = sidecar_type.unwrap_or_else(|| crate::sidecar_factory::TYPE_CLAUDE.to_string());
+    let engine = sidecar_type.unwrap_or_else(|| crate::sidecar_factory::TYPE_PI.to_string());
 
     // Windows 路径反斜杠在 sidecar（Node）中易被当作转义字符，统一成正斜杠
     let workspace = crate::ai_env::normalize_path(workspace);

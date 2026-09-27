@@ -9,8 +9,10 @@
 
 use std::path::PathBuf;
 
-/// Sidecar 类型常量（引擎标识，经 create 帧下发；"pi" 由前端/配置直接传字符串）
+/// Sidecar 类型常量（引擎标识，经 create 帧下发）
 pub const TYPE_CLAUDE: &str = "claude";
+/// 默认引擎：Pi Coding Agent
+pub const TYPE_PI: &str = "pi";
 
 /// 统一 sidecar 二进制名（sidecar-ai 编译产物，daemon 形态）
 fn unified_binary_name() -> &'static str {

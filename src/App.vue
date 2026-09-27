@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onErrorCaptured, watch, watchEffect } from "vue";
+import { computed, onErrorCaptured, ref, watch, watchEffect } from "vue";
 import {
   NConfigProvider,
   NMessageProvider,
@@ -21,7 +21,6 @@ import {
   MenuOutline,
   SettingsOutline,
   GridOutline,
-  CubeOutline,
 } from "@vicons/ionicons5";
 import TabBar from "@/components/TabBar.vue";
 import HostsDrawer from "@/components/HostsDrawer.vue";
@@ -37,7 +36,6 @@ import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
 import TemplateDrawer from "@/components/TemplateDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
-import AiProvidersModal from "@/components/AiProvidersModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
 import LoginGate from "@/components/LoginGate.vue";
 import { isTauri } from "@/utils/platform";
@@ -144,7 +142,6 @@ const {
   templateOpen,
   localFilesOpen,
   settingsOpen,
-  aiProvidersOpen,
   activityBarVisible,
   toggleAi,
   toggleSftp,
@@ -153,11 +150,34 @@ const {
   toggleTemplate,
   toggleLocalFiles,
   toggleSettings,
-  toggleAiProviders,
   toggleActivityBar,
   onSendToAi,
   onSftpSendToAi,
 } = usePanels(activeSftpTab, activeAiTab, activeTerminalTab, aiAssistantRef, activeLocalTab, hasLocalTab);
+
+// ── 供应商管理入口（设置弹窗「模型供应商」分区）──
+//
+// 顶栏独立按钮已移除：引导卡片「添加供应商」与全局快捷键统一打开设置并
+// 定位到该分区；关闭设置后清掉深链，下次打开恢复"记住上次分区"的默认行为。
+const settingsInitialTab = ref<string | undefined>(undefined);
+
+function openProvidersInSettings() {
+  settingsInitialTab.value = "ai-providers";
+  settingsOpen.value = true;
+}
+
+function toggleProvidersInSettings() {
+  if (settingsOpen.value && settingsInitialTab.value === "ai-providers") {
+    settingsOpen.value = false;
+    settingsInitialTab.value = undefined;
+    return;
+  }
+  openProvidersInSettings();
+}
+
+watch(settingsOpen, (open) => {
+  if (!open) settingsInitialTab.value = undefined;
+});
 
 // 独立窗口：由 openSftpInNewWindow / openAiInNewWindow 创建，
 // URL 带 newwin=1&kind=sftp|ai。走完整 App 实例（providers/api init/theme），
@@ -226,7 +246,7 @@ useGlobalShortcuts({
   toggleSettings,
   toggleAi,
   toggleSftp,
-  toggleAiProviders,
+  toggleAiProviders: toggleProvidersInSettings,
   toggleHostInfo,
   toggleForward,
   toggleTemplate,
@@ -381,16 +401,6 @@ if (!isTauri) {
                   </NTooltip>
                   <NTooltip>
                     <template #trigger>
-                      <NButton circle quaternary @click="aiProvidersOpen = true">
-                        <template #icon>
-                          <NIcon :size="18"><CubeOutline /></NIcon>
-                        </template>
-                      </NButton>
-                    </template>
-                    {{ t("settings.ai.provider.title") }}
-                  </NTooltip>
-                  <NTooltip>
-                    <template #trigger>
                       <NButton circle quaternary @click="settingsOpen = true">
                         <template #icon>
                           <NIcon :size="18"><SettingsOutline /></NIcon>
@@ -506,7 +516,7 @@ if (!isTauri) {
                 v-model:open="aiOpen"
                 :sid="activeAiTab?.sid ?? null"
                 :host-name="activeAiTab?.title ?? null"
-                @open-providers="aiProvidersOpen = true"
+                @open-providers="openProvidersInSettings"
               />
 
               <SettingsModal
@@ -514,8 +524,8 @@ if (!isTauri) {
                 v-model:theme-mode="themeMode"
                 :resolved-theme="resolvedTheme"
                 :theme-title="themeTitle"
+                :initial-tab="settingsInitialTab"
               />
-              <AiProvidersModal v-model:open="aiProvidersOpen" />
             </div>
           </LoginGate>
         </NNotificationProvider>

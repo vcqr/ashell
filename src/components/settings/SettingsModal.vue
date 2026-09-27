@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, type Component } from "vue";
+import { computed, ref, watch, type Component } from "vue";
 import {
   NModal,
   NCard,
@@ -16,6 +16,7 @@ import {
   FileTrayFullOutline,
   AppsOutline,
   RocketOutline,
+  CubeOutline,
   SparklesOutline,
   ShieldCheckmarkOutline,
   CloudOutline,
@@ -32,6 +33,7 @@ import StartupSection from "./StartupSection.vue";
 import WindowSection from "./WindowSection.vue";
 import TraySection from "./TraySection.vue";
 import AiSection from "./AiSection.vue";
+import AiProvidersSection from "./AiProvidersSection.vue";
 import SecuritySection from "./SecuritySection.vue";
 import AboutSection from "./AboutSection.vue";
 import BackupSection from "./BackupSection.vue";
@@ -47,16 +49,19 @@ type SettingsTab =
   | "tray"
   | "icons"
   | "startup"
+  | "ai-providers"
   | "ai"
   | "backup"
   | "security"
   | "about";
 
-defineProps<{
+const props = defineProps<{
   open: boolean;
   themeMode: ThemeMode;
   resolvedTheme: ResolvedTheme;
   themeTitle: string;
+  /** 打开时直接定位到的分区 key（如 AI 引导卡片「添加供应商」跳转），未传则保持上次位置 */
+  initialTab?: string;
 }>();
 
 const emit = defineEmits<{
@@ -66,6 +71,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const activeTab = ref<SettingsTab>("general");
+
+// 带 initialTab 打开时定位到指定分区；不带则沿用上次的 activeTab
+watch(
+  () => [props.open, props.initialTab] as const,
+  ([open, tab]) => {
+    if (open && tab) activeTab.value = tab as SettingsTab;
+  },
+);
 
 /** 左侧导航按功能域分组：外观/终端/快捷键归"通用"，窗口/托盘/图标/启动归
  *  "系统"，AI 单列，安全/备份归"数据"，关于收尾（无组标题）。 */
@@ -93,7 +106,11 @@ const navGroups = computed<
   },
   {
     label: t("settings.groups.features"),
-    items: [{ key: "ai", icon: SparklesOutline }],
+    // 供应商管理排在 AI 助手前：配置顺序上先有供应商、再进 AI 助手绑定引擎
+    items: [
+      { key: "ai-providers", icon: CubeOutline },
+      { key: "ai", icon: SparklesOutline },
+    ],
   },
   {
     label: t("settings.groups.data"),
@@ -175,6 +192,7 @@ function close() {
           <TraySection v-else-if="activeTab === 'tray'" />
           <IconsSection v-else-if="activeTab === 'icons'" />
           <StartupSection v-else-if="activeTab === 'startup'" />
+          <AiProvidersSection v-else-if="activeTab === 'ai-providers'" />
           <AiSection v-else-if="activeTab === 'ai'" />
           <SecuritySection v-else-if="activeTab === 'security'" />
           <BackupSection v-else-if="activeTab === 'backup'" />

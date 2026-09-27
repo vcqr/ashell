@@ -212,7 +212,7 @@ export class DaemonCore {
         addr: String(frame.addr ?? ""),
         io,
       };
-      session.adapter = await this.createEngineFn(frame.engine?.trim() || "claude", ctx);
+      session.adapter = await this.createEngineFn(frame.engine?.trim() || "pi", ctx);
     } catch (error) {
       this.sessions.delete(sid);
       const msg = error instanceof Error ? error.message : String(error);

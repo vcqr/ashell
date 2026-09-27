@@ -17,6 +17,7 @@ export default {
     tray: "Tray",
     icons: "Icons",
     startup: "Startup",
+    "ai-providers": "Model Providers",
     ai: "AI Assistant",
     security: "Security",
     backup: "Backup & Restore",

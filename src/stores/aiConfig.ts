@@ -31,7 +31,8 @@ export const useAiConfigStore = defineStore("aiConfig", () => {
   );
 
   const activeSidecarType = computed(
-    () => enginesState.value?.active_engine || "claude",
+    // 默认引擎 pi：enginesState 未加载或未设置时兜底
+    () => enginesState.value?.active_engine || "pi",
   );
 
   const activeEngineLabel = computed(() => {

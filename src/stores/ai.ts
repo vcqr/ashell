@@ -217,7 +217,7 @@ export const useAiStore = defineStore('ai', () => {
           workspace: args.workspace,
           token: args.token,
           addr: args.addr,
-          sidecarType: args.sidecarType || 'claude',
+          sidecarType: args.sidecarType || 'pi',
         })
         unlistenStdout = await listen<string>(
           `sidecar-stdout-${ssid}`,
@@ -238,7 +238,7 @@ export const useAiStore = defineStore('ai', () => {
             workspace: args.workspace,
             token: args.token,
             addr: args.addr,
-            sidecarType: args.sidecarType || 'claude',
+            sidecarType: args.sidecarType || 'pi',
           },
         })
         pid = res?.pid ?? 0

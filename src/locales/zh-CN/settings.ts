@@ -17,6 +17,7 @@ export default {
     tray: "托盘",
     icons: "图标",
     startup: "启动",
+    "ai-providers": "模型供应商",
     ai: "AI 助手",
     security: "安全",
     backup: "备份与恢复",

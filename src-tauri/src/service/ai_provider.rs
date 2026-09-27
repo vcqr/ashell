@@ -423,10 +423,11 @@ async fn migrate_from_env_if_needed(pool: &DbPool, key: &[u8; 32]) -> AppResult<
             .fetch_optional(pool)
             .await?;
     if has_setting.is_none() {
-        let engine = if env.sidecar_type == ENGINE_PI {
-            ENGINE_PI
-        } else {
+        // 默认引擎 pi；旧 .env 显式写了 claude 时尊重既有选择
+        let engine = if env.sidecar_type == ENGINE_CLAUDE {
             ENGINE_CLAUDE
+        } else {
+            ENGINE_PI
         };
         sqlx::query("INSERT INTO app_settings (key, value) VALUES (?, ?)")
             .bind(SETTING_ACTIVE_ENGINE)
