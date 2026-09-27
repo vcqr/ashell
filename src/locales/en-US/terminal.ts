@@ -90,6 +90,8 @@ export default {
   hostKeyTrustChanged: "Trust and update anyway",
   sessionRestored: 'Session restored offline. Click "Reconnect" in the top-right to connect.',
   sessionClosed: 'Click "Reconnect" in the top-right to re-establish the session.',
+  shellRespawned:
+    "The shell was torn down together with its console by a child process (e.g. opencode on exit) and has been restarted automatically; the working directory was restored.",
   autoReconnectWait: "Auto-reconnecting in {sec}s (attempt {n})…",
   broadcastUndelivered: "Broadcast: {failed}/{total} target(s) not delivered (possibly disconnected). Check the target tabs.",
   missingHostId: "Missing host ID; cannot connect.",

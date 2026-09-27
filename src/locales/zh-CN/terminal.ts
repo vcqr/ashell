@@ -88,6 +88,8 @@ export default {
   hostKeyTrustChanged: "仍要信任并更新",
   sessionRestored: "会话已离线恢复，点击右上角\"重新连接\"按钮即可连接。",
   sessionClosed: "点击右上角\"重新连接\"按钮可重新建立会话。",
+  shellRespawned:
+    "shell 被子进程（如 opencode）退出时连带关闭，已自动重启，工作目录已恢复。",
   autoReconnectWait: "将在 {sec} 秒后自动重连（第 {n} 次尝试）…",
   broadcastUndelivered: "广播输入：{failed}/{total} 个目标未送达（可能已断连），请检查目标 tab。",
   missingHostId: "缺少主机信息，无法连接。",

@@ -1202,6 +1202,11 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         if (msg.kind === "pong") {
           return
         }
+        if (msg.kind === "shell_respawned") {
+          // 本地 PTY 控制台被子进程（如 opencode /exit）拆除后，后端已同会话重启 shell
+          term?.write(`\r\n\x1b[33m[ashell] ${t("terminal.shellRespawned")}\x1b[0m\r\n`)
+          return
+        }
         if (msg.kind === "sudo_prompt") {
           armSudo()
           return
