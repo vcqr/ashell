@@ -6,6 +6,7 @@ import { NButton, NIcon } from "naive-ui"
 import { RefreshOutline } from "@vicons/ionicons5"
 import WindowControls from "@/components/WindowControls.vue"
 import AiAssistant from "@/components/AiAssistant.vue"
+import AiProvidersModal from "@/components/AiProvidersModal.vue"
 import { detectMac } from "@/utils/platform"
 
 /**
@@ -28,6 +29,9 @@ const { t } = useI18n()
 const isMac = detectMac()
 
 const aiRef = ref<InstanceType<typeof AiAssistant> | null>(null)
+
+/** 独立窗口内自持一份供应商管理弹窗：引导卡片"添加供应商"经 openProviders 打开 */
+const showProviders = ref(false)
 
 const windowTitle = computed(() =>
   hostName ? `${t("ai.title")} - ${hostName}` : t("ai.title"),
@@ -86,7 +90,9 @@ async function onHeaderDblClick(e: MouseEvent) {
       :open="true"
       :sid="ssid"
       :host-name="hostName ?? null"
+      @open-providers="showProviders = true"
     />
+    <AiProvidersModal v-model:open="showProviders" />
   </div>
 </template>
 

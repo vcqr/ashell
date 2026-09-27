@@ -19,6 +19,7 @@ import {
   NModal,
   NCard,
   NPopover,
+  NSelect,
   useMessage,
 } from "naive-ui";
 import {
@@ -36,6 +37,7 @@ import {
   TrashOutline,
   OpenOutline,
   CopyOutline,
+  SettingsOutline,
 } from "@vicons/ionicons5";
 import { copyText as copyToClipboard } from "@/utils/clipboard";
 import { useI18n } from "vue-i18n";
@@ -60,6 +62,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:open": [value: boolean];
+  /** 引导卡片请求打开"模型供应商管理"弹窗（宿主窗口挂载该弹窗并接线） */
+  openProviders: [];
 }>();
 
 const apiStore = useApiStore();
@@ -131,6 +135,65 @@ function onPickModel(key: string | number) {
   } catch (e) {
     console.error("[AI] onPickModel failed:", e);
   }
+}
+
+// ── 引擎配置预检 ──
+//
+// 引擎未绑定供应商（pi 还需已选模型）时，sidecar 起不来（create 直接抛错、
+// 打开面板一片空白）或起来后首轮对话报英文认证错误。这里在发送前拦截，
+// 聊天区渲染引导卡片就地补齐配置；enginesState 未加载完成时放行（fail-open），
+// 避免配置读取失败把助手整个堵死。
+
+const configIssues = computed<string[]>(() => {
+  const engine = aiConfig.activeEngine;
+  if (!engine) return [];
+  const issues: string[] = [];
+  if (!engine.provider_id) issues.push("provider");
+  if (engine.provider_id && engine.engine === "pi" && !engine.active_model_id) {
+    issues.push("model");
+  }
+  return issues;
+});
+
+const providerOptions = computed(() =>
+  providers.value.map((p) => ({ label: p.name, value: p.id })),
+);
+
+const setupModelOptions = computed(() =>
+  parseModelIds(aiConfig.activeProvider?.model_ids ?? "").map((id) => ({
+    label: id,
+    value: id,
+  })),
+);
+
+async function onSetupPickProvider(id: string) {
+  try {
+    // 后端在 provider 变更时会自动解析第一个模型，pi 的"未选模型"随之一并解决
+    await aiConfig.patchEngine({ provider_id: id });
+  } catch (e) {
+    console.error("[AI] setup pick provider failed:", e);
+    message.error(t("settings.ai.saveFailed", { error: String(e) }));
+  }
+}
+
+async function onSetupPickModel(id: string) {
+  try {
+    await aiConfig.patchEngine({ active_model_id: id });
+  } catch (e) {
+    console.error("[AI] setup pick model failed:", e);
+    message.error(t("settings.ai.saveFailed", { error: String(e) }));
+  }
+}
+
+/** 发送被预检拦截时：滚回顶部并高亮引导卡片 */
+const setupPulse = ref(false);
+let setupPulseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function attentionSetup() {
+  void nextTick(() => scrollbar.value?.scrollTo({ top: 0, behavior: "smooth" }));
+  setupPulse.value = true;
+  if (setupPulseTimer) clearTimeout(setupPulseTimer);
+  setupPulseTimer = setTimeout(() => (setupPulse.value = false), 1500);
 }
 
 const MIN_WIDTH = 320;
@@ -657,6 +720,7 @@ function callStreamingApi(content: string) {
 async function sendText(text: string) {
   const ssid = currentSsid.value;
   if (!ssid || !text.trim()) return;
+  if (configIssues.value.length > 0) return;
   await ensureSidecarFor(ssid);
   const session = aiStore.sessions[ssid];
   if (!session || session.sidecarPid === null) return;
@@ -678,6 +742,10 @@ async function sendMessage() {
   const content = input.value.trim();
   const ssid = currentSsid.value;
   if (!content || isTyping.value || !ssid) return;
+  if (configIssues.value.length > 0) {
+    attentionSetup();
+    return;
+  }
 
   // 先入列并展示打字动画：会话懒创建耗时（首建 ~百 ms 级）不再表现为无反馈卡顿
   aiStore.pushMessage(ssid, {
@@ -870,7 +938,20 @@ watch(
   () => [props.open, props.sid] as const,
   async ([open, sid]) => {
     if (!open || !sid) return;
+    // 引擎配置不完整时不起进程：pi 会 create 失败、claude 会带着空 env
+    // 起一个注定认证失败的会话；先让引导卡片接管，配置补齐由下方 watch 预建
+    if (configIssues.value.length > 0) return;
     await ensureSidecarFor(sid);
+  },
+);
+
+// 预检从"缺配置"变为"就绪"时补建会话：在引导卡片里就地修复后无需重开面板
+watch(
+  () => configIssues.value.length,
+  async (now, before) => {
+    if (now === 0 && before > 0 && props.open && currentSsid.value) {
+      await ensureSidecarFor(currentSsid.value);
+    }
   },
 );
 
@@ -994,6 +1075,51 @@ defineExpose({
               class="empty"
             >
               {{ t("ai.needSession") }}
+            </div>
+            <div
+              v-else-if="configIssues.length > 0"
+              class="setup-card"
+              :class="{ pulse: setupPulse }"
+            >
+              <div class="setup-head">
+                <NIcon :size="14"><SettingsOutline /></NIcon>
+                <span>{{ t("ai.setup.title") }}</span>
+              </div>
+              <p class="setup-desc">{{ t("ai.setup.desc") }}</p>
+              <div v-if="configIssues.includes('provider')" class="setup-item">
+                <div class="setup-item-label">{{ t("ai.setup.providerMissing") }}</div>
+                <NSelect
+                  v-if="providers.length > 0"
+                  size="small"
+                  :value="null"
+                  :options="providerOptions"
+                  :placeholder="t('ai.setup.selectProvider')"
+                  @update:value="(v: string | null) => v && onSetupPickProvider(v)"
+                />
+                <template v-else>
+                  <div class="setup-item-hint">{{ t("ai.setup.noProviders") }}</div>
+                  <NButton size="small" type="primary" secondary @click="emit('openProviders')">
+                    {{ t("ai.setup.addProvider") }}
+                  </NButton>
+                </template>
+              </div>
+              <div v-if="configIssues.includes('model')" class="setup-item">
+                <div class="setup-item-label">{{ t("ai.setup.modelMissing") }}</div>
+                <NSelect
+                  v-if="setupModelOptions.length > 0"
+                  size="small"
+                  :value="null"
+                  :options="setupModelOptions"
+                  :placeholder="t('ai.setup.selectModel')"
+                  @update:value="(v: string | null) => v && onSetupPickModel(v)"
+                />
+                <template v-else>
+                  <div class="setup-item-hint">{{ t("ai.setup.noModels") }}</div>
+                  <NButton size="small" secondary @click="emit('openProviders')">
+                    {{ t("ai.setup.manageProvider") }}
+                  </NButton>
+                </template>
+              </div>
             </div>
             <div
               v-else-if="messages.length === 0"
@@ -1392,6 +1518,63 @@ defineExpose({
   font-size: 13px;
   text-align: center;
   margin-top: 24px;
+}
+
+.setup-card {
+  margin: 24px auto 0;
+  width: min(100%, 300px);
+  padding: 14px 16px;
+  border: 1px solid var(--ashell-border);
+  border-radius: 10px;
+  text-align: left;
+}
+
+.setup-card.pulse {
+  animation: setup-pulse 1.4s ease;
+}
+
+@keyframes setup-pulse {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+  30% {
+    box-shadow: 0 0 0 3px var(--ashell-primary, #4d9ef7);
+  }
+}
+
+.setup-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+}
+
+.setup-desc {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ashell-text-muted, #98a2b3);
+}
+
+.setup-item {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setup-item-label {
+  font-size: 12px;
+  color: var(--ashell-text);
+}
+
+.setup-item-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ashell-text-muted, #98a2b3);
 }
 
 .msg {

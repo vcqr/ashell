@@ -506,6 +506,7 @@ if (!isTauri) {
                 v-model:open="aiOpen"
                 :sid="activeAiTab?.sid ?? null"
                 :host-name="activeAiTab?.title ?? null"
+                @open-providers="aiProvidersOpen = true"
               />
 
               <SettingsModal

@@ -46,6 +46,18 @@ export default {
     noProviderHint: "请前往设置添加 AI 模型供应商",
     switchHint: "切换后需重启会话生效",
   },
+  setup: {
+    title: "AI 引擎还没配置好",
+    desc: "补齐以下配置即可开始对话：",
+    providerMissing: "绑定模型供应商",
+    modelMissing: "选择模型",
+    selectProvider: "选择一个供应商",
+    selectModel: "选择一个模型",
+    noProviders: "还没有添加任何模型供应商",
+    noModels: "当前供应商还没有配置模型",
+    addProvider: "添加供应商",
+    manageProvider: "管理供应商",
+  },
   quickPhrases: {
     title: "常用语",
     empty: "还没有收藏的常用语",

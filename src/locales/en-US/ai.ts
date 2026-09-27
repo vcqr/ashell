@@ -46,6 +46,18 @@ export default {
     noProviderHint: "Please add an AI model provider in Settings",
     switchHint: "Restart session to take effect",
   },
+  setup: {
+    title: "AI engine is not ready",
+    desc: "Finish the steps below to start chatting:",
+    providerMissing: "Bind a model provider",
+    modelMissing: "Choose a model",
+    selectProvider: "Select a provider",
+    selectModel: "Select a model",
+    noProviders: "No model provider has been added yet",
+    noModels: "The current provider has no models configured",
+    addProvider: "Add Provider",
+    manageProvider: "Manage Providers",
+  },
   quickPhrases: {
     title: "Quick Phrases",
     empty: "No saved phrases yet",
