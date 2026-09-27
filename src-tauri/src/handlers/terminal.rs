@@ -268,19 +268,26 @@ const INPUT_BUF_LIMIT: usize = 512;
  * 期间 ZLE 尚未接管 tty）会先被 pty 内核按规范模式回显一次（出现在
  * 首个提示符之前），ZLE/readline 就绪后又把缓冲的注入行重显在提示符
  * 处。后端在转发给前端前用 [`CwdEchoStripper`] 移除前
- * [`MAX_ECHO_OCCURRENCES`] 次出现（容忍折行处插入的 \r\n，超时放弃），
- * 正常情况下用户不可见；剥离失败退化为会话开头多显示一行。行首带
- * 空格，HISTCONTROL=ignorespace 的 bash 不会
+ * [`MAX_ECHO_OCCURRENCES`] 次出现（容忍折行处插入的 \r\n，超时放弃）。
+ * 此外命令经提示符 accept 执行必然多出一轮「提示符→回车→新提示符」，
+ * 剥掉回显后表现为会话开头多一条空提示符行：注入行开头的 printf 在
+ * 执行时光标上移一行擦掉旧提示符行，让新提示符原地补位（见
+ * SSH_*_CWD_LINE 注释），会话开头与未注入的连接观感一致。
+ * 行首带空格，HISTCONTROL=ignorespace 的 bash 不会
  * 记入历史。fish/csh 等无法安全注入的 shell 通过 exec 探测 $SHELL 后
  * 跳过（降级为不跟随）；探测用的 exec 无 pty，不打印 MOTD/Last login，
  * 不影响「shell 优先打开」的欢迎信息顺序。
  */
 
+/// 行首的 printf 是提示符行擦除：注入命令被 accept 执行时光标已到新行，
+/// 先上移擦掉注入所在的旧提示符行，让下一个提示符原地补位——否则剥掉
+/// 回显后该行只剩一条空提示符，会话开头多出一行。
 /// bash：前插上报钩子并保留 rc 链里已有的 PROMPT_COMMAND（含后续用户改动）
-const SSH_BASH_CWD_LINE: &str = " __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; PROMPT_COMMAND=\"__ashell_rc${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n";
+const SSH_BASH_CWD_LINE: &str = " printf '\\033[1A\\033[2K\\r'; __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; PROMPT_COMMAND=\"__ashell_rc${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n";
 
-/// zsh：挂 precmd 钩子（运行时追加，兼容 oh-my-zsh 等框架）
-const SSH_ZSH_CWD_LINE: &str = " __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; precmd_functions+=(__ashell_rc)\n";
+/// zsh：挂 precmd 钩子（运行时追加，兼容 oh-my-zsh 等框架）；行首 printf
+/// 同 bash 变体，见其注释
+const SSH_ZSH_CWD_LINE: &str = " printf '\\033[1A\\033[2K\\r'; __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; precmd_functions+=(__ashell_rc)\n";
 
 /// 注入行回显剥离的放弃时限：正常情况下回显在建连后一两秒内出现，
 /// 慢 rc 的 shell（macOS zsh）重显也只是再晚几秒
@@ -304,6 +311,8 @@ struct CwdEchoStripper {
     deadline: Instant,
     /// 已剥离的回显次数
     stripped: usize,
+    /// 最近一次转发给前端的字节：跨块判断命中是否起于行首用
+    last_forwarded: Option<u8>,
     done: bool,
 }
 
@@ -326,12 +335,21 @@ impl CwdEchoStripper {
             pending: Vec::new(),
             deadline: Instant::now() + timeout,
             stripped: 0,
+            last_forwarded: None,
             done: false,
         }
     }
 
     /// 喂入一块输出，返回应转发给前端的字节
     fn feed(&mut self, data: &[u8]) -> Vec<u8> {
+        let out = self.feed_inner(data);
+        if let Some(&b) = out.last() {
+            self.last_forwarded = Some(b);
+        }
+        out
+    }
+
+    fn feed_inner(&mut self, data: &[u8]) -> Vec<u8> {
         if self.done {
             return data.to_vec();
         }
@@ -345,7 +363,7 @@ impl CwdEchoStripper {
         buf.extend_from_slice(data);
         let mut out = Vec::with_capacity(buf.len());
         while !buf.is_empty() {
-            match Self::find(&buf, &self.target) {
+            match Self::find(&buf, &self.target, self.last_forwarded) {
                 FindEcho::Complete { start, end } => {
                     self.stripped += 1;
                     if self.stripped >= MAX_ECHO_OCCURRENCES {
@@ -377,7 +395,7 @@ impl CwdEchoStripper {
         out
     }
 
-    fn find(buf: &[u8], target: &[u8]) -> FindEcho {
+    fn find(buf: &[u8], target: &[u8], prev_byte: Option<u8>) -> FindEcho {
         const LOCK: usize = 8;
         /// 折行插入的 \r\n 连续字节数上限（列宽再窄一次折行也只有 2 字节）
         const MAX_WRAP_RUN: usize = 8;
@@ -394,15 +412,26 @@ impl CwdEchoStripper {
             let (mut k, mut j, mut run) = (i + LOCK, LOCK, 0usize);
             loop {
                 if j >= target.len() {
-                    // 命中：顺带吃掉紧随的回车换行（回显的 Enter）
+                    // 只有起于行首的命中（内核规范模式回显，独占一行）才
+                    // 顺带吃掉紧随的回车换行——那是回显自带的 Enter，留着
+                    // 会多一个空行。提示符后开始的命中（ZLE/readline 重显）
+                    // 必须保留换行：accept 换行把光标带到下一行，注入命令
+                    // 开头的上移擦除才能准确定位旧提示符行。
+                    let at_line_start = if i > 0 {
+                        buf[i - 1] == b'\r' || buf[i - 1] == b'\n'
+                    } else {
+                        matches!(prev_byte, Some(b'\r') | Some(b'\n'))
+                    };
                     let mut end = k;
-                    let mut eaten = 0usize;
-                    while end < buf.len()
-                        && eaten < 4
-                        && (buf[end] == b'\r' || buf[end] == b'\n')
-                    {
-                        end += 1;
-                        eaten += 1;
+                    if at_line_start {
+                        let mut eaten = 0usize;
+                        while end < buf.len()
+                            && eaten < 4
+                            && (buf[end] == b'\r' || buf[end] == b'\n')
+                        {
+                            end += 1;
+                            eaten += 1;
+                        }
                     }
                     return FindEcho::Complete { start: i, end };
                 }
@@ -1029,7 +1058,11 @@ mod tests {
         let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let out = s.feed(&echo_stream(target, None));
-        assert_eq!(String::from_utf8_lossy(&out), "Last login: ...\r\nhost:~$ host:~$ ");
+        // 提示符后开始的回显：剥掉文字但保留 accept 换行（上移擦除依赖它）
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            "Last login: ...\r\nhost:~$ \r\nhost:~$ "
+        );
     }
 
     #[test]
@@ -1044,7 +1077,10 @@ mod tests {
         let out2 = s.feed(&stream[mid..]);
         let mut all = out1;
         all.extend_from_slice(&out2);
-        assert_eq!(String::from_utf8_lossy(&all), "Last login: ...\r\nhost:~$ host:~$ ");
+        assert_eq!(
+            String::from_utf8_lossy(&all),
+            "Last login: ...\r\nhost:~$ \r\nhost:~$ "
+        );
     }
 
     #[test]
@@ -1052,7 +1088,10 @@ mod tests {
         let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let out = s.feed(&echo_stream(target, Some(30)));
-        assert_eq!(String::from_utf8_lossy(&out), "Last login: ...\r\nhost:~$ host:~$ ");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            "Last login: ...\r\nhost:~$ \r\nhost:~$ "
+        );
     }
 
     #[test]
@@ -1077,7 +1116,8 @@ mod tests {
     #[test]
     fn cwd_echo_double_echo_stripped() {
         // macOS zsh 场景：注入行先被 pty 内核按规范模式回显（首个提示符
-        // 之前），ZLE 就绪后又把缓冲行重显在提示符处，两次都要剥掉
+        // 之前，独占一行，自带换行一并吃掉），ZLE 就绪后又把缓冲行重显
+        // 在提示符处（accept 换行保留），两次文字都要剥掉
         let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let t = target.as_bytes();
@@ -1089,8 +1129,37 @@ mod tests {
         let out = s.feed(&stream);
         assert_eq!(
             String::from_utf8_lossy(&out),
-            "Last login: ...\r\nhost:~% host:~% "
+            "Last login: ...\r\nhost:~% \r\nhost:~% "
         );
+    }
+
+    #[test]
+    fn cwd_echo_strips_newline_after_line_start_echo() {
+        // 内核规范模式回显独占一行（前面是 MOTD 的换行）：回显自带的回车
+        // 换行一并吃掉，不留空行
+        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::new(target);
+        let t = target.as_bytes();
+        let mut stream = b"Last login: ...\r\n".to_vec();
+        stream.extend_from_slice(t);
+        stream.extend_from_slice(b"\r\nhost:~% ");
+        let out = s.feed(&stream);
+        assert_eq!(String::from_utf8_lossy(&out), "Last login: ...\r\nhost:~% ");
+    }
+
+    #[test]
+    fn cwd_echo_strips_newline_when_echo_spans_chunk_start() {
+        // 内核回显恰好从块边界开始：依据上一块最后转发的字节判断行首
+        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::new(target);
+        let t = target.as_bytes();
+        assert_eq!(
+            s.feed(b"Last login: ...\r\n"),
+            b"Last login: ...\r\n".to_vec()
+        );
+        let mut rest = t.to_vec();
+        rest.extend_from_slice(b"\r\nhost:~% ");
+        assert_eq!(s.feed(&rest), b"host:~% ".to_vec());
     }
 
     #[test]
@@ -1099,12 +1168,18 @@ mod tests {
         let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let t = target.as_bytes();
-        let mut stream = t.to_vec();
-        for _ in 0..3 {
-            stream.extend_from_slice(b"\r\n");
+        let mut stream = b"host:~% ".to_vec();
+        for _ in 0..4 {
             stream.extend_from_slice(t);
+            stream.extend_from_slice(b"\r\nhost:~% ");
         }
-        assert_eq!(s.feed(&stream), t.to_vec());
+        let mut expected = b"host:~% ".to_vec();
+        for _ in 0..3 {
+            expected.extend_from_slice(b"\r\nhost:~% ");
+        }
+        expected.extend_from_slice(t);
+        expected.extend_from_slice(b"\r\nhost:~% ");
+        assert_eq!(s.feed(&stream), expected);
     }
 
     #[test]
@@ -1112,8 +1187,8 @@ mod tests {
         // 尾部 ≥2 字节像半截回显开头时扣留，跨块补齐后整行剥掉
         let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
-        assert_eq!(s.feed(b"hello __a"), b"hello".to_vec());
-        assert!(s.feed(&target.as_bytes()[4..]).is_empty());
+        assert_eq!(s.feed(b"hello prin"), b"hello".to_vec());
+        assert!(s.feed(&target.as_bytes()[5..]).is_empty());
     }
 
     #[test]
