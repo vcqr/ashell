@@ -151,7 +151,7 @@ function onMousedown(e: MouseEvent) {
   gap: 8px;
   min-width: 0;
   padding: 8px 9px;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--ashell-panel-bg-soft);
   border: 1px solid var(--ashell-border-soft);
   cursor: default;
@@ -172,7 +172,7 @@ function onMousedown(e: MouseEvent) {
   background: linear-gradient(
     115deg,
     transparent 32%,
-    rgba(255, 255, 255, 0.07) 50%,
+    var(--ashell-hover) 50%,
     transparent 68%
   );
   transform: translateX(-130%);
@@ -232,7 +232,7 @@ function onMousedown(e: MouseEvent) {
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: 7px;
   overflow: hidden;
   transition: transform 0.18s ease;
 }
