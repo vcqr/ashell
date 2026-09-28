@@ -31,7 +31,7 @@ export const BACKUP_PREF_KEYS = [
   "ashell:host-pinned-ids",
   "ashell:hosts-pinned",
   "ashell:host-sort-mode",
-  "ashell:hosts-flat",
+  "ashell:hosts-view-mode",
   // 面板布局（宽度与固定态）
   "ashell:sftp-width",
   "ashell:ai-width",

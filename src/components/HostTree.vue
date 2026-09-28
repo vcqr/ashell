@@ -39,6 +39,8 @@ import {
   SwapVerticalOutline,
   CheckmarkOutline,
   CheckboxOutline,
+  GridOutline,
+  GitNetworkOutline,
 } from "@vicons/ionicons5"
 import { Folder, FolderOpen } from "@vicons/fa"
 import { FolderAddOutlined, PushpinFilled, PushpinOutlined } from "@vicons/antd"
@@ -48,6 +50,8 @@ import { useIconStore } from "@/stores/icons"
 import { useHostsPin } from "@/composables/useHostsPin"
 import { copyText } from "@/utils/clipboard"
 import { compareAddr } from "@/stores/hosts"
+import { hostAddrTextOfNode, splitHighlightSegments } from "@/utils/hosts-view"
+import HostCardGrid from "@/components/host/HostCardGrid.vue"
 import SshConfigImportModal from "@/components/SshConfigImportModal.vue"
 import type { HostNode, Host } from "@/types"
 
@@ -79,20 +83,38 @@ const treeData = computed<TreeOption[]>(
   () => store.tree as unknown as TreeOption[],
 )
 
-/* ---------- 平铺视图：忽略目录，按树序列出所有主机 ---------- */
-const FLAT_KEY = "ashell:hosts-flat"
+/* ---------- 视图模式：树形 / 平铺 / 卡片 ---------- */
+const VIEW_MODE_KEY = "ashell:hosts-view-mode"
+// 旧两态开关的兼容读取：升级后首选项落在扁平视图的老用户不丢视图
+const LEGACY_FLAT_KEY = "ashell:hosts-flat"
 
-const flatMode = ref(
-  typeof localStorage !== "undefined" && localStorage.getItem(FLAT_KEY) === "true",
-)
+type HostViewMode = "tree" | "flat" | "card"
 
-watch(flatMode, (v) => {
+function readViewMode(): HostViewMode {
   try {
-    localStorage.setItem(FLAT_KEY, String(v))
+    if (typeof localStorage !== "undefined") {
+      const v = localStorage.getItem(VIEW_MODE_KEY)
+      if (v === "tree" || v === "flat" || v === "card") return v
+      if (localStorage.getItem(LEGACY_FLAT_KEY) === "true") return "flat"
+    }
+  } catch {
+    // ignore
+  }
+  return "tree"
+}
+
+const viewMode = ref<HostViewMode>(readViewMode())
+
+watch(viewMode, (v) => {
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, v)
   } catch {
     // ignore
   }
 })
+
+/** 非树形视图（平铺/卡片）：忽略目录层级，共用禁拖拽、禁展开全部等语义 */
+const flatMode = computed(() => viewMode.value !== "tree")
 
 function collectHosts(list: HostNode[], out: HostNode[] = []): HostNode[] {
   for (const n of list) {
@@ -273,11 +295,7 @@ function suffixTextOfNode(node: HostNode): string {
     const count = hostCountInFolder.value.get(node.key) ?? 0
     return count > 0 ? t("hosts.tree.hostCountShort", { count }) : ""
   }
-  const addr = node.host ?? ""
-  if (!addr) return ""
-  if (node.protocol === "serial") return addr
-  const port = node.port ?? "22"
-  return port !== "22" ? `${addr}:${port}` : addr
+  return hostAddrTextOfNode(node)
 }
 
 function renderSuffix({ option }: { option: TreeOption }) {
@@ -303,30 +321,10 @@ function renderSuffix({ option }: { option: TreeOption }) {
   ])
 }
 
-/** 按当前搜索词切分 label,命中的子串单独成段(大小写不敏感,与 NTree pattern 同口径) */
-function splitHighlightSegments(label: string): Array<{ text: string; hit: boolean }> {
-  const q = filter.value.toLowerCase()
-  if (!q) return [{ text: label, hit: false }]
-  const lower = label.toLowerCase()
-  const segs: Array<{ text: string; hit: boolean }> = []
-  let i = 0
-  while (i < label.length) {
-    const idx = lower.indexOf(q, i)
-    if (idx === -1) {
-      segs.push({ text: label.slice(i), hit: false })
-      break
-    }
-    if (idx > i) segs.push({ text: label.slice(i, idx), hit: false })
-    segs.push({ text: label.slice(idx, idx + q.length), hit: true })
-    i = idx + q.length
-  }
-  return segs.length > 0 ? segs : [{ text: label, hit: false }]
-}
-
 function renderLabel({ option }: { option: TreeOption }) {
   const node = option as unknown as HostNode
   const label = String(node.label ?? "")
-  const segments = splitHighlightSegments(label)
+  const segments = splitHighlightSegments(label, filter.value)
   if (!segments.some((s) => s.hit)) return label
   return h(
     "span",
@@ -632,7 +630,7 @@ function onSearchEsc(e: KeyboardEvent) {
     return
   }
   searchInputRef.value?.blur()
-  treeBodyEl.value?.querySelector<HTMLElement>(".n-tree")?.focus()
+  treeBodyEl.value?.querySelector<HTMLElement>(".n-tree, .host-card-grid")?.focus()
 }
 
 /** 树上焦点：Enter 连接/展开，F2 重命名，Delete 删除，Menu 键弹菜单，Esc 清筛选 */
@@ -699,6 +697,30 @@ function onTreeKeydown(e: KeyboardEvent) {
 function renderMenuIcon(comp: unknown) {
   return () => h(NIcon, null, { default: () => h(comp as never) })
 }
+
+/* ---------- 视图切换菜单（与排序子菜单同款式：当前项打勾） ---------- */
+const viewModeMeta = {
+  tree: { label: "hosts.tree.treeView", icon: GitNetworkOutline },
+  flat: { label: "hosts.tree.flatView", icon: ListOutline },
+  card: { label: "hosts.tree.cardView", icon: GridOutline },
+} as const
+
+const viewModeOptions = computed<DropdownOption[]>(() =>
+  (Object.keys(viewModeMeta) as Array<keyof typeof viewModeMeta>).map((m) => ({
+    label: t(viewModeMeta[m].label),
+    key: m,
+    icon: renderMenuIcon(viewMode.value === m ? CheckmarkOutline : viewModeMeta[m].icon),
+  })),
+)
+
+function onViewModeSelect(key: string | number) {
+  if (key === "tree" || key === "flat" || key === "card") viewMode.value = key
+}
+
+/** 卡片视图数据源：与平铺共用"置顶在前 + 排序模式"的扁平列表，搜索过滤也已在其上完成 */
+const cardHosts = computed<HostNode[]>(
+  () => filteredDisplayData.value as unknown as HostNode[],
+)
 
 const ctxMenuOptions = computed<DropdownOption[]>(() => {
   const node = ctxMenuKey.value ? findNode(ctxMenuKey.value) : null
@@ -1047,6 +1069,14 @@ function clearChecked() {
   checkedKeys.value = []
 }
 
+/** 卡片视图的勾选切换（NTree checkable 的卡片对应物，键约定一致） */
+function toggleCardCheck(key: string) {
+  const set = new Set(checkedKeys.value)
+  if (set.has(key)) set.delete(key)
+  else set.add(key)
+  checkedKeys.value = Array.from(set)
+}
+
 /** 批量连接：全部以新会话打开（与右键"新建会话"同语义），逐台错峰触发。
  *  不能同帧连开：后开的 tab 处于未激活态（容器 display:none）无法 fit，
  *  会以 xterm 默认 80 列建连；用户切到该 tab 时列数变化触发远端 SIGWINCH，
@@ -1251,22 +1281,25 @@ async function onRefresh() {
           <NIcon><SearchOutline /></NIcon>
         </template>
         <template #suffix>
-          <NTooltip>
-            <template #trigger>
-              <NButton
-                size="tiny"
-                quaternary
-                circle
-                :type="flatMode ? 'primary' : 'default'"
-                @click="flatMode = !flatMode"
-              >
-                <template #icon>
-                  <NIcon :size="16"><ListOutline /></NIcon>
-                </template>
-              </NButton>
-            </template>
-            {{ flatMode ? t("hosts.tree.treeView") : t("hosts.tree.flatView") }}
-          </NTooltip>
+          <NDropdown trigger="click" :options="viewModeOptions" @select="onViewModeSelect">
+            <NTooltip>
+              <template #trigger>
+                <NButton
+                  size="tiny"
+                  quaternary
+                  circle
+                  :type="viewMode === 'tree' ? 'default' : 'primary'"
+                >
+                  <template #icon>
+                    <NIcon :size="16">
+                      <component :is="viewModeMeta[viewMode].icon" />
+                    </NIcon>
+                  </template>
+                </NButton>
+              </template>
+              {{ t("hosts.tree.viewMode") }}
+            </NTooltip>
+          </NDropdown>
           <NTooltip>
             <template #trigger>
               <NButton
@@ -1364,6 +1397,19 @@ async function onRefresh() {
             {{ t("hosts.tree.clearFilter") }}
           </NButton>
         </NEmpty>
+        <HostCardGrid
+          v-else-if="viewMode === 'card'"
+          :hosts="cardHosts"
+          :selected-keys="selectedKeys"
+          :checked-keys="checkedKeys"
+          :batch-mode="batchMode"
+          :filter="filter"
+          @select="(k: string) => (selectedKeys = [k])"
+          @open="(n: HostNode) => emit('open-host', n)"
+          @open-new="(n: HostNode) => emit('open-host', n, true)"
+          @menu="showCtxMenu"
+          @toggle-check="toggleCardCheck"
+        />
         <NTree
           v-else
           :data="filteredDisplayData"

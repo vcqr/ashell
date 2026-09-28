@@ -24,6 +24,8 @@ export default {
     save: "Save",
     flatView: "Flat view of all hosts",
     treeView: "Tree view",
+    cardView: "Card view",
+    viewMode: "View",
     expandAll: "Expand all folders",
     collapseAll: "Collapse all folders",
     pin: "Pin to left",

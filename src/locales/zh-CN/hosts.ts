@@ -24,6 +24,8 @@ export default {
     save: "保存",
     flatView: "平铺所有连接",
     treeView: "树形显示",
+    cardView: "卡片显示",
+    viewMode: "视图",
     expandAll: "展开所有目录",
     collapseAll: "收起所有目录",
     pin: "固定到左侧",
