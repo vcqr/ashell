@@ -195,8 +195,12 @@ async fn start_api_server() -> anyhow::Result<ApiInfo> {
     log::info!("ashell API listening on http://{}", local_addr);
 
     // 5) 后台运行 server
+    // into_make_service_with_connect_info：向 handler 注入对端 SocketAddr
+    // （登录端点据此按来源 IP 做防爆破限流）
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
+        if let Err(e) =
+            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await
+        {
             log::error!("axum serve error: {e}");
         }
     });

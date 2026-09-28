@@ -100,7 +100,9 @@ pub async fn run(opts: ServerOptions) -> anyhow::Result<()> {
     log::info!("==============================================");
 
     // 6) 优雅退出
-    axum::serve(listener, app)
+    // into_make_service_with_connect_info：向 handler 注入对端 SocketAddr
+    // （登录端点据此按来源 IP 做防爆破限流）
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
