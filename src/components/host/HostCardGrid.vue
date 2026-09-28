@@ -151,9 +151,14 @@ function onMousedown(e: MouseEvent) {
   transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 
-/* 悬停/选中与 TabBar 同语言：悬停中性色，选中用主机色描边 + 18% 色底 + 底部色条 */
+/* 悬停/选中与 TabBar 同语言：色罩以 background-image 叠加在面板底色上
+   （同 tab 的 18% 色罩渲染方式），直接改 background-color 会把面板底色替换掉，
+   深色主题下卡片反而变暗 */
 .host-card:hover {
-  background: var(--ashell-hover);
+  /* 卡片面积大,6% 罩在大表面不明显,叠两层 ≈12% 仍走主题变量 */
+  background-image:
+    linear-gradient(var(--ashell-hover), var(--ashell-hover)),
+    linear-gradient(var(--ashell-hover), var(--ashell-hover));
 }
 
 .host-card:focus-visible {
@@ -162,10 +167,9 @@ function onMousedown(e: MouseEvent) {
 
 .host-card.selected {
   border-color: var(--host-color, var(--ashell-primary));
-  background: color-mix(
-    in srgb,
-    var(--host-color, var(--ashell-primary)) 18%,
-    var(--ashell-panel-bg-soft)
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--host-color, var(--ashell-primary)) 18%, transparent),
+    color-mix(in srgb, var(--host-color, var(--ashell-primary)) 18%, transparent)
   );
   box-shadow: inset 0 -2px 0 var(--host-color, var(--ashell-primary));
 }
