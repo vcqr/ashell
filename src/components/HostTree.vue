@@ -773,6 +773,21 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
           },
         ],
       },
+      {
+        label: t("hosts.tree.viewMode"),
+        key: "view-mode",
+        icon: renderMenuIcon(GridOutline),
+        children: (Object.keys(viewModeMeta) as Array<keyof typeof viewModeMeta>).map(
+          (m) => ({
+            label: t(viewModeMeta[m].label),
+            key: `view-${m}`,
+            icon:
+              viewMode.value === m
+                ? renderMenuIcon(CheckmarkOutline)
+                : renderMenuIcon(viewModeMeta[m].icon),
+          }),
+        ),
+      },
     )
     return opts
   }
@@ -841,6 +856,12 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
 
 function onCtxSelect(key: string) {
   ctxMenuShow.value = false
+  // 视图子菜单:键约定 view-tree / view-flat / view-card
+  if (key.startsWith("view-")) {
+    const m = key.slice(5) as HostViewMode
+    if (m === "tree" || m === "flat" || m === "card") viewMode.value = m
+    return
+  }
   const targetKey = ctxMenuKey.value
   const node = targetKey ? findNode(targetKey) : null
   switch (key) {
