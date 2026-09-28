@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, h, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NTree,
   NIcon,
@@ -48,6 +48,7 @@ import { useI18n } from "vue-i18n"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
 import { useHostsPin } from "@/composables/useHostsPin"
+import { HOST_SESSION_STATUS_KEY, type HostSessionStatus } from "@/composables/useTabs"
 import { copyText } from "@/utils/clipboard"
 import { compareAddr } from "@/stores/hosts"
 import { hostAddrTextOfNode, splitHighlightSegments } from "@/utils/hosts-view"
@@ -67,6 +68,20 @@ const store = useHostStore()
 const iconStore = useIconStore()
 const message = useMessage()
 const dialog = useDialog()
+
+/** 主机会话状态(App 层 provide):树形图标与卡片状态点共用 */
+const hostSessionStatus = inject(HOST_SESSION_STATUS_KEY, null)
+
+/** 状态点 tooltip 文案(复用终端 tab 状态栏的 i18n 键) */
+function sessionStatusTitle(s: HostSessionStatus): string {
+  const keys = {
+    connected: "terminal.tabBar.statusConnected",
+    connecting: "terminal.tabBar.statusConnecting",
+    error: "terminal.tabBar.statusError",
+    closed: "terminal.tabBar.statusClosed",
+  } as const
+  return t(keys[s])
+}
 
 const filter = ref("")
 const selectedKeys = ref<string[]>([])
@@ -269,24 +284,29 @@ function renderPrefix({ option }: { option: TreeOption }) {
     )
   }
   const iconUrl = node.icon ? iconStore.urlOf(node.icon) : null
-  if (iconUrl) {
-    return h("img", {
-      src: iconUrl,
-      width: 16,
-      height: 16,
-      style: {
-        borderRadius: "3px",
-        objectFit: "contain",
-        verticalAlign: "middle",
-      },
-    })
-  }
   const color = node.color ?? "#7c5cff"
-  return h(
-    NIcon,
-    { color, size: 16 },
-    { default: () => h(TerminalOutline) },
-  )
+  const iconEl = iconUrl
+    ? h("img", {
+        src: iconUrl,
+        width: 16,
+        height: 16,
+        style: {
+          borderRadius: "3px",
+          objectFit: "contain",
+          verticalAlign: "middle",
+        },
+      })
+    : h(NIcon, { color, size: 16 }, { default: () => h(TerminalOutline) })
+  // 有会话的主机:图标右下角叠状态点(绿=活连接/琥珀=连接中/红=错误/灰=已断开)
+  const status = hostSessionStatus?.value.get(node.id)
+  if (!status) return iconEl
+  return h("span", { class: "node-prefix-wrap" }, [
+    iconEl,
+    h("i", {
+      class: ["node-status-dot", `status-${status}`],
+      title: sessionStatusTitle(status),
+    }),
+  ])
 }
 
 /** 悬停节点行末右对齐的元信息：主机=地址（端口非 22 时附带），目录=主机数 */
@@ -1425,6 +1445,7 @@ async function onRefresh() {
           :checked-keys="checkedKeys"
           :batch-mode="batchMode"
           :filter="filter"
+          :session-status="hostSessionStatus ?? undefined"
           @select="(k: string) => (selectedKeys = [k])"
           @open="(n: HostNode) => emit('open-host', n)"
           @open-new="(n: HostNode) => emit('open-host', n, true)"
@@ -1806,6 +1827,53 @@ async function onRefresh() {
 .node-label-hit {
   color: #7c5cff;
   font-weight: 600;
+}
+
+/* 主机会话状态点（renderPrefix 动态创建，样式须全局）。配色与 TabBar 状态点一致 */
+.node-prefix-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.node-status-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ashell-panel-bg);
+  box-sizing: content-box;
+}
+
+.node-status-dot.status-connected {
+  background: #4ade80;
+}
+
+.node-status-dot.status-connecting {
+  background: #f59e0b;
+  animation: node-status-pulse 1.4s ease-in-out infinite;
+}
+
+.node-status-dot.status-error {
+  background: #ef4444;
+}
+
+.node-status-dot.status-closed {
+  background: var(--ashell-text-subtle, rgba(255, 255, 255, 0.3));
+  opacity: 0.5;
+}
+
+@keyframes node-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
 }
 
 /* 拖拽中抑制行内元信息展开（body class 由拖拽逻辑维护，scoped 够不到 body 级状态） */

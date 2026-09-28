@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onErrorCaptured, ref, watch, watchEffect } from "vue";
+import { computed, onErrorCaptured, provide, ref, watch, watchEffect } from "vue";
 import {
   NConfigProvider,
   NMessageProvider,
@@ -47,7 +47,7 @@ import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
 import { useTrayStore } from "@/stores/tray";
 import { useTheme } from "@/composables/useTheme";
-import { useTabs } from "@/composables/useTabs";
+import { useTabs, HOST_SESSION_STATUS_KEY } from "@/composables/useTabs";
 import { usePanels } from "@/composables/usePanels";
 import { useWindowControls } from "@/composables/useWindowControls";
 import { useGlobalShortcuts } from "@/composables/useGlobalShortcuts";
@@ -132,7 +132,11 @@ const {
   closeHostsIfOpen,
   toggleHosts,
   sendCommandToActive,
+  hostSessionStatus,
 } = useTabs();
+
+// 主机会话状态下发给主机树/卡片视图(状态点);HostsDrawer 中间层无需透传
+provide(HOST_SESSION_STATUS_KEY, hostSessionStatus);
 
 const {
   aiOpen,

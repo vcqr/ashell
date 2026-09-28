@@ -3,10 +3,12 @@ import { NCheckbox, NIcon } from "naive-ui"
 import { TerminalOutline } from "@vicons/ionicons5"
 import { PushpinFilled } from "@vicons/antd"
 import { computed } from "vue"
+import { useI18n } from "vue-i18n"
 import type { HostNode } from "@/types"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
 import { hostAddrTextOfNode, splitHighlightSegments } from "@/utils/hosts-view"
+import type { HostSessionStatus } from "@/composables/useTabs"
 
 const props = defineProps<{
   /** 平铺主机列表（置顶在前 + 当前排序模式），key 约定与树一致（host-{id}） */
@@ -15,6 +17,8 @@ const props = defineProps<{
   checkedKeys: string[]
   batchMode: boolean
   filter: string
+  /** 主机会话状态(App 层 provide 的聚合结果):有会话的主机头像右下角显示状态点 */
+  sessionStatus?: Map<number, HostSessionStatus>
 }>()
 
 const emit = defineEmits<{
@@ -25,12 +29,28 @@ const emit = defineEmits<{
   "toggle-check": [key: string]
 }>()
 
+const { t } = useI18n()
 const hostStore = useHostStore()
 const iconStore = useIconStore()
 
 const DEFAULT_COLOR = "#7c5cff"
 
 const nodes = computed(() => props.hosts)
+
+const STATUS_TITLE_KEYS = {
+  connected: "terminal.tabBar.statusConnected",
+  connecting: "terminal.tabBar.statusConnecting",
+  error: "terminal.tabBar.statusError",
+  closed: "terminal.tabBar.statusClosed",
+} as const
+
+function sessionStatusOf(node: HostNode): HostSessionStatus | undefined {
+  return props.sessionStatus?.get(node.id)
+}
+
+function statusTitle(s: HostSessionStatus): string {
+  return t(STATUS_TITLE_KEYS[s])
+}
 
 function colorOf(node: HostNode): string {
   return node.color || DEFAULT_COLOR
@@ -95,12 +115,20 @@ function onMousedown(e: MouseEvent) {
       @mousedown="onMousedown"
       @contextmenu.prevent.stop="emit('menu', node.key, $event.clientX, $event.clientY)"
     >
-      <span
-        class="host-avatar"
-        :style="{ background: `color-mix(in srgb, ${colorOf(node)} 14%, transparent)` }"
-      >
-        <img v-if="iconUrlOf(node)" :src="iconUrlOf(node)!" alt="" draggable="false" />
-        <NIcon v-else :size="20" :color="colorOf(node)"><TerminalOutline /></NIcon>
+      <span class="host-avatar-wrap">
+        <span
+          class="host-avatar"
+          :style="{ background: `color-mix(in srgb, ${colorOf(node)} 14%, transparent)` }"
+        >
+          <img v-if="iconUrlOf(node)" :src="iconUrlOf(node)!" alt="" draggable="false" />
+          <NIcon v-else :size="20" :color="colorOf(node)"><TerminalOutline /></NIcon>
+        </span>
+        <i
+          v-if="sessionStatusOf(node)"
+          class="host-status-dot"
+          :class="`status-${sessionStatusOf(node)}`"
+          :title="statusTitle(sessionStatusOf(node)!)"
+        />
       </span>
       <span class="host-meta">
         <span class="host-name">
@@ -233,9 +261,14 @@ function onMousedown(e: MouseEvent) {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--ashell-primary) 40%, transparent);
 }
 
-/* 头像块：用户色淡底承载自定义图标 / 兜底终端图标 */
-.host-avatar {
+/* 头像块：用户色淡底承载自定义图标 / 兜底终端图标;外层容器承载会话状态点 */
+.host-avatar-wrap {
+  position: relative;
   flex-shrink: 0;
+  display: flex;
+}
+
+.host-avatar {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -244,6 +277,48 @@ function onMousedown(e: MouseEvent) {
   border-radius: 7px;
   overflow: hidden;
   transition: transform 0.18s ease;
+}
+
+/* 会话状态点(头像右下角):配色与 TabBar 状态点一致 */
+.host-status-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--ashell-panel-bg-soft);
+  box-sizing: content-box;
+}
+
+.host-status-dot.status-connected {
+  background: #4ade80;
+}
+
+.host-status-dot.status-connecting {
+  background: #f59e0b;
+  animation: host-status-pulse 1.4s ease-in-out infinite;
+}
+
+.host-status-dot.status-error {
+  background: #ef4444;
+}
+
+.host-status-dot.status-closed {
+  background: var(--ashell-text-subtle, rgba(255, 255, 255, 0.3));
+  opacity: 0.5;
+}
+
+@keyframes host-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
 }
 
 .host-card:hover .host-avatar {

@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, type InjectionKey, type ComputedRef } from "vue";
 import type { TerminalTab, HostNode } from "@/types";
 import { useAiStore } from "@/stores/ai";
 import { useBroadcastStore } from "@/stores/broadcast";
@@ -25,6 +25,14 @@ export type AiAssistantExposed = {
 };
 
 const TABS_KEY = "ashell:tabs";
+
+/** 主机会话状态(取该主机所有 tab 中最活跃的状态),主机树/卡片视图的状态点用 */
+export type HostSessionStatus = NonNullable<TerminalTab["status"]>;
+
+/** App 层 provide、HostTree 层 inject 的聚合状态(避免 useTabs 多实例) */
+export const HOST_SESSION_STATUS_KEY: InjectionKey<
+  ComputedRef<Map<number, HostSessionStatus>>
+> = Symbol("host-session-status");
 
 /** 仅持久化 tab 骨架；sid/status/lines 是运行时状态，重启后必然失效。 */
 type PersistedTab = Pick<
@@ -122,6 +130,28 @@ export function useTabs() {
       ? persisted.activeKey
       : (tabs.value[0]?.key ?? ""),
   );
+
+  /**
+   * 主机会话状态聚合:hostId → 该主机所有 tab 中最活跃的状态。
+   * 优先级 connected > connecting > error > closed——有多开会话时,
+   * 只要有一个活连接就亮绿点;全部断开才是灰点。本地终端 tab 无 hostId 不参与。
+   */
+  const hostSessionStatus = computed<Map<number, HostSessionStatus>>(() => {
+    const rank: Record<HostSessionStatus, number> = {
+      connected: 3,
+      connecting: 2,
+      error: 1,
+      closed: 0,
+    };
+    const map = new Map<number, HostSessionStatus>();
+    for (const t of tabs.value) {
+      if (t.hostId == null) continue;
+      const s: HostSessionStatus = t.status ?? "connected";
+      const prev = map.get(t.hostId);
+      if (prev === undefined || rank[s] > rank[prev]) map.set(t.hostId, s);
+    }
+    return map;
+  });
 
   /**
    * 由持久化恢复的 tab 集合。默认这些 tab 的 TerminalView 应跳过自动 ws 连接，
@@ -549,6 +579,7 @@ export function useTabs() {
   return {
     hostsOpen,
     tabs,
+    hostSessionStatus,
     activeTabKey,
     activeTab,
     activeSftpTab,
