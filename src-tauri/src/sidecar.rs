@@ -185,10 +185,13 @@ fn spawn_daemon_unix(binary_path: &Path) -> Result<(Child, Box<dyn Write + Send>
         }
     }
 
+    let mut cmd = Command::new(binary_path);
+    cmd.arg("--serve").envs(crate::proxy::sidecar_env_set());
+    for key in crate::proxy::sidecar_env_unset() {
+        cmd.env_remove(&key);
+    }
     let child = unsafe {
-        Command::new(binary_path)
-            .arg("--serve")
-            .stdout(Stdio::piped())
+        cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             // 独立进程组：kill_all 时 killpg 连带回收 claude CLI 等孙进程
             .process_group(0)
@@ -217,8 +220,12 @@ fn spawn_daemon_windows(binary_path: &Path) -> Result<(Child, Box<dyn Write + Se
     // CREATE_NO_WINDOW：父进程是 GUI 子系统时阻止子进程弹出 cmd 黑框
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let mut child = Command::new(binary_path)
-        .arg("--serve")
+    let mut cmd = Command::new(binary_path);
+    cmd.arg("--serve").envs(crate::proxy::sidecar_env_set());
+    for key in crate::proxy::sidecar_env_unset() {
+        cmd.env_remove(&key);
+    }
+    let mut child = cmd
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -272,9 +272,20 @@ fn create_bucket(cfg: &BackupConfig) -> AppResult<Box<Bucket>> {
         None,
     )
     .map_err(|e| AppError::Internal(format!("s3 credentials: {e}")))?;
-    let bucket = Bucket::new(&cfg.bucket, region, creds)
+    let mut bucket = Bucket::new(&cfg.bucket, region, creds)
         .map_err(|e| AppError::Internal(format!("s3 bucket: {e}")))?
         .with_path_style();
+    // rust-s3 内部客户端不读 OS 级代理设置，按代理设置显式注入
+    if let crate::proxy::EffectiveProxy::Proxy { url, no_proxy } = crate::proxy::effective() {
+        let mut proxy = reqwest::Proxy::all(&url)
+            .map_err(|e| AppError::Internal(format!("proxy url: {e}")))?;
+        proxy = proxy.no_proxy(reqwest::NoProxy::from_string(&no_proxy));
+        bucket = Box::new(
+            bucket
+                .set_proxy(proxy)
+                .map_err(|e| AppError::Internal(format!("s3 proxy: {e}")))?,
+        );
+    }
     Ok(bucket)
 }
 

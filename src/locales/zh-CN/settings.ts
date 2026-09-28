@@ -31,6 +31,20 @@ export default {
     devtools: "开发者工具",
     devtoolsDesc:
       "开启后立即打开 WebView 开发者工具，并可用 F12 / Ctrl+Shift+I（macOS 为 ⌘⌥I）切换；关闭后立即收起，按键恢复透传给终端。",
+    proxyTitle: "网络代理",
+    proxyMode: "代理模式",
+    proxyFollowSystem: "跟随系统",
+    proxyDirect: "直连",
+    proxyCustom: "自定义",
+    proxyUrl: "代理地址",
+    proxyUrlPlaceholder: "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890",
+    proxyNoProxy: "不使用代理的地址",
+    proxyNoProxyPlaceholder: "例如 localhost,127.0.0.1,::1,.example.com",
+    proxyNoProxyDesc: "匹配这些主机的请求将直连，不经过代理，多个规则用英文逗号分隔。",
+    proxyDesc:
+      "作用于 AI 请求、模型列表获取与 S3 备份等后端 HTTP 请求，SSH 终端连接不经过代理；跟随系统读取系统代理设置与 HTTP(S)_PROXY 环境变量；AI 会话需重新打开后生效。",
+    proxyUrlInvalid: "代理地址需以 http://、https:// 或 socks5:// 开头",
+    proxySaveFailed: "代理设置保存失败",
   },
   theme: {
     appearance: "外观",

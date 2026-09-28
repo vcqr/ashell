@@ -15,6 +15,7 @@ mod hotkey;
 mod middleware;
 mod models;
 mod opener;
+mod proxy;
 mod routers;
 pub mod server;
 mod service;
@@ -390,7 +391,9 @@ pub fn run() {
             hotkey::hotkey_get_settings,
             hotkey::hotkey_set_settings,
             hotkey::hotkey_suspend,
-            hotkey::hotkey_resume
+            hotkey::hotkey_resume,
+            proxy::proxy_get_settings,
+            proxy::proxy_set_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

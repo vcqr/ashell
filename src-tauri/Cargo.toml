@@ -129,10 +129,14 @@ keyring = { version = "4", features = ["v1"] }
 font-kit = { version = "0.14", optional = true }
 
 # HTTP client (fetch model list from provider APIs)
-# 0.13 起 query() 方法独立成 query feature，需显式开启。
 # rustls-tls 进基础依赖：server 目标（--no-default-features，musl 容器）无 OpenSSL 可用，
 # 走纯 rust 的 rustls；desktop 追加 native-tls 后 reqwest 默认后端仍是 native-tls，行为不变
-reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+# system-proxy：默认 builder 也读 OS 级代理设置（Windows 注册表等）；socks：支持 socks5 代理
+# 钉在 0.12：rust-s3 0.37 内部依赖 reqwest 0.12，Bucket::set_proxy 需要 Proxy 类型同源
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy", "socks"] }
+
+# 读取 OS 级系统代理设置（Windows 注册表 / macOS scutil / Linux gsettings）
+sysproxy = "0.3"
 
 # S3-compatible object storage (backup/restore)
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }

@@ -31,6 +31,21 @@ export default {
     devtools: "Developer Tools",
     devtoolsDesc:
       "Opens WebView DevTools immediately; F12 / Ctrl+Shift+I (⌘⌥I on macOS) toggles it afterwards. Turning off closes DevTools and passes the keys through to the terminal.",
+    proxyTitle: "Network Proxy",
+    proxyMode: "Proxy Mode",
+    proxyFollowSystem: "Follow system",
+    proxyDirect: "Direct",
+    proxyCustom: "Custom",
+    proxyUrl: "Proxy URL",
+    proxyUrlPlaceholder: "http://127.0.0.1:7890 or socks5://127.0.0.1:7890",
+    proxyNoProxy: "Bypass Proxy for Hosts",
+    proxyNoProxyPlaceholder: "e.g. localhost,127.0.0.1,::1,.example.com",
+    proxyNoProxyDesc:
+      "Requests to these hosts connect directly without the proxy. Separate multiple rules with commas.",
+    proxyDesc:
+      "Applies to backend HTTP requests such as AI requests, model list fetching and S3 backup; SSH terminal connections are not proxied. Follow-system reads OS proxy settings and HTTP(S)_PROXY environment variables. AI sessions must be reopened to pick up changes.",
+    proxyUrlInvalid: "Proxy URL must start with http://, https:// or socks5://",
+    proxySaveFailed: "Failed to save proxy settings",
   },
   theme: {
     appearance: "Appearance",

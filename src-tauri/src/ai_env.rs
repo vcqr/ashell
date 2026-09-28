@@ -464,8 +464,21 @@ pub async fn fetch_models(
         return Err("base_url 和 api_key 不能为空".into());
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15));
+    // 供应商 API 常在墙外，按代理设置显式注入
+    match crate::proxy::effective() {
+        crate::proxy::EffectiveProxy::Direct => builder = builder.no_proxy(),
+        crate::proxy::EffectiveProxy::Proxy { url, no_proxy } => {
+            let mut proxy = reqwest::Proxy::all(&url)
+                .map_err(|e| format!("代理地址无效: {e}"))?;
+            proxy = proxy.no_proxy(reqwest::NoProxy::from_string(&no_proxy));
+            builder = builder.proxy(proxy);
+        }
+        // 跟随系统但未探测到代理：保持默认行为（reqwest 仍读环境变量）
+        crate::proxy::EffectiveProxy::Auto => {}
+    }
+    let client = builder
         .build()
         .map_err(|e| format!("HTTP client 构建失败: {e}"))?;
 
