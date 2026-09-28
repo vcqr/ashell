@@ -1743,11 +1743,12 @@ async function onRefresh() {
   margin-right: 4px;
 }
 
-/* 拖拽中：drop 目标 folder 高亮 */
-.tree-body[data-drop-key] :deep([data-node-key]) {
+/* 拖拽中：drop 目标 folder 高亮（卡片视图的 .host-card 也带 data-node-key，
+   必须排除，否则这里的 background/transition 会覆盖卡片自身的状态样式） */
+.tree-body[data-drop-key] :deep([data-node-key]:not(.host-card)) {
   transition: background 0.12s ease, box-shadow 0.12s ease;
 }
-.tree-body[data-drop-key=""] :deep([data-node-key]) {
+.tree-body[data-drop-key=""] :deep([data-node-key]:not(.host-card)) {
   background: transparent;
 }
 </style>
