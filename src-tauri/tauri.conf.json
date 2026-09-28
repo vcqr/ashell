@@ -34,6 +34,8 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
+    "publisher": "vcqr",
+    "homepage": "https://github.com/vcqr/ashell",
     "targets": ["deb", "rpm", "dmg", "app", "nsis"],
     "externalBin": ["binaries/app-ai"],
     "icon": [

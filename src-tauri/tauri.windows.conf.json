@@ -3,6 +3,15 @@
     "resources": {
       "resources/conpty/bin/conpty.dll": "conpty.dll",
       "resources/conpty/bin/OpenConsole.exe": "OpenConsole.exe"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis/installer-header.bmp",
+        "sidebarImage": "icons/nsis/installer-sidebar.bmp",
+        "languages": ["SimpChinese", "English"]
+      }
     }
   }
 }
