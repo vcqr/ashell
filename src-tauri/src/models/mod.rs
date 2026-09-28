@@ -52,6 +52,9 @@ pub struct Host {
     pub private_key: Option<String>,
     /// 私钥文件路径（明文存储）；SSH 连接时由后端读取文件内容
     pub private_key_path: Option<String>,
+    /// 私钥 passphrase（数据库中以 AES-GCM 密文存储）；接口出参隐藏
+    #[serde(skip_serializing)]
+    pub key_passphrase: Option<String>,
     /// 连接协议：ssh（默认）/ telnet / serial
     pub protocol: String,
     /// 串口波特率（仅 protocol=serial）
@@ -91,6 +94,8 @@ pub struct HostCreate {
     pub desc: Option<String>,
     pub private_key: Option<String>,
     pub private_key_path: Option<String>,
+    /// 私钥 passphrase（明文入参，落库前加密；空串按未设置处理）
+    pub key_passphrase: Option<String>,
     /// 连接协议：ssh（默认）/ telnet / serial
     pub protocol: Option<String>,
     pub baud_rate: Option<i64>,
@@ -118,6 +123,9 @@ pub struct HostUpdate {
     pub desc: Option<String>,
     pub private_key: Option<String>,
     pub private_key_path: Option<String>,
+    /// 私钥 passphrase：Some("") = 清除；Some(s) = 设置；None = 不修改。
+    /// 与 password/private_key 同一套「空串即清除」语义
+    pub key_passphrase: Option<String>,
     pub protocol: Option<String>,
     pub baud_rate: Option<i64>,
     pub data_bits: Option<i64>,
@@ -170,6 +178,8 @@ pub struct HostWithGroup {
     #[serde(skip_serializing)]
     pub private_key: Option<String>,
     pub private_key_path: Option<String>,
+    #[serde(skip_serializing)]
+    pub key_passphrase: Option<String>,
     pub protocol: String,
     pub baud_rate: Option<i64>,
     pub data_bits: Option<i64>,

@@ -22,6 +22,11 @@ pub fn decrypt_credentials(key: &[u8; 32], host: &mut Host) -> AppResult<()> {
             host.private_key = Some(crypto::decrypt(key, pk)?);
         }
     }
+    if let Some(pp) = host.key_passphrase.as_deref() {
+        if !pp.is_empty() {
+            host.key_passphrase = Some(crypto::decrypt(key, pp)?);
+        }
+    }
     Ok(())
 }
 
@@ -58,10 +63,11 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
 
     let password_enc = enc_opt(key, input.password.as_deref())?;
     let pk_enc = enc_opt(key, input.private_key.as_deref())?;
+    let pp_enc = enc_opt(key, input.key_passphrase.as_deref())?;
 
     let res = sqlx::query(
-        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval, jump_host_id, connect_command)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, key_passphrase, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval, jump_host_id, connect_command)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(input.gid)
     .bind(&input.name)
@@ -74,6 +80,7 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     .bind(&input.desc)
     .bind(&pk_enc)
     .bind(&input.private_key_path)
+    .bind(&pp_enc)
     .bind(protocol)
     .bind(input.baud_rate)
     .bind(input.data_bits)
@@ -174,6 +181,28 @@ pub async fn update_password_only(
     Ok(())
 }
 
+/// 仅更新私钥 passphrase 字段（AES-256-GCM 加密落盘）。
+/// 用于终端连接时解码带口令私钥、用户选择"记住 passphrase"的场景。
+pub async fn update_key_passphrase_only(
+    pool: &DbPool,
+    key: &[u8; 32],
+    id: i64,
+    plain: &str,
+) -> AppResult<()> {
+    let enc = crypto::encrypt(key, plain)?;
+    let res = sqlx::query(
+        "UPDATE hosts SET key_passphrase = ?, updated_at = datetime('now') WHERE id = ? AND is_del = 0",
+    )
+    .bind(enc)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("host {id}")));
+    }
+    Ok(())
+}
+
 pub async fn list(pool: &DbPool, gid: Option<i64>) -> AppResult<Vec<Host>> {
     let rows = match gid {
         Some(g) => {
@@ -200,7 +229,7 @@ pub async fn list_with_group(
 ) -> AppResult<Vec<crate::models::HostWithGroup>> {
     let base = r#"
         SELECT h.id, h.gid, h.name, h.icon, h.color, h.addr, h.port, h.username,
-               h.password, h.desc, h.is_del, h.private_key, h.private_key_path,
+               h.password, h.desc, h.is_del, h.private_key, h.private_key_path, h.key_passphrase,
                h.protocol, h.baud_rate, h.data_bits, h.stop_bits, h.parity, h.flow_control,
                h.keepalive_interval, h.inactivity_timeout, h.idle_send_interval,
                h.jump_host_id, h.connect_command,
@@ -266,6 +295,11 @@ pub async fn update(
         None => cur.private_key.clone(),
     };
     let new_private_key_path = input.private_key_path;
+    let new_key_passphrase = match input.key_passphrase {
+        Some(p) if p.is_empty() => None,
+        Some(p) => Some(crypto::encrypt(key, &p)?),
+        None => cur.key_passphrase.clone(),
+    };
     let new_protocol = input.protocol.unwrap_or(cur.protocol.clone());
     let new_baud_rate = input.baud_rate.or(cur.baud_rate);
     let new_data_bits = input.data_bits.or(cur.data_bits);
@@ -304,7 +338,7 @@ pub async fn update(
     sqlx::query(
         r#"UPDATE hosts
            SET gid = ?, name = ?, icon = ?, color = ?, addr = ?, port = ?, username = ?,
-               password = ?, desc = ?, private_key = ?, private_key_path = ?,
+               password = ?, desc = ?, private_key = ?, private_key_path = ?, key_passphrase = ?,
                protocol = ?, baud_rate = ?, data_bits = ?, stop_bits = ?, parity = ?, flow_control = ?,
                keepalive_interval = ?, inactivity_timeout = ?, idle_send_interval = ?,
                jump_host_id = ?, connect_command = ?,
@@ -322,6 +356,7 @@ pub async fn update(
     .bind(&new_desc)
     .bind(&new_private_key)
     .bind(&new_private_key_path)
+    .bind(&new_key_passphrase)
     .bind(&new_protocol)
     .bind(new_baud_rate)
     .bind(new_data_bits)

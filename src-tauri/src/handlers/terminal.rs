@@ -105,6 +105,18 @@ struct AuthRequiredMsg<'a> {
     label: &'a str,
 }
 
+/// 服务端消息：私钥需要 passphrase（未设置或口令错误），请求前端弹窗输入。
+/// 前端复用 auth_response 帧应答（password 字段携带 passphrase）
+#[derive(Debug, Serialize)]
+struct PassphraseRequiredMsg<'a> {
+    kind: &'a str,
+    host_id: i64,
+    /// user@addr:port 形式的目标描述，供弹窗展示
+    label: &'a str,
+    /// 解码失败的原始原因（口令错误 / 密钥损坏等），供弹窗展示提示
+    message: &'a str,
+}
+
 /// 服务端消息：主机密钥待确认（首次连接 / 指纹变更），请求前端弹窗核对指纹
 #[derive(Debug, Serialize)]
 struct HostKeyConfirmMsg<'a> {
@@ -161,6 +173,65 @@ async fn request_new_password(
         tokio::select! {
             _ = &mut deadline => {
                 send_fatal(ws_tx, "等待输入新密码超时").await;
+                return None;
+            }
+            frame = ws_rx.next() => {
+                match frame {
+                    Some(Ok(Message::Text(text))) => {
+                        let s = text.as_str();
+                        if !(s.starts_with('{') && s.ends_with('}')) {
+                            continue;
+                        }
+                        match serde_json::from_str::<ClientMsg>(s) {
+                            Ok(ClientMsg::AuthResponse { password, remember }) => {
+                                return Some((password, remember));
+                            }
+                            Ok(ClientMsg::AuthCancel) => return None,
+                            Ok(ClientMsg::Ping) => send_pong(ws_tx).await,
+                            _ => {} // 建连阶段忽略其它输入帧
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => return None,
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => {
+                        log::warn!("ws recv error during auth: {e}");
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 认证失败后向前端请求私钥 passphrase（解码带口令的私钥）。
+///
+/// 返回 `Some((passphrase, remember))` 表示用户提交；`None` 表示用户取消、
+/// 输入超时或连接已断开。等待期间仅处理 auth 帧与心跳，忽略键盘输入。
+/// 前端复用 auth_response 帧应答（password 字段携带 passphrase）。
+async fn request_new_passphrase(
+    ws_tx: &mut SplitSink<WebSocket, Message>,
+    ws_rx: &mut SplitStream<WebSocket>,
+    host_id: i64,
+    label: &str,
+    message: &str,
+) -> Option<(String, bool)> {
+    let msg = serde_json::to_string(&PassphraseRequiredMsg {
+        kind: "passphrase_required",
+        host_id,
+        label,
+        message,
+    })
+    .ok()?;
+    if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+        return None;
+    }
+
+    let deadline = tokio::time::sleep(AUTH_INPUT_TIMEOUT);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => {
+                send_fatal(ws_tx, "等待输入 passphrase 超时").await;
                 return None;
             }
             frame = ws_rx.next() => {
@@ -704,6 +775,49 @@ async fn run_terminal(
                     None => {
                         send_fatal(&mut ws_tx, "认证已取消").await;
                         anyhow::bail!("auth cancelled by user");
+                    }
+                }
+            }
+            Err(AppError::KeyPassphraseRequired { host_id: failed_id }) => {
+                attempts += 1;
+                if attempts >= MAX_AUTH_ATTEMPTS {
+                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试").await;
+                    anyhow::bail!("ssh key passphrase failed after {attempts} attempts");
+                }
+                let is_jump = jump_host.as_ref().is_some_and(|j| j.id == failed_id);
+                let target: &mut Host = if is_jump {
+                    jump_host.as_mut().unwrap()
+                } else {
+                    &mut host
+                };
+                let label = format!("{}@{}:{}", target.username, target.addr, target.port);
+                let hint = if target.key_passphrase.is_some() {
+                    "passphrase 不正确或已变更，请重新输入"
+                } else {
+                    "该私钥已加密，请输入 passphrase"
+                };
+                match request_new_passphrase(&mut ws_tx, &mut ws_rx, failed_id, &label, hint).await
+                {
+                    Some((passphrase, remember)) => {
+                        if remember {
+                            if let Err(e) = service::host::update_key_passphrase_only(
+                                &state.db,
+                                &state.config.crypto_key,
+                                failed_id,
+                                &passphrase,
+                            )
+                            .await
+                            {
+                                log::warn!(
+                                    "save updated key passphrase for host {failed_id}: {e}"
+                                );
+                            }
+                        }
+                        target.key_passphrase = Some(passphrase);
+                    }
+                    None => {
+                        send_fatal(&mut ws_tx, "认证已取消").await;
+                        anyhow::bail!("key passphrase prompt cancelled by user");
                     }
                 }
             }

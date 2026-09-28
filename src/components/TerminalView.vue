@@ -203,6 +203,10 @@ const authPromptRetry = ref(false)
 const authPasswordInput = ref("")
 const authRememberPassword = ref(true)
 const authSubmitting = ref(false)
+/** 弹窗形态：password = 重新输入 SSH 密码；passphrase = 解码带口令私钥 */
+const authPromptMode = ref<"password" | "passphrase">("password")
+/** passphrase 模式下的原因提示（口令错误 / 密钥加密） */
+const authPromptHint = ref("")
 // 用户主动取消认证后，本轮断线不再自动重连，避免弹窗随退避反复出现
 let authCancelledByUser = false
 
@@ -212,6 +216,20 @@ function showAuthPrompt(label: string) {
     authSubmitting.value = false
     authPromptRetry.value = true
   }
+  authPromptMode.value = "password"
+  authPromptHint.value = ""
+  authPromptLabel.value = label
+  authPasswordInput.value = ""
+  authPromptVisible.value = true
+}
+
+function showPassphrasePrompt(label: string, hint: string) {
+  if (authSubmitting.value) {
+    authSubmitting.value = false
+    authPromptRetry.value = true
+  }
+  authPromptMode.value = "passphrase"
+  authPromptHint.value = hint
   authPromptLabel.value = label
   authPasswordInput.value = ""
   authPromptVisible.value = true
@@ -497,34 +515,33 @@ async function onContextMenu(e: MouseEvent) {
 }
 
 /**
- * xterm 按键预处理器：Windows/Linux 终端惯例的键盘复制粘贴。
- * - 有选区时 Ctrl+C = 复制（吞掉不发 ^C）；无选区时照常透传 SIGINT
- * - Ctrl+Shift+C = 复制；Ctrl+Shift+V = 粘贴（终端标准键位）
+ * xterm 按键预处理器：终端复制/粘贴快捷键（可在设置的「快捷键」Tab 自定义，
+ * 默认为终端惯例键位 Ctrl+Shift+C / Ctrl+Shift+V）。
+ * - 有选区时 Ctrl+C = 复制（吞掉不发 ^C）；无选区时照常透传 SIGINT（此条固定不可配，
+ *   避免与 SIGINT 语义冲突）
  * 返回 false 只让 xterm 跳过处理，不会阻止 WebView 默认行为——所以凡是
  * 被消费的分支必须显式 preventDefault()，否则原生 paste 事件会再贴一次
  * 造成内容重复。
  */
 function onTermCustomKey(ev: KeyboardEvent): boolean {
   if (ev.type !== "keydown") return true
-  if (!ev.ctrlKey || ev.metaKey || ev.altKey) return true
-  const key = ev.key.toLowerCase()
-  if (ev.shiftKey) {
-    if (key === "c") {
-      if (term?.hasSelection()) {
-        void writeClipboard(term.getSelection())
-        term.clearSelection()
-      }
-      ev.preventDefault()
-      return false
+  if (keybindingStore.recording) return true
+  // 复制 / 粘贴：按用户配置的键位匹配（null = 未绑定则透传）
+  if (matchesBinding(keybindingStore.getBinding("term.copy"), ev)) {
+    if (term?.hasSelection()) {
+      void writeClipboard(term.getSelection())
+      term.clearSelection()
     }
-    if (key === "v") {
-      ev.preventDefault()
-      void readClipboard().then(pasteToTerminal)
-      return false
-    }
-    return true
+    ev.preventDefault()
+    return false
   }
-  if (key === "c" && term?.hasSelection()) {
+  if (matchesBinding(keybindingStore.getBinding("term.paste"), ev)) {
+    ev.preventDefault()
+    void readClipboard().then(pasteToTerminal)
+    return false
+  }
+  if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return true
+  if (ev.key.toLowerCase() === "c" && term?.hasSelection()) {
     ev.preventDefault()
     void writeClipboard(term.getSelection())
     term.clearSelection()
@@ -1174,6 +1191,12 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           const m = msg as { label?: string }
           term?.writeln(`\x1b[36m[ashell] ${t("terminal.authRequiredNotice")}\x1b[0m`)
           showAuthPrompt(m.label ?? "")
+          return
+        }
+        if (msg.kind === "passphrase_required") {
+          const m = msg as { label?: string; message?: string }
+          term?.writeln(`\x1b[36m[ashell] ${t("terminal.passphraseRequiredNotice")}\x1b[0m`)
+          showPassphrasePrompt(m.label ?? "", m.message ?? "")
           return
         }
         if (msg.kind === "hostkey_confirm") {
@@ -1867,11 +1890,13 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
 
-    <!-- SSH 认证失败重试：密码过期/被修改后重新输入，可选记住新密码 -->
+    <!-- SSH 认证失败重试：密码过期/被修改后重新输入，或私钥 passphrase 输入，可选记住 -->
     <NModal
       v-model:show="authPromptVisible"
       preset="card"
-      :title="t('terminal.authPromptTitle')"
+      :title="authPromptMode === 'passphrase'
+        ? t('terminal.passphrasePromptTitle')
+        : t('terminal.authPromptTitle')"
       class="auth-prompt-modal"
       style="max-width: 440px; width: calc(100vw - 32px)"
       :mask-closable="false"
@@ -1880,21 +1905,30 @@ onBeforeUnmount(() => {
       @update:show="(v) => { if (!v) cancelAuthPrompt() }"
     >
       <div class="auth-prompt-desc">
-        {{ t('terminal.authPromptDesc', { label: authPromptLabel }) }}
+        {{ authPromptMode === 'passphrase'
+          ? t('terminal.passphrasePromptDesc', { label: authPromptLabel })
+          : t('terminal.authPromptDesc', { label: authPromptLabel }) }}
       </div>
-      <div v-if="authPromptRetry" class="auth-prompt-retry">
+      <div v-if="authPromptMode === 'passphrase' && authPromptHint" class="auth-prompt-retry">
+        {{ authPromptHint }}
+      </div>
+      <div v-else-if="authPromptRetry" class="auth-prompt-retry">
         {{ t('terminal.authPromptRetry') }}
       </div>
       <NInput
         v-model:value="authPasswordInput"
         type="password"
         show-password-on="click"
-        :placeholder="t('terminal.authPromptPlaceholder')"
+        :placeholder="authPromptMode === 'passphrase'
+          ? t('terminal.passphrasePromptPlaceholder')
+          : t('terminal.authPromptPlaceholder')"
         :disabled="authSubmitting"
         @keydown.enter.prevent="submitAuthPassword"
       />
       <NCheckbox v-model:checked="authRememberPassword" class="auth-prompt-remember">
-        {{ t('terminal.authPromptRemember') }}
+        {{ authPromptMode === 'passphrase'
+          ? t('terminal.passphrasePromptRemember')
+          : t('terminal.authPromptRemember') }}
       </NCheckbox>
       <template #footer>
         <div class="auth-prompt-actions">

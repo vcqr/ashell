@@ -456,8 +456,17 @@ impl Session {
             };
 
             if let Some(pk_str) = pk_str {
-                let key = decode_secret_key(&pk_str, None)
-                    .map_err(|e| AppError::Ssh(format!("decode private key: {e}")))?;
+                // 带口令的私钥：用已存 passphrase 解码；未设置或口令错误时解码失败，
+                // 统一转成结构化错误——终端 WS 据此发起交互式 passphrase 输入
+                //（重试次数由调用方限流），其余调用方经 IntoResponse 映射为 401
+                let passphrase = host.key_passphrase.as_deref().filter(|s| !s.is_empty());
+                let key = match decode_secret_key(&pk_str, passphrase) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        log::debug!("decode private key for host {}: {e}", host.id);
+                        return Err(AppError::KeyPassphraseRequired { host_id: host.id });
+                    }
+                };
                 let key = PrivateKeyWithHashAlg::new(Arc::new(key), None);
                 let res = handle
                     .authenticate_publickey(&host.username, key)

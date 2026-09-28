@@ -22,6 +22,11 @@ pub enum AppError {
     #[error("ssh authentication failed (host {host_id})")]
     AuthFailed { host_id: i64 },
 
+    /// SSH 私钥需要 passphrase（未设置口令或口令错误导致密钥解码失败）。
+    /// 终端 WS 据此发起交互式 passphrase 输入；REST 调用方收到 401
+    #[error("ssh private key passphrase required (host {host_id})")]
+    KeyPassphraseRequired { host_id: i64 },
+
     /// SSH 主机密钥待确认（首次连接或指纹变更）。终端 WS 走交互式确认；
     /// REST 调用方收到 409 + 结构化字段，做"确认 → 信任 → 重试"两段式流程
     #[error("host key verification required for {addr}:{port}")]
@@ -64,6 +69,7 @@ impl AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::AuthFailed { .. } => StatusCode::UNAUTHORIZED,
+            AppError::KeyPassphraseRequired { .. } => StatusCode::UNAUTHORIZED,
             AppError::HostKeyVerify { .. } => StatusCode::CONFLICT,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Sftp(msg) => {

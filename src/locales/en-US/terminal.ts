@@ -76,6 +76,13 @@ export default {
   authPromptPlaceholder: "New password",
   authPromptRemember: "Remember new password and update host config",
   authPromptConfirm: "Reconnect",
+  passphraseRequiredNotice:
+    "The SSH private key requires a passphrase (not set or incorrect). Enter it in the dialog.",
+  passphrasePromptTitle: "Private Key Passphrase",
+  passphrasePromptDesc:
+    "The private key for {label} is encrypted. Enter its passphrase to continue.",
+  passphrasePromptPlaceholder: "Private key passphrase",
+  passphrasePromptRemember: "Remember passphrase and update host config",
   hostKeyNotice: "Host key needs confirmation. Verify the fingerprint in the dialog.",
   hostKeyTitle: "Verify Host Fingerprint",
   hostKeyDesc: "First connection to {label}. Verify the host key fingerprint presented by the server.",

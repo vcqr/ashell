@@ -350,6 +350,18 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v12: hosts 增加密钥 passphrase 字段（AES-GCM 加密落盘，供解码带口令的私钥）
+    if current < 12 {
+        sqlx::query("ALTER TABLE hosts ADD COLUMN key_passphrase TEXT")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (12)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -358,7 +370,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 11;
+    const LATEST_VERSION: i64 = 12;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")
@@ -515,10 +527,10 @@ mod tests {
         assert_eq!(row.get::<String, _>("username"), "admin");
         assert_eq!(row.get::<String, _>("password"), "old-cipher");
 
-        // v2+ 新增列可写（v2 private_key_path、v3 protocol、v9 jump_host_id）
+        // v2+ 新增列可写（v2 private_key_path、v3 protocol、v9 jump_host_id、v12 key_passphrase）
         sqlx::query(
             "UPDATE hosts SET private_key_path = '/tmp/id_ed25519', protocol = 'ssh', \
-             jump_host_id = 3 WHERE id = 1",
+             jump_host_id = 3, key_passphrase = 'enc-passphrase' WHERE id = 1",
         )
         .execute(&pool)
         .await
@@ -530,6 +542,13 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(proto, "ssh");
+
+        let pp: String =
+            sqlx::query_scalar("SELECT key_passphrase FROM hosts WHERE id = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(pp, "enc-passphrase");
 
         pool.close().await;
     }

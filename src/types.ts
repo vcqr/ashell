@@ -41,6 +41,8 @@ export interface Host {
   is_del: number
   /** 私钥文件路径（明文存储，前端可见） */
   private_key_path?: string | null
+  /** 是否已配置私钥 passphrase（后端不回传内容，仅用于表单展示判断可省） */
+  key_passphrase?: string | null
   /** 连接协议：ssh（默认）/ telnet / serial */
   protocol: HostProtocol
   /** 串口波特率（仅 protocol=serial） */
@@ -85,6 +87,8 @@ export interface HostCreate {
   desc?: string | null
   private_key?: string | null
   private_key_path?: string | null
+  /** 私钥 passphrase（明文入参，后端加密落盘；空串按未设置处理） */
+  key_passphrase?: string | null
   protocol?: HostProtocol
   baud_rate?: number | null
   data_bits?: number | null
@@ -110,6 +114,8 @@ export interface HostUpdate {
   desc?: string | null
   private_key?: string | null
   private_key_path?: string | null
+  /** 私钥 passphrase（明文入参，后端加密落盘）；编辑表单仅在有输入时发送，缺省 = 不修改 */
+  key_passphrase?: string | null
   protocol?: HostProtocol
   baud_rate?: number | null
   data_bits?: number | null

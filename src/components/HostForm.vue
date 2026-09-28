@@ -55,6 +55,8 @@ interface FormState {
   password: string
   private_key: string
   private_key_path: string
+  /** 私钥 passphrase（编辑态后端不回传，留空表示不修改） */
+  key_passphrase: string
   /** NSelect clearable 清除后值为 null */
   icon: string | null
   color: string
@@ -83,6 +85,7 @@ function makeInitial(): FormState {
     password: "",
     private_key: "",
     private_key_path: init?.private_key_path ?? "",
+    key_passphrase: "",
     icon: init?.icon ?? "",
     color: init?.color ?? "",
     desc: init?.desc ?? "",
@@ -281,6 +284,7 @@ async function submit() {
       password: emptyToNull(form.password),
       private_key: emptyToNull(form.private_key),
       private_key_path: emptyToNull(form.private_key_path),
+      key_passphrase: emptyToNull(form.key_passphrase),
       icon: emptyToNull(form.icon),
       color: emptyToNull(form.color),
       desc: emptyToNull(form.desc),
@@ -324,6 +328,8 @@ async function submit() {
     if (form.password.length > 0) payload.password = form.password
     if (form.private_key.length > 0) payload.private_key = form.private_key
     payload.private_key_path = emptyToNull(form.private_key_path)
+    // passphrase 与密码同语义：留空 = 不修改；有输入 = 更新
+    if (form.key_passphrase.length > 0) payload.key_passphrase = form.key_passphrase
     emit("submit", payload)
   }
 }
@@ -535,6 +541,19 @@ function onOpPasswordDone() {
                       {{ t("hosts.form.clearFile") }}
                     </NButton>
                   </NInputGroup>
+                </NFormItem>
+
+                <NFormItem :label="t('hosts.form.keyPassphrase')" path="key_passphrase">
+                  <NInput
+                    v-model:value="form.key_passphrase"
+                    type="password"
+                    show-password-on="click"
+                    :placeholder="
+                      props.mode === 'edit'
+                        ? t('hosts.form.keyPassphrasePlaceholderEdit')
+                        : t('hosts.form.keyPassphrasePlaceholder')
+                    "
+                  />
                 </NFormItem>
               </template>
             </template>
