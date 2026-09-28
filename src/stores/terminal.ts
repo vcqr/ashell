@@ -463,6 +463,11 @@ export const useTerminalStore = defineStore("terminal", () => {
     fontSize.value = clampFontSize(n)
   }
 
+  /** 恢复默认字号（快捷键 font.zoomReset 使用） */
+  function resetFontSize() {
+    fontSize.value = DEFAULT_CONFIG.fontSize
+  }
+
   function resetTerminalTheme(name: TerminalThemeName) {
     Object.assign(name === "dark" ? darkTheme : lightTheme, defaultTerminalTheme(name))
   }
@@ -656,5 +661,6 @@ export const useTerminalStore = defineStore("terminal", () => {
     exportThemeJson,
     getActiveTerminalTheme,
     setFontSize,
+    resetFontSize,
   }
 })

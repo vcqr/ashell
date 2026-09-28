@@ -150,8 +150,13 @@ export default {
     reset: "Reset",
     resetAll: "Reset All",
     resetAllConfirm: "Reset all shortcuts to their default bindings?",
+    conflictTitle: "Shortcut conflict",
+    conflictContent:
+      "{key} is already bound to \"{action}\". Bind it to the current action anyway? The previous binding will be removed.",
+    conflictOverwrite: "Overwrite",
     category: {
       tabs: "Tabs",
+      terminal: "Terminal",
       search: "Search",
       panels: "Panels",
     },
@@ -162,6 +167,15 @@ export default {
         next: "Next tab",
         prev: "Previous tab",
         jump: "Jump to tab N (1-9)",
+      },
+      term: {
+        copy: "Copy terminal selection",
+        paste: "Paste into terminal",
+      },
+      font: {
+        zoomIn: "Increase terminal font size",
+        zoomOut: "Decrease terminal font size",
+        zoomReset: "Reset terminal font size",
       },
       search: {
         toggle: "Toggle search bar",
@@ -377,6 +391,8 @@ export default {
     testFailed: "Connection failed: {error}",
     operationTitle: "Backup Operations",
     credentialHint: "Host passwords and private keys are backed up in encrypted form and can only be restored on this machine.",
+    scopeHint:
+      "Backups include: hosts and groups, AI providers and engines, app settings, quick phrases, command templates, command history, plus UI preferences such as keybindings, terminal config, themes and panel layout.",
     pwdBackupTitle: "Set Backup Password",
     pwdBackupHint: "This password encrypts the backup file, including decrypted host credentials. Keep it safe — it cannot be recovered if lost.",
     pwdExportTitle: "Set Export Password",

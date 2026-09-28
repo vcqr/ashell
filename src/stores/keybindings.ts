@@ -16,6 +16,11 @@ export type ShortcutActionId =
   | "tab.next"
   | "tab.prev"
   | "tab.jump"
+  | "term.copy"
+  | "term.paste"
+  | "font.zoomIn"
+  | "font.zoomOut"
+  | "font.zoomReset"
   | "search.toggle"
   | "panel.hosts"
   | "panel.settings"
@@ -27,7 +32,7 @@ export type ShortcutActionId =
   | "panel.template"
   | "panel.activityBar";
 
-export type ShortcutCategory = "tabs" | "search" | "panels";
+export type ShortcutCategory = "tabs" | "terminal" | "search" | "panels";
 
 export interface ShortcutActionDef {
   id: ShortcutActionId;
@@ -78,6 +83,46 @@ export const SHORTCUT_ACTIONS: ShortcutActionDef[] = [
     defaults: {
       mac: { key: "digit", ctrl: false, meta: true, shift: false, alt: false },
       win: { key: "digit", ctrl: true, meta: false, shift: false, alt: true },
+    },
+  },
+  {
+    id: "term.copy",
+    category: "terminal",
+    defaults: {
+      mac: { key: "c", ctrl: true, meta: false, shift: true, alt: false },
+      win: { key: "c", ctrl: true, meta: false, shift: true, alt: false },
+    },
+  },
+  {
+    id: "term.paste",
+    category: "terminal",
+    defaults: {
+      mac: { key: "v", ctrl: true, meta: false, shift: true, alt: false },
+      win: { key: "v", ctrl: true, meta: false, shift: true, alt: false },
+    },
+  },
+  {
+    id: "font.zoomIn",
+    category: "terminal",
+    defaults: {
+      mac: { key: "=", ctrl: false, meta: true, shift: false, alt: false },
+      win: { key: "=", ctrl: true, meta: false, shift: false, alt: false },
+    },
+  },
+  {
+    id: "font.zoomOut",
+    category: "terminal",
+    defaults: {
+      mac: { key: "-", ctrl: false, meta: true, shift: false, alt: false },
+      win: { key: "-", ctrl: true, meta: false, shift: false, alt: false },
+    },
+  },
+  {
+    id: "font.zoomReset",
+    category: "terminal",
+    defaults: {
+      mac: { key: "0", ctrl: false, meta: true, shift: false, alt: false },
+      win: { key: "0", ctrl: true, meta: false, shift: false, alt: false },
     },
   },
   {
@@ -225,6 +270,28 @@ export function matchesBinding(
   const bk = binding.key.toLowerCase();
   if (bk === "digit") return /^[1-9]$/.test(key);
   return key === bk;
+}
+
+/**
+ * 判断两个绑定是否为同一组合键（key 与四个修饰键一致）。
+ * key 比对是 digit 感知的：存储态 "digit"（tab.jump 的归一化形态）与
+ * 录制态的任意数字 1-9 视为同一组合键，双向成立。
+ */
+export function sameBinding(a: KeyBinding | null, b: KeyBinding | null): boolean {
+  if (!a || !b) return false;
+  if (
+    a.ctrl !== b.ctrl ||
+    a.meta !== b.meta ||
+    a.shift !== b.shift ||
+    a.alt !== b.alt
+  ) {
+    return false;
+  }
+  const ak = a.key.toLowerCase();
+  const bk = b.key.toLowerCase();
+  if (bk === "digit") return /^[1-9]$/.test(ak);
+  if (ak === "digit") return /^[1-9]$/.test(bk);
+  return ak === bk;
 }
 
 /** Format a binding into display segments (e.g., ["⌘", "T"] or ["Ctrl", "Shift", "W"]). */

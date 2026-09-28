@@ -98,6 +98,26 @@ export function useGlobalShortcuts(deps: GlobalShortcutDeps) {
     // ---- 标签页快捷键（受 tabShortcutsEnabled 门控） ----
     if (!terminalStore.tabShortcutsEnabled) return;
 
+    // ---- 终端字号快捷键（同样受门控：透传模式下 Ctrl/Cmd 组合全部交给 shell） ----
+    if (matchesBinding(keybindingStore.getBinding("font.zoomIn"), e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      terminalStore.setFontSize(terminalStore.fontSize + 1);
+      return;
+    }
+    if (matchesBinding(keybindingStore.getBinding("font.zoomOut"), e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      terminalStore.setFontSize(terminalStore.fontSize - 1);
+      return;
+    }
+    if (matchesBinding(keybindingStore.getBinding("font.zoomReset"), e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      terminalStore.resetFontSize();
+      return;
+    }
+
     // 新建 tab：忽略按住重复（否则连开一串 tab）
     if (matchesBinding(keybindingStore.getBinding("tab.new"), e)) {
       if (e.repeat) return;

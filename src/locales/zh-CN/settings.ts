@@ -149,8 +149,13 @@ export default {
     reset: "重置",
     resetAll: "全部重置",
     resetAllConfirm: "确定重置全部快捷键为默认键位吗？",
+    conflictTitle: "快捷键冲突",
+    conflictContent:
+      "组合键 {key} 已绑定到「{action}」，仍要绑定到当前项吗？原绑定将被移除。",
+    conflictOverwrite: "覆盖",
     category: {
       tabs: "标签页",
+      terminal: "终端",
       search: "搜索",
       panels: "面板",
     },
@@ -161,6 +166,15 @@ export default {
         next: "下一个标签",
         prev: "上一个标签",
         jump: "跳转到标签 N (1-9)",
+      },
+      term: {
+        copy: "复制终端选中文本",
+        paste: "粘贴到终端",
+      },
+      font: {
+        zoomIn: "终端字号增大",
+        zoomOut: "终端字号减小",
+        zoomReset: "终端字号重置",
       },
       search: {
         toggle: "切换搜索浮层",
@@ -375,6 +389,8 @@ export default {
     testFailed: "连接失败：{error}",
     operationTitle: "备份操作",
     credentialHint: "主机密码和私钥以本机加密形式备份，仅限当前机器恢复。",
+    scopeHint:
+      "备份包含：主机与分组、AI 供应商与引擎、应用设置、常用短语、命令模板、命令历史，以及键位、终端配置、主题、面板布局等界面偏好。",
     pwdBackupTitle: "设置备份密码",
     pwdBackupHint: "此密码用于加密备份文件，包含解密后的主机凭证。请妥善保管，遗忘密码将无法恢复。",
     pwdExportTitle: "设置导出密码",

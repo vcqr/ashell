@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from "vue";
-import { NButton, NTag, NSpace, NPopconfirm } from "naive-ui";
+import { NButton, NTag, NSpace, NPopconfirm, useDialog } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import {
   useKeybindingStore,
   SHORTCUT_ACTIONS,
   formatBinding,
+  sameBinding,
   type ShortcutActionId,
   type ShortcutCategory,
   type ShortcutActionDef,
@@ -14,6 +15,7 @@ import {
 
 const { t } = useI18n();
 const store = useKeybindingStore();
+const dialog = useDialog();
 
 const recordingId = ref<ShortcutActionId | null>(null);
 
@@ -24,6 +26,10 @@ const categories: {
   {
     id: "tabs",
     actions: SHORTCUT_ACTIONS.filter((a) => a.category === "tabs"),
+  },
+  {
+    id: "terminal",
+    actions: SHORTCUT_ACTIONS.filter((a) => a.category === "terminal"),
   },
   {
     id: "panels",
@@ -45,26 +51,36 @@ function handleRecord(id: ShortcutActionId) {
   store.recording = true;
 }
 
+function applyBinding(id: ShortcutActionId, binding: KeyBinding) {
+  store.setBinding(id, binding);
+  recordingId.value = null;
+  store.recording = false;
+}
+
+function cancelRecording() {
+  recordingId.value = null;
+  store.recording = false;
+}
+
 function onRecordKeydown(e: KeyboardEvent) {
   if (!recordingId.value) return;
   e.preventDefault();
   e.stopPropagation();
 
   if (e.key === "Escape") {
-    recordingId.value = null;
-    store.recording = false;
+    cancelRecording();
     return;
   }
 
   if (e.key === "Backspace" || e.key === "Delete") {
     store.setBinding(recordingId.value, null);
-    recordingId.value = null;
-    store.recording = false;
+    cancelRecording();
     return;
   }
 
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
 
+  const target = recordingId.value;
   const binding: KeyBinding = {
     key: e.key.toLowerCase(),
     ctrl: e.ctrlKey,
@@ -73,9 +89,33 @@ function onRecordKeydown(e: KeyboardEvent) {
     alt: e.altKey,
   };
 
-  store.setBinding(recordingId.value, binding);
-  recordingId.value = null;
-  store.recording = false;
+  // 冲突检测：同一组合键已绑到其他 action 时弹窗确认覆盖，
+  // 避免录制后"先匹配者赢"导致原 action 静默失效
+  const conflict = SHORTCUT_ACTIONS.find(
+    (a) => a.id !== target && sameBinding(store.getBinding(a.id), binding),
+  );
+  if (conflict) {
+    dialog.warning({
+      title: t("settings.shortcuts.conflictTitle"),
+      content: t("settings.shortcuts.conflictContent", {
+        action: t(`settings.shortcuts.action.${conflict.id}`),
+        key: formatBinding(binding).join(" + "),
+      }),
+      positiveText: t("settings.shortcuts.conflictOverwrite"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => {
+        // 覆盖语义：原 action 让出该组合键（置为未设置），避免"先匹配者赢"静默失效
+        store.setBinding(conflict.id, null);
+        applyBinding(target, binding);
+      },
+      onClose: cancelRecording,
+      onNegativeClick: cancelRecording,
+      onMaskClick: cancelRecording,
+    });
+    return;
+  }
+
+  applyBinding(target, binding);
 }
 
 onMounted(() => {
@@ -84,8 +124,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onRecordKeydown, true);
-  recordingId.value = null;
-  store.recording = false;
+  cancelRecording();
 });
 </script>
 
