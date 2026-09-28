@@ -25,6 +25,10 @@ import {
 import { useI18n } from "vue-i18n";
 import { openTextFile, saveTextFile } from "@/utils/fileInterop";
 import {
+  collectFrontendPrefs,
+  applyFrontendPrefs,
+} from "@/utils/backupPrefs";
+import {
   getBackupConfig,
   saveBackupConfig,
   testBackupConnection,
@@ -36,6 +40,7 @@ import {
   restoreBackup,
   type BackupConfig,
   type BackupItem,
+  type RestoredBackup,
 } from "@/api/backup";
 
 const { t } = useI18n();
@@ -173,6 +178,19 @@ function getCommandHistory(): string[] {
   return [];
 }
 
+/** 把恢复结果写回本地：命令历史 + 前端偏好快照（刷新后由各 store 重新加载） */
+function applyRestored(result: RestoredBackup) {
+  try {
+    localStorage.setItem(
+      "ashell-command-history",
+      JSON.stringify(result.command_history),
+    );
+  } catch {
+    // ignore
+  }
+  applyFrontendPrefs(result.frontend_prefs);
+}
+
 async function handleBackup() {
   try {
     const password = await requestPassword(
@@ -181,7 +199,7 @@ async function handleBackup() {
     );
     backing.value = true;
     const commandHistory = getCommandHistory();
-    await createBackup(commandHistory, password);
+    await createBackup(commandHistory, collectFrontendPrefs(), password);
     message.success(t("settings.backup.backupSuccess"));
     await loadBackups();
   } catch (e) {
@@ -207,7 +225,7 @@ async function handleExport() {
     );
     exporting.value = true;
     const commandHistory = getCommandHistory();
-    const result = await exportBackup(commandHistory, password);
+    const result = await exportBackup(commandHistory, collectFrontendPrefs(), password);
     const now = new Date();
     const ts = now.toISOString().replace(/[:.]/g, "").slice(0, -1);
     const savedPath = await saveTextFile(`ashell-backup-${ts}.json`, result.content);
@@ -231,14 +249,7 @@ async function handleImport() {
     );
     importing.value = true;
     const result = await importBackup(content, password);
-    try {
-      localStorage.setItem(
-        "ashell-command-history",
-        JSON.stringify(result.command_history),
-      );
-    } catch {
-      // ignore
-    }
+    applyRestored(result);
     message.success(t("settings.backup.restoreSuccess"));
     setTimeout(() => window.location.reload(), 1500);
   } catch (e) {
@@ -256,14 +267,7 @@ async function handleRestore(key: string) {
     );
     restoring.value = true;
     const result = await restoreBackup(key, password);
-    try {
-      localStorage.setItem(
-        "ashell-command-history",
-        JSON.stringify(result.command_history),
-      );
-    } catch {
-      // ignore
-    }
+    applyRestored(result);
     message.success(t("settings.backup.restoreSuccess"));
     setTimeout(() => window.location.reload(), 1500);
   } catch (e) {
@@ -347,6 +351,8 @@ function formatTime(timestamp: string): string {
       </div>
 
       <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.backup.operationTitle") }}</div>
+      <p class="settings-hint">{{ t("settings.backup.scopeHint") }}</p>
+      <p class="settings-hint">{{ t("settings.backup.credentialHint") }}</p>
       <div class="form-row" style="margin-top: 12px">
         <NButton type="primary" size="small" :loading="backing" @click="handleBackup">
           <template #icon><NIcon><CloudUploadOutline /></NIcon></template>

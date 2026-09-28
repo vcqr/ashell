@@ -61,6 +61,10 @@ struct BackupData {
     quick_phrases: Vec<serde_json::Value>,
     command_templates: Vec<serde_json::Value>,
     command_history: Vec<String>,
+    /// 前端偏好快照（键位、终端设置、主题、布局等 localStorage 白名单键），
+    /// 由前端收集/回放，后端仅透传。旧版本备份缺省该字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    frontend_prefs: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -168,6 +172,7 @@ fn decrypt_credentials(data: &mut BackupData, crypto_key: &[u8; 32]) -> AppResul
         if let Some(obj) = host.as_object_mut() {
             decrypt_field(obj, "password", crypto_key)?;
             decrypt_field(obj, "private_key", crypto_key)?;
+            decrypt_field(obj, "key_passphrase", crypto_key)?;
         }
     }
     for provider in &mut data.ai_providers {
@@ -184,6 +189,7 @@ fn encrypt_credentials(data: &mut BackupData, crypto_key: &[u8; 32]) -> AppResul
         if let Some(obj) = host.as_object_mut() {
             encrypt_field(obj, "password", crypto_key);
             encrypt_field(obj, "private_key", crypto_key);
+            encrypt_field(obj, "key_passphrase", crypto_key);
         }
     }
     for provider in &mut data.ai_providers {
@@ -415,6 +421,7 @@ async fn dump_table(pool: &DbPool, table: &str) -> AppResult<Vec<serde_json::Val
 async fn build_backup_data(
     pool: &DbPool,
     command_history: Vec<String>,
+    frontend_prefs: Option<serde_json::Value>,
 ) -> AppResult<BackupData> {
     Ok(BackupData {
         groups: dump_table(pool, "groups").await?,
@@ -425,6 +432,7 @@ async fn build_backup_data(
         quick_phrases: dump_table(pool, "quick_phrases").await?,
         command_templates: dump_table(pool, "command_templates").await?,
         command_history,
+        frontend_prefs,
     })
 }
 
@@ -495,16 +503,25 @@ async fn restore_table_tx(
 
 // ── Public API ──
 
+/// 恢复/导入的返回：命令历史 + 前端偏好快照（由前端写回 localStorage 后刷新生效）
+#[derive(Serialize)]
+pub struct RestoredBackup {
+    pub command_history: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontend_prefs: Option<serde_json::Value>,
+}
+
 pub async fn create_backup(
     pool: &DbPool,
     crypto_key: &[u8; 32],
     cfg: &BackupConfig,
     command_history: Vec<String>,
+    frontend_prefs: Option<serde_json::Value>,
     password: String,
 ) -> AppResult<String> {
     let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
 
-    let mut data = build_backup_data(pool, command_history).await?;
+    let mut data = build_backup_data(pool, command_history, frontend_prefs).await?;
     decrypt_credentials(&mut data, crypto_key)?;
 
     let backup = BackupFile {
@@ -551,11 +568,12 @@ pub async fn export_backup(
     pool: &DbPool,
     crypto_key: &[u8; 32],
     command_history: Vec<String>,
+    frontend_prefs: Option<serde_json::Value>,
     password: String,
 ) -> AppResult<String> {
     let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
 
-    let mut data = build_backup_data(pool, command_history).await?;
+    let mut data = build_backup_data(pool, command_history, frontend_prefs).await?;
     decrypt_credentials(&mut data, crypto_key)?;
 
     let backup = BackupFile {
@@ -614,7 +632,7 @@ pub async fn restore_backup(
     cfg: &BackupConfig,
     key: &str,
     password: &str,
-) -> AppResult<Vec<String>> {
+) -> AppResult<RestoredBackup> {
     let bucket = create_bucket(cfg)?;
     let response = bucket
         .get_object(key)
@@ -650,7 +668,10 @@ pub async fn restore_backup(
 
     tx.commit().await?;
 
-    Ok(data.command_history)
+    Ok(RestoredBackup {
+        command_history: data.command_history,
+        frontend_prefs: data.frontend_prefs,
+    })
 }
 
 pub async fn import_backup(
@@ -658,7 +679,7 @@ pub async fn import_backup(
     crypto_key: &[u8; 32],
     content: &str,
     password: &str,
-) -> AppResult<Vec<String>> {
+) -> AppResult<RestoredBackup> {
     let json = decrypt_with_password(content, password)?;
 
     let mut backup: BackupFile = serde_json::from_str(&json)
@@ -679,7 +700,10 @@ pub async fn import_backup(
 
     tx.commit().await?;
 
-    Ok(data.command_history)
+    Ok(RestoredBackup {
+        command_history: data.command_history,
+        frontend_prefs: data.frontend_prefs,
+    })
 }
 
 #[cfg(test)]
@@ -743,17 +767,19 @@ mod tests {
     }
 
     /// 库 A 导出 -> 库 B 导入：业务数据完整、凭证用库 B 的密钥重新加密、
-    /// 命令历史原样返回。这是"换机恢复"的完整链路。
+    /// 命令历史原样返回、前端偏好快照透明往返。这是"换机恢复"的完整链路。
     #[tokio::test]
     async fn export_import_roundtrip_across_devices() {
         let dir = tempfile::tempdir().unwrap();
         let pool_a = setup_db(&dir.path().join("a.db")).await;
         seed_data(&pool_a, &crypto_key_a()).await;
 
+        let prefs = serde_json::json!({ "ashell:keybindings": { "tab.new": null } });
         let exported = export_backup(
             &pool_a,
             &crypto_key_a(),
             vec!["df -h".into(), "top".into()],
+            Some(prefs.clone()),
             "backup-pass".into(),
         )
         .await
@@ -765,11 +791,15 @@ mod tests {
 
         // 另一台设备（不同的本地凭证密钥）导入
         let pool_b = setup_db(&dir.path().join("b.db")).await;
-        let history = import_backup(&pool_b, &crypto_key_b(), &exported, "backup-pass")
+        let restored = import_backup(&pool_b, &crypto_key_b(), &exported, "backup-pass")
             .await
             .unwrap();
 
-        assert_eq!(history, vec!["df -h".to_string(), "top".to_string()]);
+        assert_eq!(
+            restored.command_history,
+            vec!["df -h".to_string(), "top".to_string()]
+        );
+        assert_eq!(restored.frontend_prefs, Some(prefs));
 
         // 业务数据完整
         assert_eq!(host_count(&pool_b).await, 1);
@@ -812,7 +842,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pool_a = setup_db(&dir.path().join("a.db")).await;
         seed_data(&pool_a, &crypto_key_a()).await;
-        let exported = export_backup(&pool_a, &crypto_key_a(), Vec::new(), "pw".into())
+        let exported = export_backup(&pool_a, &crypto_key_a(), Vec::new(), None, "pw".into())
             .await
             .unwrap();
 
@@ -841,10 +871,15 @@ mod tests {
         let pool = setup_db(&dir.path().join("a.db")).await;
         seed_data(&pool, &crypto_key_a()).await;
 
-        let exported =
-            export_backup(&pool, &crypto_key_a(), Vec::new(), "correct-horse".into())
-                .await
-                .unwrap();
+        let exported = export_backup(
+            &pool,
+            &crypto_key_a(),
+            Vec::new(),
+            None,
+            "correct-horse".into(),
+        )
+        .await
+        .unwrap();
 
         let pool_b = setup_db(&dir.path().join("b.db")).await;
         let key = crypto_key_a();
@@ -859,10 +894,9 @@ mod tests {
     async fn tampered_export_fails() {
         let dir = tempfile::tempdir().unwrap();
         let pool = setup_db(&dir.path().join("a.db")).await;
-        let exported =
-            export_backup(&pool, &crypto_key_a(), Vec::new(), "pw".into())
-                .await
-                .unwrap();
+        let exported = export_backup(&pool, &crypto_key_a(), Vec::new(), None, "pw".into())
+            .await
+            .unwrap();
 
         // 篡改密文中间一个字符
         let mut chars: Vec<char> = exported.chars().collect();

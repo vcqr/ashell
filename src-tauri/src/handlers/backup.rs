@@ -68,6 +68,9 @@ pub async fn test_connection(
 #[derive(Deserialize)]
 pub struct CreateBackupInput {
     pub command_history: Vec<String>,
+    /// 前端偏好快照（键位/终端设置/主题等 localStorage 白名单键），后端透传存储
+    #[serde(default)]
+    pub frontend_prefs: Option<serde_json::Value>,
     pub password: String,
 }
 
@@ -81,6 +84,7 @@ pub async fn create_backup(
         &s.config.crypto_key,
         &cfg,
         input.command_history,
+        input.frontend_prefs,
         input.password,
     )
     .await?;
@@ -95,9 +99,14 @@ pub async fn export_backup(
     State(s): State<AppState>,
     Json(input): Json<CreateBackupInput>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    let content =
-        backup::export_backup(&s.db, &s.config.crypto_key, input.command_history, input.password)
-            .await?;
+    let content = backup::export_backup(
+        &s.db,
+        &s.config.crypto_key,
+        input.command_history,
+        input.frontend_prefs,
+        input.password,
+    )
+    .await?;
     Ok(Json(ApiResponse {
         code: 0,
         message: "ok".into(),
@@ -124,13 +133,16 @@ pub async fn restore_backup(
     Json(input): Json<RestoreInput>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let cfg = backup::load_config()?;
-    let command_history =
+    let restored =
         backup::restore_backup(&s.db, &s.config.crypto_key, &cfg, &input.key, &input.password)
             .await?;
     Ok(Json(ApiResponse {
         code: 0,
         message: "ok".into(),
-        data: Some(serde_json::json!({ "command_history": command_history })),
+        data: Some(serde_json::json!({
+            "command_history": restored.command_history,
+            "frontend_prefs": restored.frontend_prefs,
+        })),
     }))
 }
 
@@ -144,13 +156,16 @@ pub async fn import_backup(
     State(s): State<AppState>,
     Json(input): Json<ImportInput>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    let command_history =
+    let restored =
         backup::import_backup(&s.db, &s.config.crypto_key, &input.content, &input.password)
             .await?;
     Ok(Json(ApiResponse {
         code: 0,
         message: "ok".into(),
-        data: Some(serde_json::json!({ "command_history": command_history })),
+        data: Some(serde_json::json!({
+            "command_history": restored.command_history,
+            "frontend_prefs": restored.frontend_prefs,
+        })),
     }))
 }
 
