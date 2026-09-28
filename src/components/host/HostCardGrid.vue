@@ -111,26 +111,25 @@ function onMousedown(e: MouseEvent) {
         </span>
         <span class="host-addr">
           <span class="host-addr-text">{{ hostAddrLine(node) }}</span>
-          <span v-if="node.protocol && node.protocol !== 'ssh'" class="host-proto">
-            {{ node.protocol }}
-          </span>
         </span>
       </span>
-      <NIcon
-        v-if="isPinned(node) && !batchMode"
-        class="host-pin"
-        :size="12"
-        color="#7c5cff"
-      >
-        <PushpinFilled />
-      </NIcon>
-      <NCheckbox
-        v-else-if="batchMode"
-        class="host-check"
-        :checked="isChecked(node)"
-        @update:checked="() => emit('toggle-check', node.key)"
-        @click.stop
-      />
+      <!-- 右上角角标组:协议徽标 + 置顶图钉 / 批量勾选框。
+           协议徽标不占地址行宽度,保证 user@addr:port 完整显示 -->
+      <span class="host-tags">
+        <span v-if="node.protocol && node.protocol !== 'ssh'" class="host-proto">
+          {{ node.protocol }}
+        </span>
+        <NIcon v-if="isPinned(node) && !batchMode" :size="12" color="#7c5cff">
+          <PushpinFilled />
+        </NIcon>
+        <NCheckbox
+          v-else-if="batchMode"
+          class="host-check"
+          :checked="isChecked(node)"
+          @update:checked="() => emit('toggle-check', node.key)"
+          @click.stop
+        />
+      </span>
     </div>
   </div>
 </template>
@@ -138,7 +137,7 @@ function onMousedown(e: MouseEvent) {
 <style scoped>
 .host-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 8px;
   padding: 4px;
   outline: none;
@@ -205,7 +204,7 @@ function onMousedown(e: MouseEvent) {
 
 .host-card:hover::before {
   transform: translateX(130%);
-  transition: transform 0.45s ease;
+  transition: transform 0.6s ease;
 }
 
 .host-card:focus-visible {
@@ -308,6 +307,16 @@ function onMousedown(e: MouseEvent) {
   text-overflow: ellipsis;
 }
 
+/* 右上角角标组:协议徽标 + 图钉/勾选框 */
+.host-tags {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .host-proto {
   flex-shrink: 0;
   font-size: 10px;
@@ -316,17 +325,5 @@ function onMousedown(e: MouseEvent) {
   border-radius: 4px;
   color: var(--ashell-text-muted);
   background: var(--ashell-hover);
-}
-
-.host-pin {
-  position: absolute;
-  top: 6px;
-  right: 7px;
-}
-
-.host-check {
-  position: absolute;
-  top: 6px;
-  right: 7px;
 }
 </style>
