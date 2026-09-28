@@ -36,6 +36,32 @@ export function deleteHost(id: number): Promise<void> {
   return request<void>(`/api/hosts/${id}`, { method: 'DELETE' })
 }
 
+/** 批量删除：被批量外主机作为跳板机引用的成员跳过并报告（referrer = 引用方名） */
+export interface BatchDeleteSkipped {
+  id: number
+  name: string
+  referrer: string
+}
+
+export interface BatchDeleteResult {
+  deleted: number
+  skipped: BatchDeleteSkipped[]
+}
+
+export function batchDeleteHosts(ids: number[]): Promise<BatchDeleteResult> {
+  return request<BatchDeleteResult>('/api/hosts/batch-delete', {
+    method: 'POST',
+    json: { ids },
+  })
+}
+
+export function batchMoveHosts(ids: number[], gid: number): Promise<{ moved: number }> {
+  return request<{ moved: number }>('/api/hosts/batch-move', {
+    method: 'POST',
+    json: { ids, gid },
+  })
+}
+
 /** 从 ~/.ssh/config 解析主机列表 */
 export function listSshConfigHosts(): Promise<SshConfigHost[]> {
   return request<SshConfigHost[]>('/api/hosts/ssh-config')

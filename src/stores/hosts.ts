@@ -8,9 +8,12 @@ import {
 } from '@/api/groups'
 import {
   createHost,
+  batchDeleteHosts,
+  batchMoveHosts,
   deleteHost,
   listHostsWithGroup,
   updateHost,
+  type BatchDeleteResult,
 } from '@/api/hosts'
 import type {
   Group,
@@ -246,6 +249,20 @@ export const useHostStore = defineStore('hosts', () => {
     await refresh()
   }
 
+  /** 批量删除：返回删除数与被跳过成员（跳板机引用冲突，前端据此提示） */
+  async function removeHosts(ids: number[]): Promise<BatchDeleteResult> {
+    const r = await batchDeleteHosts(ids)
+    await refresh()
+    return r
+  }
+
+  /** 批量移动到目标目录（gid=0 为根），返回实际移动台数 */
+  async function moveHosts(ids: number[], gid: number): Promise<number> {
+    const r = await batchMoveHosts(ids, gid)
+    await refresh()
+    return r.moved
+  }
+
   return {
     groups,
     hosts,
@@ -261,6 +278,8 @@ export const useHostStore = defineStore('hosts', () => {
     addHost,
     editHost,
     removeHost,
+    removeHosts,
+    moveHosts,
     isHostPinned,
     togglePinHost,
     hostSortMode,

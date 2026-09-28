@@ -80,6 +80,12 @@ pub fn build_router(state: AppState) -> Router {
         )
         // 从 ~/.ssh/config 导入主机
         .route("/api/hosts/ssh-config", get(handlers::host::ssh_config))
+        // 主机批量操作
+        .route(
+            "/api/hosts/batch-delete",
+            post(handlers::host::batch_delete),
+        )
+        .route("/api/hosts/batch-move", post(handlers::host::batch_move))
         // 查看主机加密凭证（需操作密码验证）
         .route("/api/hosts/{id}/reveal", post(handlers::host::reveal))
         // SSH 终端 WebSocket

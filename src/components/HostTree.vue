@@ -38,6 +38,7 @@ import {
   LinkOutline,
   SwapVerticalOutline,
   CheckmarkOutline,
+  CheckboxOutline,
 } from "@vicons/ionicons5"
 import { Folder, FolderOpen } from "@vicons/fa"
 import { FolderAddOutlined, PushpinFilled, PushpinOutlined } from "@vicons/antd"
@@ -584,6 +585,8 @@ function nodeProps({ option }: { option: TreeOption }) {
     },
     onPointerdown(e: PointerEvent) {
       if (e.button !== 0) return
+      // 批量管理模式下禁用拖拽（勾选语义优先，避免拖动与勾选互相干扰）
+      if (batchMode.value) return
       // 平铺视图没有可见目录，落点语义不成立，禁用拖拽归组
       if (flatMode.value) return
       const node = findNode(key)
@@ -684,6 +687,11 @@ function onTreeKeydown(e: KeyboardEvent) {
     openRename(node)
   } else if (e.key === "Delete") {
     e.preventDefault()
+    // 批量模式下 Delete 删勾选集（多选语义），单选语义让位
+    if (batchMode.value && checkedCount.value > 0) {
+      confirmBatchDelete()
+      return
+    }
     confirmDelete(node)
   }
 }
@@ -1009,6 +1017,121 @@ function revealKey(key: string) {
   selectedKeys.value = [key]
 }
 
+/* ---------- 批量管理：勾选主机后批量连接 / 移动 / 删除 ---------- */
+
+const batchMode = ref(false)
+/** NTree checkable 的勾选键（cascade：勾目录=子孙全中，目录本身不算主机） */
+const checkedKeys = ref<string[]>([])
+const batchMoveOpen = ref(false)
+const batchMoveTarget = ref<number>(0)
+const batchSubmitting = ref(false)
+
+watch(batchMode, (v) => {
+  if (!v) checkedKeys.value = []
+})
+
+/** 勾选集中的主机 id（只取 host-* 键） */
+const checkedHostIds = computed(() =>
+  checkedKeys.value
+    .filter((k) => k.startsWith("host-"))
+    .map((k) => Number(k.slice(5)))
+    .filter((n) => Number.isFinite(n)),
+)
+const checkedCount = computed(() => checkedHostIds.value.length)
+
+function selectAllHosts() {
+  checkedKeys.value = collectHosts(store.tree).map((h) => h.key)
+}
+
+function clearChecked() {
+  checkedKeys.value = []
+}
+
+/** 批量连接：全部以新会话打开（与右键"新建会话"同语义），逐台错峰触发。
+ *  不能同帧连开：后开的 tab 处于未激活态（容器 display:none）无法 fit，
+ *  会以 xterm 默认 80 列建连；用户切到该 tab 时列数变化触发远端 SIGWINCH，
+ *  对慢启动 shell（macOS zsh）会把 cwd 注入行在 ZLE 里 pending 的窗口内
+ *  反复重绘，击穿后端回显剥离预算后注入行回显可见（折行残影）。
+ *  逐台等本 tab 完成 挂载→fit→建连 再开下一台，每台都以真实列数建连。 */
+const batchConnecting = ref(false)
+
+async function batchConnect() {
+  if (checkedCount.value === 0 || batchConnecting.value) return
+  batchConnecting.value = true
+  try {
+    const nodes = checkedHostIds.value
+      .map((id) => findNode(`host-${id}`))
+      .filter((n): n is HostNode => !!n && n.type === "host")
+    let opened = 0
+    for (const n of nodes) {
+      emit("open-host", n, true)
+      opened++
+      if (opened < nodes.length) {
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+    message.success(t("hosts.message.batchConnectOpened", { count: opened }))
+  } finally {
+    batchConnecting.value = false
+  }
+}
+
+function openBatchMove() {
+  if (checkedCount.value === 0) return
+  batchMoveTarget.value = 0
+  batchMoveOpen.value = true
+}
+
+async function submitBatchMove() {
+  const ids = checkedHostIds.value
+  if (ids.length === 0) return
+  batchSubmitting.value = true
+  try {
+    const moved = await store.moveHosts(ids, batchMoveTarget.value)
+    batchMoveOpen.value = false
+    const folderName =
+      batchMoveTarget.value === 0
+        ? t("hosts.message.rootDir")
+        : (store.findGroup(batchMoveTarget.value)?.name ?? `#${batchMoveTarget.value}`)
+    message.success(t("hosts.message.batchMoved", { count: moved, target: folderName }))
+    clearChecked()
+  } catch (e) {
+    message.error(t("hosts.message.moveFailed", { error: String(e) }))
+  } finally {
+    batchSubmitting.value = false
+  }
+}
+
+function confirmBatchDelete() {
+  const ids = checkedHostIds.value
+  if (ids.length === 0) return
+  dialog.warning({
+    title: t("hosts.message.deleteTitle"),
+    content: t("hosts.message.batchDeleteConfirm", { count: ids.length }),
+    positiveText: t("common.delete"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: async () => {
+      try {
+        const r = await store.removeHosts(ids)
+        if (r.skipped.length === 0) {
+          message.success(t("hosts.message.batchDeleted", { count: r.deleted }))
+        } else {
+          const names = r.skipped.map((s) => `${s.name} ← ${s.referrer}`).join(", ")
+          message.warning(
+            t("hosts.message.batchDeletePartial", {
+              deleted: r.deleted,
+              skipped: names,
+            }),
+          )
+        }
+        clearChecked()
+      } catch (e) {
+        message.error(t("hosts.message.deleteFailed", { error: String(e) }))
+      }
+    },
+  })
+}
+
 function newFolderAtSelection() {
   openCreateFolder(resolveSelectedFolderGid())
 }
@@ -1062,6 +1185,22 @@ async function onRefresh() {
             </NButton>
           </template>
           {{ t("hosts.tree.newFolder") }}
+        </NTooltip>
+        <NTooltip>
+          <template #trigger>
+            <NButton
+              size="small"
+              quaternary
+              circle
+              :type="batchMode ? 'primary' : 'default'"
+              @click="batchMode = !batchMode"
+            >
+              <template #icon>
+                <NIcon :size="20"><CheckboxOutline /></NIcon>
+              </template>
+            </NButton>
+          </template>
+          {{ batchMode ? t("hosts.tree.batchExit") : t("hosts.tree.batchMode") }}
         </NTooltip>
         <NTooltip>
           <template #trigger>
@@ -1150,6 +1289,45 @@ async function onRefresh() {
       </NInput>
     </div>
 
+    <!-- 批量管理操作条 -->
+    <div v-if="batchMode" class="batch-bar">
+      <NButton size="tiny" quaternary @click="selectAllHosts">
+        {{ t("hosts.tree.batchSelectAll") }}
+      </NButton>
+      <NButton size="tiny" quaternary :disabled="checkedCount === 0" @click="clearChecked">
+        {{ t("hosts.tree.batchClear") }}
+      </NButton>
+      <span class="batch-count">
+        {{ t("hosts.tree.batchCount", { count: checkedCount }) }}
+      </span>
+      <div class="batch-actions">
+        <NButton
+          size="tiny"
+          type="primary"
+          :disabled="checkedCount === 0"
+          :loading="batchConnecting"
+          @click="batchConnect"
+        >
+          {{ t("hosts.tree.batchConnect") }}
+        </NButton>
+        <NButton size="tiny" :disabled="checkedCount === 0" @click="openBatchMove">
+          {{ t("hosts.tree.batchMove") }}
+        </NButton>
+        <NButton
+          size="tiny"
+          type="error"
+          secondary
+          :disabled="checkedCount === 0"
+          @click="confirmBatchDelete"
+        >
+          {{ t("hosts.tree.batchDelete") }}
+        </NButton>
+        <NButton size="tiny" quaternary @click="batchMode = false">
+          {{ t("hosts.tree.batchExit") }}
+        </NButton>
+      </div>
+    </div>
+
     <div
       ref="treeBodyEl"
       class="tree-body"
@@ -1200,12 +1378,15 @@ async function onRefresh() {
           :render-suffix="renderSuffix"
           :node-props="nodeProps"
           :selectable="true"
+          :checkable="batchMode"
+          :checked-keys="checkedKeys"
           key-field="key"
           label-field="label"
           children-field="children"
           style="height: 100%"
           @update:selected-keys="(k: string[]) => (selectedKeys = k)"
           @update:expanded-keys="onUpdateExpandedKeys"
+          @update:checked-keys="(k: string[]) => (checkedKeys = k)"
         />
       </div>
     </div>
@@ -1316,6 +1497,45 @@ async function onRefresh() {
       </NCard>
     </NModal>
 
+    <!-- 批量移动：选目标目录 -->
+    <NModal v-model:show="batchMoveOpen" :mask-closable="false">
+      <NCard
+        style="width: 420px"
+        :title="t('hosts.tree.batchMoveDialog', { count: checkedCount })"
+        size="small"
+        :bordered="false"
+        role="dialog"
+        aria-modal="true"
+      >
+        <NFormItem :label="t('hosts.tree.batchMoveTarget')" :show-feedback="false">
+          <NTreeSelect
+            v-model:value="batchMoveTarget"
+            :options="folderSelectOptions"
+            key-field="key"
+            label-field="label"
+            children-field="children"
+            default-expand-all
+            :consistent-menu-width="false"
+            :placeholder="t('hosts.tree.parentDirPlaceholder')"
+          />
+        </NFormItem>
+        <template #footer>
+          <NSpace justify="end">
+            <NButton :disabled="batchSubmitting" @click="batchMoveOpen = false">
+              {{ t("hosts.tree.cancel") }}
+            </NButton>
+            <NButton
+              type="primary"
+              :loading="batchSubmitting"
+              @click="submitBatchMove"
+            >
+              {{ t("hosts.tree.move") }}
+            </NButton>
+          </NSpace>
+        </template>
+      </NCard>
+    </NModal>
+
     <SshConfigImportModal v-model:show="importModalShow" />
   </div>
 </template>
@@ -1327,6 +1547,30 @@ async function onRefresh() {
   height: 100%;
   padding: 12px;
   gap: 10px;
+}
+
+/* 批量管理操作条：勾选统计 + 批量动作 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--ashell-hover);
+}
+
+.batch-count {
+  font-size: 12px;
+  color: var(--ashell-text-muted, #98a2b3);
+  white-space: nowrap;
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 
 .tree-header {

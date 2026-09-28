@@ -403,3 +403,109 @@ pub async fn delete(pool: &DbPool, id: i64) -> AppResult<()> {
     }
     Ok(())
 }
+
+/// 批量删除结果：deleted = 实际删除数；skipped = 因被批量外主机作为跳板机引用而跳过的成员
+#[derive(Debug, serde::Serialize)]
+pub struct BatchDeleteSkipped {
+    pub id: i64,
+    pub name: String,
+    /// 引用方主机名（前端据此组 i18n 文案）
+    pub referrer: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BatchDeleteResult {
+    pub deleted: u64,
+    pub skipped: Vec<BatchDeleteSkipped>,
+}
+
+/// 批量软删除。与单删的差异：引用方也在批量内时一并删除、互相不阻止；
+/// 被批量外的主机引用的成员跳过并在结果中报告。
+pub async fn delete_many(pool: &DbPool, ids: &[i64]) -> AppResult<BatchDeleteResult> {
+    if ids.is_empty() {
+        return Ok(BatchDeleteResult {
+            deleted: 0,
+            skipped: Vec::new(),
+        });
+    }
+
+    // 目标集合（仅存在的未删除主机）
+    let mut qb = sqlx::QueryBuilder::new("SELECT * FROM hosts WHERE is_del = 0 AND id IN (");
+    let mut sep = qb.separated(", ");
+    for id in ids {
+        sep.push_bind(id);
+    }
+    qb.push(")");
+    let targets: Vec<Host> = qb.build_query_as::<Host>().fetch_all(pool).await?;
+    let batch: std::collections::HashSet<i64> = targets.iter().map(|h| h.id).collect();
+
+    // 引用检查：jump_host_id 指向批量内成员的记录；引用方在批量内则一并删除
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT id, name, jump_host_id FROM hosts WHERE is_del = 0 AND jump_host_id IN (",
+    );
+    let mut sep = qb.separated(", ");
+    for id in ids {
+        sep.push_bind(id);
+    }
+    qb.push(")");
+    let referrers = qb.build().fetch_all(pool).await?;
+    use sqlx::Row;
+    let mut skipped: std::collections::HashMap<i64, BatchDeleteSkipped> = std::collections::HashMap::new();
+    for row in referrers {
+        let referrer_name: String = row.try_get("name")?;
+        let target_id: i64 = row.try_get("jump_host_id")?;
+        if batch.contains(&target_id) {
+            continue;
+        }
+        skipped
+            .entry(target_id)
+            .or_insert_with(|| BatchDeleteSkipped {
+                id: target_id,
+                name: targets
+                    .iter()
+                    .find(|h| h.id == target_id)
+                    .map(|h| h.name.clone())
+                    .unwrap_or_else(|| format!("#{}", target_id)),
+                referrer: referrer_name,
+            });
+    }
+
+    let mut deleted = 0u64;
+    for h in &targets {
+        if skipped.contains_key(&h.id) {
+            continue;
+        }
+        let res = sqlx::query(
+            "UPDATE hosts SET is_del = 1, updated_at = datetime('now') WHERE id = ? AND is_del = 0",
+        )
+        .bind(h.id)
+        .execute(pool)
+        .await?;
+        deleted += res.rows_affected();
+    }
+
+    Ok(BatchDeleteResult {
+        deleted,
+        skipped: skipped.into_values().collect(),
+    })
+}
+
+/// 批量移动到目标目录（gid=0 为根）。返回实际移动的台数。
+pub async fn move_many(pool: &DbPool, ids: &[i64], gid: i64) -> AppResult<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    if gid != 0 {
+        ensure_group_exists(pool, gid).await?;
+    }
+    let mut qb = sqlx::QueryBuilder::new("UPDATE hosts SET gid = ");
+    qb.push_bind(gid);
+    qb.push(", updated_at = datetime('now') WHERE is_del = 0 AND id IN (");
+    let mut sep = qb.separated(", ");
+    for id in ids {
+        sep.push_bind(id);
+    }
+    qb.push(")");
+    let res = qb.build().execute(pool).await?;
+    Ok(res.rows_affected())
+}

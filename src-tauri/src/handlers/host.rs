@@ -61,6 +61,40 @@ pub async fn delete(
     Ok(ok_msg("deleted"))
 }
 
+#[derive(Deserialize)]
+pub struct BatchIdsRequest {
+    pub ids: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct BatchMoveRequest {
+    pub ids: Vec<i64>,
+    /// 目标目录 id；0 = 根目录
+    pub gid: i64,
+}
+
+/// `POST /api/hosts/batch-delete`：批量软删除。
+/// 被批量外主机作为跳板机引用的成员跳过并在 skipped 中报告（含引用方名）。
+pub async fn batch_delete(
+    State(s): State<AppState>,
+    Json(req): Json<BatchIdsRequest>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let r = service::host::delete_many(&s.db, &req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "deleted": r.deleted,
+        "skipped": r.skipped,
+    })))
+}
+
+/// `POST /api/hosts/batch-move`：批量移动到目标目录（gid=0 为根）。
+pub async fn batch_move(
+    State(s): State<AppState>,
+    Json(req): Json<BatchMoveRequest>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let moved = service::host::move_many(&s.db, &req.ids, req.gid).await?;
+    Ok(ApiResponse::ok(serde_json::json!({ "moved": moved })))
+}
+
 /// 解析 ~/.ssh/config，返回可导入的主机列表
 pub async fn ssh_config() -> AppResult<Json<ApiResponse<Vec<SshConfigHost>>>> {
     let hosts = service::ssh_config::parse_ssh_config()
