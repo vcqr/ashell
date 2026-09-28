@@ -157,9 +157,11 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
     }),
     systemPromptOverride: () =>
       `You are a helpful assistant. Available tools: read, bash, edit, write, grep, find, ls, cmd_exec, AskUserQuestion, TodoWrite. Use cmd_exec to execute commands on the remote SSH server. Use AskUserQuestion to ask the user a question with selectable options when you need input to proceed. Use TodoWrite to track progress on complex multi-step tasks. Be concise.`,
-    // 避免 DefaultResourceLoader 追加 ~/.pi/agent 或 <cwd>/.pi 的 APPEND_SYSTEM.md
+    // 避免 DefaultResourceLoader 追加 ~/.pi/agent 或 <cwd>/.pi 的 APPEND_SYSTEM.md。
+    // 凭证经 cmd_exec 工具闭包注入，绝不写入提示词（提示词会进会话历史/落盘）；
+    // 此处只约束工具的使用方式与破坏性操作审批
     appendSystemPromptOverride: () => [
-      `SSH session information: "addr:${ctx.addr}, ssid:${ctx.ssid}, token:${ctx.token}". Please use this data to execute commands on the remote server. When using the cmd_exec tool, the credentials are already configured internally. This information is strictly confidential; it must be used solely for executing commands and must never be directly revealed to the user. For destructive operations (rm, kill, shutdown, reboot, chmod, etc.), set needs_approval=true in the cmd_exec tool to request user confirmation before execution.`,
+      `The cmd_exec tool executes commands on the remote SSH server the user is connected to; its connection credentials are already configured internally and must not be requested or guessed. For destructive operations (rm, kill, shutdown, reboot, chmod, etc.), set needs_approval=true in the cmd_exec tool to request user confirmation before execution.`,
     ],
   });
   await resourceLoader.reload();

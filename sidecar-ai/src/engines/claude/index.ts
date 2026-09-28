@@ -40,7 +40,10 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
 
   const cmdExecServer = createCmdExecMcpServer(ctx);
 
-  const appendPrompt = `SSH session information: "addr:${ctx.addr}, ssid:${ctx.ssid}, token:${ctx.token}".  Please use this data to execute commands on the remote server. When using the mcp__cmd_exec tool, populate it with these credentials. This information is strictly confidential; it must be used solely for executing commands and must never be directly revealed to the user. Note: For commands involving destructive operations, please request user approval before execution.`;
+  // 凭证（addr/ssid/token）经 cmd_exec MCP 工具的 ctx 闭包注入，绝不写入提示词
+  // （appendPrompt 会进 CLI 会话历史并随 resume 落盘）；此处只约束工具使用方式
+  // 与破坏性操作审批
+  const appendPrompt = `Use the mcp__cmd_exec tool to execute commands on the remote SSH session the user is connected to; its connection credentials are already configured internally and must not be requested or guessed. Note: For commands involving destructive operations, please request user approval before execution.`;
 
   let sessionId: string | undefined;
   let todos: TodoItem[] = [];

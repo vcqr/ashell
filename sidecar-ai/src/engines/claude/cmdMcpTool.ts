@@ -5,20 +5,20 @@ import type { EngineContext } from "../types";
 
 /**
  * cmd_exec MCP 工具（in-process server）：向当前 SSH 会话注入命令并回收输出。
- * addr/ssid/token 由系统提示词下发给模型，模型调用时回填（保持 sidecar-cc 原有契约）。
+ * addr/ssid/token 经 ctx 闭包注入（不进模型上下文/CLI transcript），
+ * 模型只提供命令与输出收集窗口。
  */
 export function createCmdExecMcpServer(ctx: EngineContext) {
   const cmdExec = tool(
     "exec",
-    "Execute a command",
+    "Execute a command on the remote SSH session",
     {
-      addr: z.string().describe("address of the server to send the command to"),
-      ssid: z.string().describe("session id"),
-      token: z.string().describe("token"),
       cmd: z.string().describe("The command to execute"),
       wait_ms: z
         .number()
-        .describe("Time to wait before executing the command, in milliseconds")
+        .describe(
+          "Output collection window after sending the command, in milliseconds (default 500)",
+        )
         .optional(),
     },
     async (args) => {

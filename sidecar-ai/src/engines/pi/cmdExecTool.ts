@@ -23,7 +23,8 @@ export function createCmdExecTool(
       cmd: Type.String({ description: "The command to execute on the remote server" }),
       wait_ms: Type.Optional(
         Type.Number({
-          description: "Time to wait before executing the command, in milliseconds",
+          description:
+            "Output collection window after sending the command, in milliseconds (default 500)",
         }),
       ),
       needs_approval: Type.Optional(
