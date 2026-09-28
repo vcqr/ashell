@@ -51,6 +51,7 @@ import { getApiInfo } from "@/api/client";
 import { openAiInNewWindow } from "@/utils/newWindow";
 import { parseModelIds } from "@/composables/useAiConfig";
 import { useAiPin } from "@/composables/useAiPin";
+import { useDrawerWidth } from "@/composables/useDrawerWidth";
 
 const props = defineProps<{
   open: boolean;
@@ -198,58 +199,12 @@ function attentionSetup() {
   setupPulseTimer = setTimeout(() => (setupPulse.value = false), 1500);
 }
 
-const MIN_WIDTH = 320;
-const DEFAULT_WIDTH = 420;
-// Drag cap: 90% of viewport width so the panel never fully covers the main view
-function getMaxWidth(): number {
-  return Math.round(window.innerWidth * 0.9);
-}
-const WIDTH_KEY = "ashell:ai-width";
-
-function loadWidth(): number {
-  const raw =
-    typeof localStorage !== "undefined"
-      ? localStorage.getItem(WIDTH_KEY)
-      : null;
-  const n = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(n)) return DEFAULT_WIDTH;
-  return Math.min(getMaxWidth(), Math.max(MIN_WIDTH, n));
-}
-
-function saveWidth(v: number) {
-  try {
-    localStorage.setItem(WIDTH_KEY, String(v));
-  } catch {
-    // ignore
-  }
-}
-
-const width = ref<number>(loadWidth());
-const resizing = ref(false);
-
-function onResizeStart(e: PointerEvent) {
-  e.preventDefault();
-  resizing.value = true;
-  window.addEventListener("pointermove", onResizeMove);
-  window.addEventListener("pointerup", onResizeEnd);
-  window.addEventListener("pointercancel", onResizeEnd);
-}
-
-function onResizeMove(e: PointerEvent) {
-  const next = Math.round(window.innerWidth - e.clientX);
-  width.value = Math.min(getMaxWidth(), Math.max(MIN_WIDTH, next));
-}
-
-function onResizeEnd() {
-  if (!resizing.value) return;
-  resizing.value = false;
-  saveWidth(width.value);
-  window.removeEventListener("pointermove", onResizeMove);
-  window.removeEventListener("pointerup", onResizeEnd);
-  window.removeEventListener("pointercancel", onResizeEnd);
-}
-
-onBeforeUnmount(onResizeEnd);
+// 抽屉宽度拖拽：记忆/拖动/上限接线统一在 useDrawerWidth（右缘锚定）
+const { width, resizing, onResizeStart } = useDrawerWidth({
+  storageKey: "ashell:ai-width",
+  minWidth: 320,
+  defaultWidth: 420,
+});
 
 /** 固定（停靠）态：主内容区让位并排显示，切 tab / 开其他面板不自动收起 */
 const aiPinned = useAiPin();

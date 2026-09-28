@@ -100,6 +100,7 @@ import {
 } from "@/api/local"
 import { openSftpInNewWindow } from "@/utils/newWindow"
 import { useFileDrag } from "@/composables/useFileDrag"
+import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import { useMultiSelect } from "@/composables/useMultiSelect"
 
 interface Props {
@@ -942,91 +943,167 @@ function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** 经 webview 下载单个文件到本机（下载任务 + 进度 + 取消 + 失败重试）。
- *  run 与 retry 闭包复用同一任务对象：重试时重置状态并换新 controller。 */
-async function downloadViaBrowser(file: SftpFile) {
-  if (!props.sid) return
-  const sid = props.sid
+/** 传输任务统一规格 */
+interface TransferTaskSpec {
+  kind: "upload" | "download"
+  sid: string
+  /** 任务列表展示名（下载=远端来源路径，上传=远端目标路径） */
+  filename: string
+  /** 列表展示用远端目录（原逻辑各通道各自指定） */
+  remoteDir?: string
+  total: number
+  /** Rust 进程内直传：无浏览器字节流，进度按 taskId 轮询后端计数器 */
+  poll?: boolean
+  /** 传输体。signal 用于取消；onProgress 接浏览器流式进度；返回实际字节数（可选） */
+  transfer: (ctx: {
+    taskId: string
+    signal: AbortSignal
+    onProgress: (loaded: number, total: number) => void
+  }) => Promise<number | void>
+  /** 成功聚合 toast（单文件通道；目录树批量通道不弹逐文件 toast） */
+  okToast?: {
+    group: string
+    text: () => string
+    textMulti: (n: number) => string
+  }
+  /** 失败聚合 toast（单文件通道；文案按 kind 取统一 i18n 键） */
+  failToast?: boolean
+  /** 成功后附加动作（刷新列表等；在状态置 done 后执行） */
+  onDone?: () => void | Promise<void>
+  /** 单次尝试结束（批量通道借此维护 ok/fail 计数；error 与 cancelled 都计入失败） */
+  onSettled?: (status: "done" | "error" | "cancelled") => void
+  /** 重试前回调（批量通道冲回失败计数） */
+  onRetry?: () => void
+}
+
+/** 传输任务统一工厂：任务登记 + 进度态 + 取消/失败重试接线。
+ *  六条传输通道（浏览器下载 / 双栏直落本地 / 目录树下载 / 单文件上传 /
+ *  本地直传 / 目录树上传）此前各自复制一份
+ *  「genId + AbortController + run/retry 闭包 + 状态冲回」样板，收敛于此：
+ *  重试复用同一任务对象并换新 controller，传输体只描述"怎么传"。 */
+function runTransferTask(spec: TransferTaskSpec): Promise<void> {
+  const sid = spec.sid
   const taskId = genId()
-  const total0 = file.size_bytes ?? 0
   let ctrl = new AbortController()
+  const update = spec.kind === "upload" ? store.updateUpload : store.updateDownload
+  const add = spec.kind === "upload" ? store.addUpload : store.addDownload
+  const failGroup = spec.kind === "download" ? "download-err" : "upload-err"
+  const failText = (error: string) =>
+    spec.kind === "download"
+      ? t("sftp.message.downloadFailed", { error })
+      : t("sftp.message.uploadFailed", { error })
+  const failTextMulti = (n: number) =>
+    spec.kind === "download"
+      ? t("sftp.message.downloadFailedMulti", { count: n })
+      : t("sftp.message.uploadFailedMulti", { count: n })
+
   const run = async (): Promise<void> => {
-    store.updateDownload(sid, taskId, {
+    update(sid, taskId, {
       loaded: 0,
-      total: total0,
+      total: spec.total,
       status: "running",
       error: undefined,
       controller: ctrl,
     })
+    const stopPolling = spec.poll
+      ? pollDirectTransferProgress(spec.kind, sid, taskId, spec.total)
+      : () => {}
+    let status: "done" | "error" | "cancelled" = "done"
     try {
-      const { blob, contentLength, suggestedFilename } = await downloadStream(
-        sid,
-        file.full_path,
-        {
-          signal: ctrl.signal,
-          onProgress: (loaded, total) => {
-            store.updateDownload(sid, taskId, {
-              loaded,
-              total: total > 0 ? total : loaded,
-            })
-          },
+      const bytes = await spec.transfer({
+        taskId,
+        signal: ctrl.signal,
+        onProgress: (loaded, total) => {
+          update(sid, taskId, { loaded, total: total > 0 ? total : loaded })
         },
-      )
-      const total = contentLength > 0 ? contentLength : blob.size
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = suggestedFilename || file.file_name
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      store.updateDownload(sid, taskId, {
-        loaded: blob.size,
-        total,
-        status: "done",
       })
-      coalescedToast(
-        "download-ok",
-        () =>
-          message.success(
-            t("sftp.message.downloaded", {
-              name: suggestedFilename || file.file_name,
-            }),
-          ),
-        (n) => message.success(t("sftp.message.downloadedMulti", { count: n })),
-      )
-    } catch (e) {
-      if (isAbortError(e)) {
-        store.updateDownload(sid, taskId, { status: "cancelled" })
-      } else {
-        const err = e as Error
-        store.updateDownload(sid, taskId, { status: "error", error: err.message })
+      const doneBytes = typeof bytes === "number" ? bytes : spec.total
+      const finalTotal = doneBytes > 0 ? doneBytes : spec.total
+      update(sid, taskId, { loaded: finalTotal, total: finalTotal, status: "done" })
+      if (spec.okToast) {
+        const ok = spec.okToast
         coalescedToast(
-          "download-err",
-          () =>
-            message.error(t("sftp.message.downloadFailed", { error: err.message })),
-          (n) =>
-            message.warning(t("sftp.message.downloadFailedMulti", { count: n })),
+          ok.group,
+          () => message.success(ok.text()),
+          (n) => message.success(ok.textMulti(n)),
         )
       }
+      await spec.onDone?.()
+    } catch (e) {
+      if (isAbortError(e)) {
+        status = "cancelled"
+        update(sid, taskId, { status: "cancelled" })
+      } else {
+        status = "error"
+        const err = e as Error
+        update(sid, taskId, { status: "error", error: err.message })
+        if (spec.failToast) {
+          coalescedToast(
+            failGroup,
+            () => message.error(failText(err.message)),
+            (n) => message.warning(failTextMulti(n)),
+          )
+        }
+      }
+    } finally {
+      stopPolling()
+      spec.onSettled?.(status)
     }
   }
-  store.addDownload(sid, {
+  add(sid, {
     id: taskId,
     sid,
-    filename: file.full_path,
-    total: total0,
+    filename: spec.filename,
+    remoteDir: spec.remoteDir,
+    total: spec.total,
     loaded: 0,
     status: "running",
     controller: ctrl,
     startedAt: Date.now(),
     retry: () => {
       ctrl = new AbortController()
+      spec.onRetry?.()
       void run()
     },
   })
-  await run()
+  return run()
+}
+
+/** 经 webview 下载单个文件到本机（下载任务 + 进度 + 取消 + 失败重试）。
+ *  任务登记/重试接线由 runTransferTask 统一处理。 */
+async function downloadViaBrowser(file: SftpFile) {
+  if (!props.sid) return
+  const sid = props.sid
+  // 保存对话框建议名在传输完成后才确定；toast 文案在 onProgress 之后触发，回读即可
+  let savedName = file.file_name
+  await runTransferTask({
+    kind: "download",
+    sid,
+    filename: file.full_path,
+    total: file.size_bytes ?? 0,
+    transfer: async ({ signal, onProgress }) => {
+      const { blob, suggestedFilename } = await downloadStream(sid, file.full_path, {
+        signal,
+        onProgress,
+      })
+      savedName = suggestedFilename || file.file_name
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = savedName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      return blob.size
+    },
+    okToast: {
+      group: "download-ok",
+      text: () => t("sftp.message.downloaded", { name: savedName }),
+      textMulti: (n) => t("sftp.message.downloadedMulti", { count: n }),
+    },
+    failToast: true,
+  })
 }
 
 function confirmDownload(content: string): Promise<boolean> {
@@ -1199,69 +1276,31 @@ async function onDownloadMulti(files: SftpFile[]) {
 /** 双栏模式：远端文件直落本地栏当前目录（Rust 进程内流式写盘，含失败重试） */
 async function downloadToLocalDir(file: SftpFile) {
   if (!props.sid) return
-  const sid = props.sid
   const targetDir = localDir.value
   if (!targetDir) return
-  const taskId = genId()
-  const total0 = file.size_bytes ?? 0
-  let ctrl = new AbortController()
-  const run = async (): Promise<void> => {
-    store.updateDownload(sid, taskId, {
-      loaded: 0,
-      total: total0,
-      status: "running",
-      error: undefined,
-      controller: ctrl,
-    })
-    const stopPolling = pollDirectTransferProgress("download", sid, taskId, total0)
-    try {
-      const { bytes } = await downloadToLocal(sid, file.full_path, targetDir, {
-        signal: ctrl.signal,
-        taskId,
-      })
-      const total = bytes > 0 ? bytes : total0
-      store.updateDownload(sid, taskId, { loaded: total, total, status: "done" })
-      coalescedToast(
-        "downloadto-ok",
-        () => message.success(t("sftp.message.downloadedTo", { dir: targetDir })),
-        (n) =>
-          message.success(t("sftp.message.downloadedToMulti", { count: n })),
-      )
-      localPaneRef.value?.refresh()
-    } catch (e) {
-      if (isAbortError(e)) {
-        store.updateDownload(sid, taskId, { status: "cancelled" })
-      } else {
-        const err = e as Error
-        store.updateDownload(sid, taskId, { status: "error", error: err.message })
-        coalescedToast(
-          "download-err",
-          () =>
-            message.error(t("sftp.message.downloadFailed", { error: err.message })),
-          (n) =>
-            message.warning(t("sftp.message.downloadFailedMulti", { count: n })),
-        )
-      }
-    } finally {
-      stopPolling()
-    }
-  }
-  store.addDownload(sid, {
-    id: taskId,
+  const sid = props.sid
+  await runTransferTask({
+    kind: "download",
     sid,
     filename: file.full_path,
     remoteDir: currentPath.value,
-    total: total0,
-    loaded: 0,
-    status: "running",
-    controller: ctrl,
-    startedAt: Date.now(),
-    retry: () => {
-      ctrl = new AbortController()
-      void run()
+    total: file.size_bytes ?? 0,
+    poll: true,
+    transfer: async ({ signal, taskId }) => {
+      const { bytes } = await downloadToLocal(sid, file.full_path, targetDir, {
+        signal,
+        taskId,
+      })
+      return bytes
     },
+    okToast: {
+      group: "downloadto-ok",
+      text: () => t("sftp.message.downloadedTo", { dir: targetDir }),
+      textMulti: (n) => t("sftp.message.downloadedToMulti", { count: n }),
+    },
+    failToast: true,
+    onDone: () => localPaneRef.value?.refresh(),
   })
-  await run()
 }
 
 /** 递归收集远程目录树为文件清单（rel 相对顶层目录）。
@@ -1305,69 +1344,34 @@ async function downloadRemoteDirTree(dirRow: SftpFile) {
   let okCount = 0
   let failCount = 0
 
-  /** 单个文件的下载任务（retry 复用同一任务对象） */
-  async function runEntry(ent: { rel: string; file: SftpFile }): Promise<void> {
+  /** 单个文件的下载任务（retry 复用同一任务对象，冲回失败计数） */
+  function runEntry(ent: { rel: string; file: SftpFile }): Promise<void> {
     const relDir = ent.rel.includes("/")
       ? ent.rel.slice(0, ent.rel.lastIndexOf("/"))
       : ""
     const targetDir = `${dirBase}/${topName}${relDir ? `/${relDir}` : ""}`
-    const taskId = genId()
-    const total = ent.file.size_bytes ?? 0
-    let ctrl = new AbortController()
-    const run = async (): Promise<void> => {
-      store.updateDownload(sid, taskId, {
-        loaded: 0,
-        total,
-        status: "running",
-        error: undefined,
-        controller: ctrl,
-      })
-      const stopPolling = pollDirectTransferProgress("download", sid, taskId, total)
-      try {
-        const { bytes } = await downloadToLocal(
-          sid,
-          ent.file.full_path,
-          targetDir,
-          {
-            signal: ctrl.signal,
-            taskId,
-          },
-        )
-        const done = bytes > 0 ? bytes : total
-        store.updateDownload(sid, taskId, { loaded: done, total, status: "done" })
-        okCount++
-      } catch (e) {
-        if (isAbortError(e)) {
-          store.updateDownload(sid, taskId, { status: "cancelled" })
-        } else {
-          store.updateDownload(sid, taskId, {
-            status: "error",
-            error: (e as Error).message,
-          })
-        }
-        failCount++
-      } finally {
-        stopPolling()
-      }
-    }
-    store.addDownload(sid, {
-      id: taskId,
+    return runTransferTask({
+      kind: "download",
       sid,
       filename: ent.file.full_path,
       remoteDir: dirRow.full_path,
-      total,
-      loaded: 0,
-      status: "running",
-      controller: ctrl,
-      startedAt: Date.now(),
-      retry: () => {
-        // 重试成功时把上次记的失败数冲回（重跑 run 会再次计数）
-        ctrl = new AbortController()
+      total: ent.file.size_bytes ?? 0,
+      poll: true,
+      transfer: async ({ signal, taskId }) =>
+        (
+          await downloadToLocal(sid, ent.file.full_path, targetDir, {
+            signal,
+            taskId,
+          })
+        ).bytes,
+      onSettled: (status) => {
+        if (status === "done") okCount++
+        else failCount++
+      },
+      onRetry: () => {
         failCount--
-        void run()
       },
     })
-    await run()
   }
 
   for (const ent of list) {
@@ -1411,59 +1415,23 @@ async function onLocalUpload(sel: SftpFile[]) {
   }
 
   // 单个本地文件的直传任务（retry 复用同一任务对象）
-  async function runFileUpload(f: SftpFile): Promise<void> {
+  function runFileUpload(f: SftpFile): Promise<void> {
     const remotePath = joinPath(currentPath.value, f.file_name)
-    const taskId = genId()
-    const total = f.size_bytes ?? 0
-    let ctrl = new AbortController()
-    const run = async (): Promise<void> => {
-      store.updateUpload(sid, taskId, {
-        loaded: 0,
-        total,
-        status: "running",
-        error: undefined,
-        controller: ctrl,
-      })
-      const stopPolling = pollDirectTransferProgress("upload", sid, taskId, total)
-      try {
-        await uploadLocalToRemote(sid, f.full_path, remotePath, {
-          signal: ctrl.signal,
-          taskId,
-        })
-        store.updateUpload(sid, taskId, { loaded: total, total, status: "done" })
-      } catch (e) {
-        if (isAbortError(e)) {
-          store.updateUpload(sid, taskId, { status: "cancelled" })
-        } else {
-          const err = e as Error
-          store.updateUpload(sid, taskId, { status: "error", error: err.message })
-          coalescedToast(
-            "upload-err",
-            () =>
-              message.error(t("sftp.message.uploadFailed", { error: err.message })),
-            (n) => message.warning(t("sftp.message.uploadFailedMulti", { count: n })),
-          )
-        }
-      } finally {
-        stopPolling()
-      }
-    }
-    store.addUpload(sid, {
-      id: taskId,
+    return runTransferTask({
+      kind: "upload",
       sid,
       filename: remotePath,
       remoteDir: currentPath.value,
-      total,
-      loaded: 0,
-      status: "running",
-      controller: ctrl,
-      startedAt: Date.now(),
-      retry: () => {
-        ctrl = new AbortController()
-        void run()
+      total: f.size_bytes ?? 0,
+      poll: true,
+      transfer: async ({ signal, taskId }) => {
+        await uploadLocalToRemote(sid, f.full_path, remotePath, {
+          signal,
+          taskId,
+        })
       },
+      failToast: true,
     })
-    await run()
   }
 
   for (const f of upFiles) {
@@ -1555,58 +1523,29 @@ async function onLocalDirUpload(dirRow: SftpFile) {
   let okCount = 0
   let failCount = 0
 
-  async function runDirEntry(ent: { rel: string; path: string; size: number }): Promise<void> {
+  function runDirEntry(ent: { rel: string; path: string; size: number }): Promise<void> {
     const remotePath = joinPath(baseDir, `${topName}/${ent.rel}`)
-    const taskId = genId()
-    const total = ent.size
-    let ctrl = new AbortController()
-    const run = async (): Promise<void> => {
-      store.updateUpload(sid, taskId, {
-        loaded: 0,
-        total,
-        status: "running",
-        error: undefined,
-        controller: ctrl,
-      })
-      const stopPolling = pollDirectTransferProgress("upload", sid, taskId, total)
-      try {
-        await uploadLocalToRemote(sid, ent.path, remotePath, {
-          signal: ctrl.signal,
-          taskId,
-        })
-        store.updateUpload(sid, taskId, { loaded: total, total, status: "done" })
-        okCount++
-      } catch (e) {
-        if (isAbortError(e)) {
-          store.updateUpload(sid, taskId, { status: "cancelled" })
-        } else {
-          store.updateUpload(sid, taskId, {
-            status: "error",
-            error: (e as Error).message,
-          })
-        }
-        failCount++
-      } finally {
-        stopPolling()
-      }
-    }
-    store.addUpload(sid, {
-      id: taskId,
+    return runTransferTask({
+      kind: "upload",
       sid,
       filename: remotePath,
       remoteDir: parentPath(remotePath),
-      total,
-      loaded: 0,
-      status: "running",
-      controller: ctrl,
-      startedAt: Date.now(),
-      retry: () => {
-        ctrl = new AbortController()
+      total: ent.size,
+      poll: true,
+      transfer: async ({ signal, taskId }) => {
+        await uploadLocalToRemote(sid, ent.path, remotePath, {
+          signal,
+          taskId,
+        })
+      },
+      onSettled: (status) => {
+        if (status === "done") okCount++
+        else failCount++
+      },
+      onRetry: () => {
         failCount--
-        void run()
       },
     })
-    await run()
   }
 
   for (const ent of list) {
@@ -1678,74 +1617,33 @@ async function uploadOneFile(file: File, overwritePrecheckDone = false): Promise
     const d = await askOverwriteQueued(file.name)
     if (d === "cancel") return false
   }
-  const taskId = genId()
   const remotePath = joinPath(currentPath.value, file.name)
-  let ctrl = new AbortController()
   let okFlag = false
-  const run = async (): Promise<void> => {
-    okFlag = false
-    store.updateUpload(sid, taskId, {
-      loaded: 0,
-      total: file.size,
-      status: "running",
-      error: undefined,
-      controller: ctrl,
-    })
-    try {
-      await uploadStream({
-        sid,
-        filename: remotePath,
-        file,
-        signal: ctrl.signal,
-        onProgress: (loaded, total) => {
-          store.updateUpload(sid, taskId, {
-            loaded,
-            total: total > 0 ? total : loaded,
-          })
-        },
-      })
-      store.updateUpload(sid, taskId, {
-        loaded: file.size,
-        total: file.size,
-        status: "done",
-      })
-      coalescedToast(
-        "upload-ok",
-        () => message.success(t("sftp.message.uploaded", { name: file.name })),
-        (n) => message.success(t("sftp.message.uploadedMulti", { count: n })),
-      )
-      await load()
-      okFlag = true
-    } catch (e) {
-      if (isAbortError(e)) {
-        store.updateUpload(sid, taskId, { status: "cancelled" })
-      } else {
-        const err = e as Error
-        store.updateUpload(sid, taskId, { status: "error", error: err.message })
-        coalescedToast(
-          "upload-err",
-          () => message.error(t("sftp.message.uploadFailed", { error: err.message })),
-          (n) => message.warning(t("sftp.message.uploadFailedMulti", { count: n })),
-        )
-      }
-    }
-  }
-  store.addUpload(sid, {
-    id: taskId,
+  await runTransferTask({
+    kind: "upload",
     sid,
     filename: remotePath,
     remoteDir: currentPath.value,
     total: file.size,
-    loaded: 0,
-    status: "running",
-    controller: ctrl,
-    startedAt: Date.now(),
-    retry: () => {
-      ctrl = new AbortController()
-      void run()
+    transfer: ({ signal, onProgress }) =>
+      uploadStream({
+        sid,
+        filename: remotePath,
+        file,
+        signal,
+        onProgress,
+      }),
+    okToast: {
+      group: "upload-ok",
+      text: () => t("sftp.message.uploaded", { name: file.name }),
+      textMulti: (n) => t("sftp.message.uploadedMulti", { count: n }),
+    },
+    failToast: true,
+    onDone: async () => {
+      await load()
+      okFlag = true
     },
   })
-  await run()
   return okFlag
 }
 
@@ -1888,67 +1786,30 @@ async function uploadFolderEntries(entries: FolderEntry[]) {
   let okCount = 0
   let failCount = 0
 
-  async function runFolderEntry(ent: FolderEntry): Promise<void> {
+  function runFolderEntry(ent: FolderEntry): Promise<void> {
     const remotePath = joinPath(baseDir, ent.relPath)
-    const taskId = genId()
-    const remoteDir = parentPath(remotePath)
-    let ctrl = new AbortController()
-    const run = async (): Promise<void> => {
-      store.updateUpload(sid, taskId, {
-        loaded: 0,
-        total: ent.file.size,
-        status: "running",
-        error: undefined,
-        controller: ctrl,
-      })
-      try {
-        await uploadStream({
+    return runTransferTask({
+      kind: "upload",
+      sid,
+      filename: remotePath,
+      remoteDir: parentPath(remotePath),
+      total: ent.file.size,
+      transfer: ({ signal, onProgress }) =>
+        uploadStream({
           sid,
           filename: remotePath,
           file: ent.file,
-          signal: ctrl.signal,
-          onProgress: (loaded, total) => {
-            store.updateUpload(sid, taskId, {
-              loaded,
-              total: total > 0 ? total : loaded,
-            })
-          },
-        })
-        store.updateUpload(sid, taskId, {
-          loaded: ent.file.size,
-          total: ent.file.size,
-          status: "done",
-        })
-        okCount++
-      } catch (e) {
-        if (isAbortError(e)) {
-          store.updateUpload(sid, taskId, { status: "cancelled" })
-        } else {
-          store.updateUpload(sid, taskId, {
-            status: "error",
-            error: (e as Error).message,
-          })
-        }
-        failCount++
-      }
-    }
-    store.addUpload(sid, {
-      id: taskId,
-      sid,
-      filename: remotePath,
-      remoteDir,
-      total: ent.file.size,
-      loaded: 0,
-      status: "running",
-      controller: ctrl,
-      startedAt: Date.now(),
-      retry: () => {
-        ctrl = new AbortController()
+          signal,
+          onProgress,
+        }),
+      onSettled: (status) => {
+        if (status === "done") okCount++
+        else failCount++
+      },
+      onRetry: () => {
         failCount--
-        void run()
       },
     })
-    await run()
   }
 
   for (const ent of entries) {
@@ -2780,26 +2641,24 @@ watch(
 )
 
 /* ---------- 拖拽改变面板宽度 ---------- */
-const MIN_WIDTH = 480
-const DEFAULT_WIDTH = 800
 // 双栏（本地 + 远程）模式下的宽度约束与记忆 key 独立于单栏，
 // 切换模式时互不污染各自记忆的宽度
-const DUAL_MIN_WIDTH = 760
-const DUAL_DEFAULT_WIDTH = 1040
-const WIDTH_KEY = "ashell:sftp-width"
-const DUAL_WIDTH_KEY = "ashell:sftp-dual-width"
 const DUAL_PANE_KEY = "ashell:sftp-dualpane"
 const LOCAL_DIR_KEY = "ashell:sftp-local-dir"
-
-// 拖动上限取视口宽度的 90%，避免抽屉完全盖住主界面
-function getMaxWidth(): number {
-  return Math.round(window.innerWidth * 0.9)
-}
 
 /** 双栏开关（默认单栏）。持久化，下次打开 drawer 恢复 */
 const dualPane = ref(
   typeof localStorage !== "undefined" && localStorage.getItem(DUAL_PANE_KEY) === "1",
 )
+
+// 宽度记忆/拖动/上限接线统一在 useDrawerWidth（右缘锚定）；
+// 单栏/双栏各自的 storageKey/min/default 由 resolve 按当前模式返回
+const { width, resizing, loadWidth, saveWidth, onResizeStart } = useDrawerWidth({
+  resolve: () =>
+    dualPane.value
+      ? { storageKey: "ashell:sftp-dual-width", minWidth: 760, defaultWidth: 1040 }
+      : { storageKey: "ashell:sftp-width", minWidth: 480, defaultWidth: 800 },
+})
 
 /** 本地栏当前目录，持久化 */
 const localDir = ref(
@@ -2839,18 +2698,6 @@ const remoteDrag = useFileDrag({
 function transferUp() {
   if (localSelectedFiles.value.length === 0) return
   void onLocalUpload(localSelectedFiles.value)
-}
-
-function activeWidthKey(): string {
-  return dualPane.value ? DUAL_WIDTH_KEY : WIDTH_KEY
-}
-
-function activeMinWidth(): number {
-  return dualPane.value ? DUAL_MIN_WIDTH : MIN_WIDTH
-}
-
-function activeDefaultWidth(): number {
-  return dualPane.value ? DUAL_DEFAULT_WIDTH : DEFAULT_WIDTH
 }
 
 function toggleDualPane() {
@@ -2922,52 +2769,6 @@ function onSplitMouseDownCapture(e: MouseEvent) {
   setupState.resizeTriggerElRef = wrapper
   if (refs) refs.resizeTriggerElRef = wrapper
 }
-
-const width = ref<number>(0)
-const resizing = ref(false)
-
-function loadWidth(): number {
-  const raw =
-    typeof localStorage !== "undefined" ? localStorage.getItem(activeWidthKey()) : null
-  const n = raw ? Number(raw) : NaN
-  if (!Number.isFinite(n)) return activeDefaultWidth()
-  return Math.min(getMaxWidth(), Math.max(activeMinWidth(), n))
-}
-
-function saveWidth(v: number) {
-  try {
-    localStorage.setItem(activeWidthKey(), String(v))
-  } catch {
-    // ignore
-  }
-}
-
-width.value = loadWidth()
-
-function onResizeStart(e: PointerEvent) {
-  e.preventDefault()
-  resizing.value = true
-  window.addEventListener("pointermove", onResizeMove)
-  window.addEventListener("pointerup", onResizeEnd)
-  window.addEventListener("pointercancel", onResizeEnd)
-}
-
-function onResizeMove(e: PointerEvent) {
-  // Panel anchored to the right edge; width = viewport width - cursor X.
-  const next = Math.round(window.innerWidth - e.clientX)
-  width.value = Math.min(getMaxWidth(), Math.max(activeMinWidth(), next))
-}
-
-function onResizeEnd() {
-  if (!resizing.value) return
-  resizing.value = false
-  saveWidth(width.value)
-  window.removeEventListener("pointermove", onResizeMove)
-  window.removeEventListener("pointerup", onResizeEnd)
-  window.removeEventListener("pointercancel", onResizeEnd)
-}
-
-onBeforeUnmount(onResizeEnd)
 
 const panelStyle = computed(() => {
   // 独立窗口模式：铺满窗口，由 .standalone 类接管布局

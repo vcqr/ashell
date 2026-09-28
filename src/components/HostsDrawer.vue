@@ -7,6 +7,7 @@ import HostForm from "@/components/HostForm.vue"
 import { useHostStore } from "@/stores/hosts"
 import { useApiStore } from "@/stores/api"
 import { useHostsPin } from "@/composables/useHostsPin"
+import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import type { Host, HostCreate, HostNode, HostUpdate } from "@/types"
 
 const props = defineProps<{
@@ -100,57 +101,13 @@ function onFormCancel() {
 }
 
 /* ---- resize via right-edge drag handle ---- */
-const MIN_WIDTH = 240
-const DEFAULT_WIDTH = 320
-// Drag cap: 90% of viewport width so the drawer never fully covers the main view
-function getMaxWidth(): number {
-  return Math.round(window.innerWidth * 0.9)
-}
-const WIDTH_KEY = "ashell:hosts-width"
-
-const width = ref<number>(loadWidth())
-const resizing = ref(false)
-
-function loadWidth(): number {
-  const raw =
-    typeof localStorage !== "undefined" ? localStorage.getItem(WIDTH_KEY) : null
-  const n = raw ? Number(raw) : NaN
-  if (!Number.isFinite(n)) return DEFAULT_WIDTH
-  return Math.min(getMaxWidth(), Math.max(MIN_WIDTH, n))
-}
-
-function saveWidth(v: number) {
-  try {
-    localStorage.setItem(WIDTH_KEY, String(v))
-  } catch {
-    // ignore
-  }
-}
-
-function onResizeStart(e: PointerEvent) {
-  e.preventDefault()
-  resizing.value = true
-  window.addEventListener("pointermove", onResizeMove)
-  window.addEventListener("pointerup", onResizeEnd)
-  window.addEventListener("pointercancel", onResizeEnd)
-}
-
-function onResizeMove(e: PointerEvent) {
+const { width, resizing, onResizeStart } = useDrawerWidth({
+  storageKey: "ashell:hosts-width",
+  minWidth: 240,
+  defaultWidth: 320,
   // Panel anchored to the left edge; width = cursor X.
-  const next = Math.round(e.clientX)
-  width.value = Math.min(getMaxWidth(), Math.max(MIN_WIDTH, next))
-}
-
-function onResizeEnd() {
-  if (!resizing.value) return
-  resizing.value = false
-  saveWidth(width.value)
-  window.removeEventListener("pointermove", onResizeMove)
-  window.removeEventListener("pointerup", onResizeEnd)
-  window.removeEventListener("pointercancel", onResizeEnd)
-}
-
-onBeforeUnmount(onResizeEnd)
+  anchor: "left",
+})
 
 const panelStyle = computed(() => ({
   width: `${width.value}px`,

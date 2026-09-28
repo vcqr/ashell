@@ -6,6 +6,7 @@ import { PushpinFilled, PushpinOutlined } from "@vicons/antd"
 import { useI18n } from "vue-i18n"
 import LocalPane from "@/components/sftp/LocalPane.vue"
 import { useLocalFilesPin } from "@/composables/useLocalFilesPin"
+import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import { useStartupStore } from "@/stores/startup"
 import type { OsDropFolder } from "@/types"
 
@@ -32,60 +33,13 @@ const startupStore = useStartupStore()
 
 /* ---------- 抽屉宽度拖拽（与 SftpDrawer 同款：pointer 拖动 + localStorage 持久化） ---------- */
 
-const WIDTH_KEY = "ashell:local-files-width"
 // 最小宽度 = 表格三列总宽（150+84+170=404）+ 面板左右内边距 28：
 // 保证任何宽度下表格都放得下，不出现横向滚动
-const MIN_WIDTH = 432
-const DEFAULT_WIDTH = 460
-
-/** 拖动上限取视口宽度的 90%，避免抽屉完全盖住主界面 */
-function getMaxWidth(): number {
-  return Math.round(window.innerWidth * 0.9)
-}
-
-function loadWidth(): number {
-  const raw =
-    typeof localStorage !== "undefined" ? localStorage.getItem(WIDTH_KEY) : null
-  const n = raw ? Number(raw) : NaN
-  if (!Number.isFinite(n)) return DEFAULT_WIDTH
-  return Math.min(getMaxWidth(), Math.max(MIN_WIDTH, n))
-}
-
-function saveWidth(v: number) {
-  try {
-    localStorage.setItem(WIDTH_KEY, String(v))
-  } catch {
-    // ignore
-  }
-}
-
-const width = ref<number>(loadWidth())
-const resizing = ref(false)
-
-function onResizeStart(e: PointerEvent) {
-  e.preventDefault()
-  resizing.value = true
-  window.addEventListener("pointermove", onResizeMove)
-  window.addEventListener("pointerup", onResizeEnd)
-  window.addEventListener("pointercancel", onResizeEnd)
-}
-
-function onResizeMove(e: PointerEvent) {
-  // 面板锚在右缘：宽度 = 视口宽 - 光标 X
-  const next = Math.round(window.innerWidth - e.clientX)
-  width.value = Math.min(getMaxWidth(), Math.max(MIN_WIDTH, next))
-}
-
-function onResizeEnd() {
-  if (!resizing.value) return
-  resizing.value = false
-  saveWidth(width.value)
-  window.removeEventListener("pointermove", onResizeMove)
-  window.removeEventListener("pointerup", onResizeEnd)
-  window.removeEventListener("pointercancel", onResizeEnd)
-}
-
-onBeforeUnmount(onResizeEnd)
+const { width, resizing, onResizeStart } = useDrawerWidth({
+  storageKey: "ashell:local-files-width",
+  minWidth: 432,
+  defaultWidth: 460,
+})
 
 // 固定时内容区让位（App 的 .app-content right 读同一变量）；
 // 变量挂 documentElement，本组件是宽度唯一持有者，在此统一维护

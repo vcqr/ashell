@@ -25,6 +25,7 @@ import type { ProcStat, SysInfo } from "@/types"
 import { humanSize } from "@/utils/humanSize"
 import { humanRate } from "@/utils/humanRate"
 import { humanUptime } from "@/utils/humanUptime"
+import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import { useIconStore } from "@/stores/icons"
 import NetSparkline from "@/components/host/NetSparkline.vue"
 
@@ -347,56 +348,11 @@ watch(
 onBeforeUnmount(stopPolling)
 
 /* ---------- 拖拽改变面板宽度 ---------- */
-const MIN_WIDTH = 380
-const DEFAULT_WIDTH = 480
-// 拖动上限取视口宽度的 90%，避免抽屉完全盖住主界面
-function getMaxWidth(): number {
-  return Math.round(window.innerWidth * 0.9)
-}
-const WIDTH_KEY = "ashell:hostinfo-width"
-
-const width = ref<number>(loadWidth())
-const resizing = ref(false)
-
-function loadWidth(): number {
-  const raw =
-    typeof localStorage !== "undefined" ? localStorage.getItem(WIDTH_KEY) : null
-  const n = raw ? Number(raw) : NaN
-  if (!Number.isFinite(n)) return DEFAULT_WIDTH
-  return Math.min(getMaxWidth(), Math.max(MIN_WIDTH, n))
-}
-
-function saveWidth(v: number) {
-  try {
-    localStorage.setItem(WIDTH_KEY, String(v))
-  } catch {
-    // ignore
-  }
-}
-
-function onResizeStart(e: PointerEvent) {
-  e.preventDefault()
-  resizing.value = true
-  window.addEventListener("pointermove", onResizeMove)
-  window.addEventListener("pointerup", onResizeEnd)
-  window.addEventListener("pointercancel", onResizeEnd)
-}
-
-function onResizeMove(e: PointerEvent) {
-  const next = Math.round(window.innerWidth - e.clientX)
-  width.value = Math.min(getMaxWidth(), Math.max(MIN_WIDTH, next))
-}
-
-function onResizeEnd() {
-  if (!resizing.value) return
-  resizing.value = false
-  saveWidth(width.value)
-  window.removeEventListener("pointermove", onResizeMove)
-  window.removeEventListener("pointerup", onResizeEnd)
-  window.removeEventListener("pointercancel", onResizeEnd)
-}
-
-onBeforeUnmount(onResizeEnd)
+const { width, resizing, onResizeStart } = useDrawerWidth({
+  storageKey: "ashell:hostinfo-width",
+  minWidth: 380,
+  defaultWidth: 480,
+})
 
 const panelStyle = computed(() => ({
   width: `${width.value}px`,
