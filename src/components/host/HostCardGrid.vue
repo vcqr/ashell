@@ -156,11 +156,14 @@ function onMousedown(e: MouseEvent) {
   border: 1px solid var(--ashell-border-soft);
   cursor: default;
   outline: none;
+  /* 裁剪扫光伪元素:不裁剪时会停在左/右邻卡上方,悬停任一卡扫光会越过邻居 */
+  overflow: hidden;
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease,
     transform 0.15s ease;
 }
 
-/* 悬停扫光：一层斜向高光从左划到右（reduced-motion 下禁用） */
+/* 悬停扫光：一层斜向高光从左划到右（reduced-motion 下禁用）。
+   transition 只挂在 :hover 上——移出时无过渡、瞬时归位,避免反向扫回 */
 .host-card::before {
   content: "";
   position: absolute;
@@ -173,7 +176,6 @@ function onMousedown(e: MouseEvent) {
     transparent 68%
   );
   transform: translateX(-130%);
-  transition: transform 0.45s ease;
   pointer-events: none;
 }
 
@@ -193,6 +195,7 @@ function onMousedown(e: MouseEvent) {
 
 .host-card:hover::before {
   transform: translateX(130%);
+  transition: transform 0.45s ease;
 }
 
 .host-card:focus-visible {
