@@ -75,6 +75,7 @@ function onMousedown(e: MouseEvent) {
       :key="node.key"
       class="host-card"
       :class="{ selected: isSelected(node), checked: batchMode && isChecked(node) }"
+      :style="node.color ? ({ '--host-color': node.color } as Record<string, string>) : undefined"
       tabindex="0"
       role="button"
       :aria-checked="batchMode ? isChecked(node) : undefined"
@@ -150,8 +151,9 @@ function onMousedown(e: MouseEvent) {
   transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 
+/* 悬停/选中与 TabBar 同语言：悬停中性色，选中用主机色描边 + 18% 色底 + 底部色条 */
 .host-card:hover {
-  border-color: color-mix(in srgb, var(--ashell-primary) 45%, transparent);
+  background: var(--ashell-hover);
 }
 
 .host-card:focus-visible {
@@ -159,8 +161,13 @@ function onMousedown(e: MouseEvent) {
 }
 
 .host-card.selected {
-  border-color: var(--ashell-primary);
-  background: color-mix(in srgb, var(--ashell-primary) 8%, var(--ashell-panel-bg-soft));
+  border-color: var(--host-color, var(--ashell-primary));
+  background: color-mix(
+    in srgb,
+    var(--host-color, var(--ashell-primary)) 18%,
+    var(--ashell-panel-bg-soft)
+  );
+  box-shadow: inset 0 -2px 0 var(--host-color, var(--ashell-primary));
 }
 
 .host-card.checked {
