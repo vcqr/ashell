@@ -40,6 +40,14 @@ function iconUrlOf(node: HostNode): string | null {
   return node.icon ? iconStore.urlOf(node.icon) : null
 }
 
+/** 卡片地址行:root@addr:port（serial 无用户名语义，仅地址） */
+function hostAddrLine(node: HostNode): string {
+  const addr = hostAddrTextOfNode(node)
+  if (!addr || node.protocol === "serial") return addr
+  const u = node.username?.trim()
+  return u ? `${u}@${addr}` : addr
+}
+
 function isPinned(node: HostNode): boolean {
   return hostStore.isHostPinned(node.id)
 }
@@ -80,7 +88,7 @@ function onMousedown(e: MouseEvent) {
       role="button"
       :aria-checked="batchMode ? isChecked(node) : undefined"
       :data-node-key="node.key"
-      :title="node.desc || hostAddrTextOfNode(node) || undefined"
+      :title="node.desc || hostAddrLine(node) || undefined"
       @click="emit('select', node.key)"
       @dblclick="emit('open', node)"
       @auxclick="onAuxclick($event, node)"
@@ -102,7 +110,7 @@ function onMousedown(e: MouseEvent) {
           </template>
         </span>
         <span class="host-addr">
-          <span class="host-addr-text">{{ hostAddrTextOfNode(node) }}</span>
+          <span class="host-addr-text">{{ hostAddrLine(node) }}</span>
           <span v-if="node.protocol && node.protocol !== 'ssh'" class="host-proto">
             {{ node.protocol }}
           </span>
@@ -148,7 +156,25 @@ function onMousedown(e: MouseEvent) {
   border: 1px solid var(--ashell-border-soft);
   cursor: default;
   outline: none;
-  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+/* 悬停扫光：一层斜向高光从左划到右（reduced-motion 下禁用） */
+.host-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    rgba(255, 255, 255, 0.07) 50%,
+    transparent 68%
+  );
+  transform: translateX(-130%);
+  transition: transform 0.45s ease;
+  pointer-events: none;
 }
 
 /* 悬停/选中与 TabBar 同语言：色罩以 background-image 叠加在面板底色上
@@ -159,6 +185,14 @@ function onMousedown(e: MouseEvent) {
   background-image:
     linear-gradient(var(--ashell-hover), var(--ashell-hover)),
     linear-gradient(var(--ashell-hover), var(--ashell-hover));
+  transform: translateY(-2px);
+  /* 光晕跟随主机色,与头像块/选中描边同一身份色 */
+  box-shadow: 0 6px 18px
+    color-mix(in srgb, var(--host-color, var(--ashell-primary)) 22%, transparent);
+}
+
+.host-card:hover::before {
+  transform: translateX(130%);
 }
 
 .host-card:focus-visible {
@@ -172,6 +206,14 @@ function onMousedown(e: MouseEvent) {
     color-mix(in srgb, var(--host-color, var(--ashell-primary)) 18%, transparent)
   );
   box-shadow: inset 0 -2px 0 var(--host-color, var(--ashell-primary));
+}
+
+/* 选中 + 悬停：底部色条与光晕并存（box-shadow 不跨规则合并，需显式组合） */
+.host-card.selected:hover {
+  box-shadow:
+    inset 0 -2px 0 var(--host-color, var(--ashell-primary)),
+    0 6px 18px
+      color-mix(in srgb, var(--host-color, var(--ashell-primary)) 22%, transparent);
 }
 
 .host-card.checked {
@@ -189,6 +231,28 @@ function onMousedown(e: MouseEvent) {
   height: 34px;
   border-radius: 8px;
   overflow: hidden;
+  transition: transform 0.18s ease;
+}
+
+.host-card:hover .host-avatar {
+  transform: scale(1.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .host-card,
+  .host-card::before,
+  .host-avatar {
+    transition: none;
+  }
+  .host-card:hover {
+    transform: none;
+  }
+  .host-card:hover::before {
+    display: none;
+  }
+  .host-card:hover .host-avatar {
+    transform: none;
+  }
 }
 
 .host-avatar img {
