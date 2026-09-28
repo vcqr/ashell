@@ -33,3 +33,6 @@ docker/ashell-server
 docker/app-ai
 docker/dist
 tmp/
+
+# ConPTY 官方侧载二进制的构建暂存（build.rs 按 target 架构生成，勿提交）
+/src-tauri/resources/conpty/bin/
