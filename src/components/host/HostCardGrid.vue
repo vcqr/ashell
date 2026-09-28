@@ -172,11 +172,21 @@ function onMousedown(e: MouseEvent) {
   background: linear-gradient(
     115deg,
     transparent 32%,
-    var(--ashell-hover) 50%,
+    rgba(255, 255, 255, 0.07) 50%,
     transparent 68%
   );
   transform: translateX(-130%);
   pointer-events: none;
+}
+
+/* 亮色主题:卡片底色接近白,低透明度白光不可见,需接近不透明的白才有光泽感 */
+:root[data-ashell-theme="light"] .host-card::before {
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    rgba(255, 255, 255, 0.75) 50%,
+    transparent 68%
+  );
 }
 
 /* 悬停/选中与 TabBar 同语言：色罩以 background-image 叠加在面板底色上
