@@ -80,7 +80,7 @@ function onMousedown(e: MouseEvent) {
       role="button"
       :aria-checked="batchMode ? isChecked(node) : undefined"
       :data-node-key="node.key"
-      :title="node.desc || undefined"
+      :title="node.desc || hostAddrTextOfNode(node) || undefined"
       @click="emit('select', node.key)"
       @dblclick="emit('open', node)"
       @auxclick="onAuxclick($event, node)"
@@ -130,7 +130,7 @@ function onMousedown(e: MouseEvent) {
 <style scoped>
 .host-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
   padding: 4px;
   outline: none;
