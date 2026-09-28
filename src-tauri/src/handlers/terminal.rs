@@ -365,8 +365,12 @@ const SSH_ZSH_CWD_LINE: &str = " printf '\\033[1A\\033[2K\\r'; __ashell_rc(){ pr
 const CWD_ECHO_STRIP_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// 单个注入行最多剥离的回显次数：内核规范模式回显（ZLE/readline 接管
-/// tty 前的那次）+ ZLE/readline 在提示符处重显，再留一次重绘余量
-const MAX_ECHO_OCCURRENCES: usize = 3;
+/// tty 前的那次）+ ZLE/readline 在提示符处重显，另留重绘余量。注入行仍在
+/// ZLE 里 pending 的窗口内（macOS 慢启动 shell 可达数秒）发生的列宽变化
+/// （批量连接的 tab 激活切换、窗口调整）都会触发 SIGWINCH 重绘，每一轮
+/// 都是一次新的回显出现——预算放宽到 10 次；超预算后放行原始流（退化为
+/// 可见的注入行回显，且折行显示在 accept 擦除后留下首行残影）。
+const MAX_ECHO_OCCURRENCES: usize = 10;
 
 /// 在输出流中剥离 cwd 注入行的回显。注入行会被回显多次（见上方模块
 /// 注释），前 [`MAX_ECHO_OCCURRENCES`] 次出现全部移除。匹配策略：目标
@@ -1278,17 +1282,17 @@ mod tests {
 
     #[test]
     fn cwd_echo_strip_stops_after_max_occurrences() {
-        // 超出剥离上限的第 4 次出现原样放行（退化为多显示一行）
+        // 超出剥离上限的第 11 次出现原样放行（退化为多显示一行）
         let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let t = target.as_bytes();
         let mut stream = b"host:~% ".to_vec();
-        for _ in 0..4 {
+        for _ in 0..(MAX_ECHO_OCCURRENCES + 1) {
             stream.extend_from_slice(t);
             stream.extend_from_slice(b"\r\nhost:~% ");
         }
         let mut expected = b"host:~% ".to_vec();
-        for _ in 0..3 {
+        for _ in 0..MAX_ECHO_OCCURRENCES {
             expected.extend_from_slice(b"\r\nhost:~% ");
         }
         expected.extend_from_slice(t);
