@@ -24,6 +24,9 @@ import {
   PowerOutline,
   RefreshOutline,
   ServerOutline,
+  SwapHorizontalOutline,
+  SwapVerticalOutline,
+  GridOutline,
   TerminalOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
@@ -34,6 +37,10 @@ import type { TerminalTab } from '@/types'
 const props = defineProps<{
   tabs: TerminalTab[]
   activeKey: string
+  /** 当前是否处于分屏视图（右键菜单据此切换分屏项的形态） */
+  splitEnabled?: boolean
+  /** 当前是否为四分屏（2×2）布局 */
+  splitGrid?: boolean
   /**
    * App.vue 注入的"取出指定 tab 的会话快照"回调。
    * tab 的 xterm 实例在 App.vue 持有，TabBar 自己拿不到，因此通过 prop 注入。
@@ -55,6 +62,11 @@ const emit = defineEmits<{
   'close-others': [key: string]
   'close-left': [key: string]
   'close-right': [key: string]
+  /** 向右 / 向下分屏（dir: h = 左右并排，v = 上下堆叠） */
+  split: [key: string, dir: 'h' | 'v']
+  /** 四分屏（2×2），携带右键的 tab key 优先放入第二槽位 */
+  'split-grid': [key: string]
+  'split-close': []
 }>()
 
 const vars = useThemeVars()
@@ -314,6 +326,41 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       key: 'open-in-new-window',
       icon: renderMenuIcon(OpenOutline),
     },
+    // 分屏：未分屏时是"把该 tab 放到旁边格"，已分屏时变成切换布局 / 取消分屏
+    {
+      label: props.splitEnabled
+        ? t('terminal.tabBar.switchSideBySide')
+        : t('terminal.tabBar.splitRight'),
+      key: 'split-h',
+      icon: renderMenuIcon(SwapHorizontalOutline),
+    },
+    {
+      label: props.splitEnabled
+        ? t('terminal.tabBar.switchTopBottom')
+        : t('terminal.tabBar.splitDown'),
+      key: 'split-v',
+      icon: renderMenuIcon(SwapVerticalOutline),
+    },
+    ...(props.splitEnabled && props.splitGrid
+      ? []
+      : [
+          {
+            label: props.splitEnabled
+              ? t('terminal.tabBar.switchGrid')
+              : t('terminal.tabBar.splitGrid'),
+            key: 'split-grid',
+            icon: renderMenuIcon(GridOutline),
+          },
+        ]),
+    ...(props.splitEnabled
+      ? [
+          {
+            label: t('terminal.tabBar.splitClose'),
+            key: 'split-close',
+            icon: renderMenuIcon(CloseOutline),
+          },
+        ]
+      : []),
     {
       label: t('terminal.tabBar.copySshAddr'),
       key: 'copy-addr',
@@ -399,6 +446,18 @@ function onCtxSelect(action: string) {
       break
     case 'open-in-new-window':
       emit('open-in-new-window', key)
+      break
+    case 'split-h':
+      emit('split', key, 'h')
+      break
+    case 'split-v':
+      emit('split', key, 'v')
+      break
+    case 'split-grid':
+      emit('split-grid', key)
+      break
+    case 'split-close':
+      emit('split-close')
       break
     case 'copy-addr': {
       const info = tab.hostInfo

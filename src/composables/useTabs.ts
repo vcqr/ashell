@@ -48,9 +48,29 @@ type PersistedTab = Pick<
   | "hostInfo"
 >;
 
+/** 分屏方向：h = 左右并排，v = 上下堆叠 */
+export type SplitDir = "h" | "v";
+
+/** 窗格下标：双格 0-1，四格 0-3；-1 表示不在任何窗格 */
+export type SplitPaneIdx = 0 | 1 | 2 | 3;
+
+/** 每个布局的窗格槽数：双格（左右/上下）与四格（2×2） */
+export const SPLIT_SLOT_COUNT = 4 as const;
+
+/** 分屏布局的持久化形态（keys 里失效的 key 在恢复时过滤；旧数据只有 2 个槽位） */
+interface PersistedSplit {
+  dir: SplitDir;
+  ratio: number;
+  ratio2: number;
+  grid: boolean;
+  keys: (string | null)[];
+  focused: number;
+}
+
 interface PersistedTabs {
   tabs: PersistedTab[];
   activeKey: string;
+  split?: PersistedSplit | null;
 }
 
 function loadPersistedTabs(restoreTabs: boolean): PersistedTabs {
@@ -72,12 +92,50 @@ function loadPersistedTabs(restoreTabs: boolean): PersistedTabs {
     if (!parsed || !Array.isArray(parsed.tabs)) {
       return { tabs: [], activeKey: "" };
     }
+    const tabs = parsed.tabs.filter(
+      (t): t is PersistedTab =>
+        !!t && typeof t.key === "string" && typeof t.title === "string",
+    );
+    // 分屏布局：槽位 key 必须仍指向存在的 tab，否则降级为不分屏
+    let split: PersistedSplit | null = null;
+    if (
+      parsed.split &&
+      (parsed.split.dir === "h" || parsed.split.dir === "v") &&
+      Array.isArray(parsed.split.keys) &&
+      parsed.split.keys.length >= 2
+    ) {
+      const alive = new Set(tabs.map((t) => t.key));
+      const keys = parsed.split.keys.map((k) =>
+        typeof k === "string" && alive.has(k) ? k : null,
+      );
+      if (keys.some((k) => k)) {
+        const clamp = (v: number) => Math.min(0.85, Math.max(0.15, v));
+        const ratio = Number(parsed.split.ratio);
+        const ratio2 = Number(parsed.split.ratio2);
+        const grid = parsed.split.grid === true;
+        const focused = Math.min(
+          grid ? 3 : 1,
+          Math.max(0, Math.floor(Number(parsed.split.focused) || 0)),
+        );
+        // 不足 4 槽的旧数据补空槽；非 grid 布局忽略多余槽位
+        const slots: (string | null)[] = [];
+        for (let i = 0; i < SPLIT_SLOT_COUNT; i++) {
+          slots.push(grid || i < 2 ? (keys[i] ?? null) : null);
+        }
+        split = {
+          dir: parsed.split.dir,
+          ratio: Number.isFinite(ratio) ? clamp(ratio) : 0.5,
+          ratio2: Number.isFinite(ratio2) ? clamp(ratio2) : 0.5,
+          grid,
+          keys: slots,
+          focused,
+        };
+      }
+    }
     return {
-      tabs: parsed.tabs.filter(
-        (t): t is PersistedTab =>
-          !!t && typeof t.key === "string" && typeof t.title === "string",
-      ),
+      tabs,
       activeKey: typeof parsed.activeKey === "string" ? parsed.activeKey : "",
+      split,
     };
   } catch {
     return { tabs: [], activeKey: "" };
@@ -130,6 +188,224 @@ export function useTabs() {
       ? persisted.activeKey
       : (tabs.value[0]?.key ?? ""),
   );
+
+  // ===== 分屏（split view）=====
+  // 窗格是"槽位"，各自持有 tab key；焦点窗格决定 tab 条高亮 / 键盘焦点 / 广播源。
+  // 不变量：splitEnabled 时 splitPaneKeys[focusedPaneIdx] === activeTabKey
+  // （焦点窗格为空占位时 activeTabKey 为 ""）。单窗格模式完全不读这些状态，
+  // 行为与历史版本一致。
+  const splitEnabled = ref(false);
+  const splitDir = ref<SplitDir>("h");
+  /** 是否四分屏（2×2）：false 时按 splitDir 取左右/上下双格 */
+  const splitGrid = ref(false);
+  /** 双格分隔条位置；四分屏下是竖分隔条位置（左右占比） */
+  const splitRatio = ref(0.5);
+  /** 仅四分屏使用：横分隔条位置（上下占比） */
+  const splitRatio2 = ref(0.5);
+  const splitPaneKeys = ref<(string | null)[]>(
+    Array<string | null>(SPLIT_SLOT_COUNT).fill(null),
+  );
+  const focusedPaneIdx = ref<SplitPaneIdx>(0);
+
+  /** 当前布局的窗格数：双格 2，四格 4 */
+  const splitSlotCount = computed(() => (splitGrid.value ? 4 : 2));
+
+  // 恢复持久化的分屏布局（keys 已在 loadPersistedTabs 里按存活 tab 过滤）
+  if (persisted.split) {
+    splitDir.value = persisted.split.dir;
+    splitRatio.value = persisted.split.ratio;
+    splitRatio2.value = persisted.split.ratio2;
+    splitGrid.value = persisted.split.grid;
+    splitPaneKeys.value = persisted.split.keys.slice(0, SPLIT_SLOT_COUNT);
+    focusedPaneIdx.value = persisted.split.focused as SplitPaneIdx;
+    splitEnabled.value = true;
+    // 保证焦点窗格槽位与 activeTabKey 一致（持久化数据异常时兜底）
+    if (splitPaneKeys.value[focusedPaneIdx.value] !== activeTabKey.value) {
+      activeTabKey.value = splitPaneKeys.value[focusedPaneIdx.value] ?? "";
+    }
+  }
+
+  /** 切换焦点窗格（点击某窗格区域 / 快捷键循环时调用）：tab 高亮与广播输入源跟随。 */
+  function focusPane(idx: SplitPaneIdx) {
+    if (!splitEnabled.value || focusedPaneIdx.value === idx) return;
+    if (idx >= splitSlotCount.value) return;
+    focusedPaneIdx.value = idx;
+    activeTabKey.value = splitPaneKeys.value[idx] ?? "";
+  }
+
+  /** 焦点窗格循环切换（快捷键 view.focusNextPane）：占位窗格也可聚焦以便填入会话。 */
+  function focusNextPane() {
+    if (!splitEnabled.value) return;
+    focusPane(((focusedPaneIdx.value + 1) % splitSlotCount.value) as SplitPaneIdx);
+  }
+
+  /**
+   * 激活某个 tab —— activeTabKey 的统一写入口。
+   * 分屏时若该 tab 已显示在其他窗格，只切换焦点窗格、不搬运会话；
+   * 否则放入当前焦点窗格（新会话也在焦点窗格打开）。
+   */
+  function activateTab(key: string) {
+    if (splitEnabled.value) {
+      const existingIdx = key
+        ? splitPaneKeys.value.findIndex((k, i) => k === key && i !== focusedPaneIdx.value)
+        : -1;
+      if (existingIdx >= 0) {
+        focusedPaneIdx.value = existingIdx as SplitPaneIdx;
+        activeTabKey.value = key;
+        return;
+      }
+      splitPaneKeys.value[focusedPaneIdx.value] = key || null;
+      autoConnectForSplit(key);
+    }
+    activeTabKey.value = key;
+  }
+
+  /**
+   * 关闭分屏，回到单窗格；其余会话都保留（只是隐藏为普通后台 tab）。
+   * 若焦点格是空占位或焦点会话已不存在，则保住唯一有会话的窗格。
+   */
+  function disableSplit() {
+    if (!splitEnabled.value) return;
+    let keep = activeTabKey.value;
+    if (!keep || !tabs.value.some((t) => t.key === keep)) {
+      keep =
+        splitPaneKeys.value.find(
+          (k) => k && tabs.value.some((t) => t.key === k),
+        ) ?? "";
+    }
+    splitEnabled.value = false;
+    splitGrid.value = false;
+    splitPaneKeys.value = [keep || null, null, null, null];
+    focusedPaneIdx.value = 0;
+    activeTabKey.value = keep;
+  }
+
+  /**
+   * 分屏把会话摆进可见窗格时的自动连接：断开 / 出错的会话直接走重连。
+   * 分屏是显式的"现在要看这个会话"动作，与打开主机、复制连接同类，
+   * 不受「启动时自动连接记住的标签页」偏好门控（那只约束启动恢复）。
+   * reconnect 保留 xterm 缓冲区，手动断开的会话被摆入时重连也不丢滚动历史。
+   * 仅在摆入时机触发：焦点切换 / 切换方向不会偷偷建连。
+   */
+  function autoConnectForSplit(key: string | null) {
+    if (!key) return;
+    const t = tabs.value.find((x) => x.key === key);
+    if (!t) return;
+    const st = t.status ?? "closed";
+    if (st === "connecting" || st === "connected") return;
+    reconnectTab(key);
+  }
+
+  /** 开启双格分屏（副格尽量放 tabKey，否则取下一个 tab，再没有则空窗格）。 */
+  function enableSplit(dir: SplitDir, tabKey?: string) {
+    const current = activeTabKey.value;
+    let second = tabKey && tabKey !== current ? tabKey : null;
+    if (!second) {
+      second = tabs.value.find((t) => t.key !== current)?.key ?? null;
+    }
+    splitGrid.value = false;
+    splitDir.value = dir;
+    splitPaneKeys.value = [current || null, second, null, null];
+    focusedPaneIdx.value = 0;
+    splitEnabled.value = true;
+    // 开启分屏时两个窗格里的断开会话都自动重连
+    autoConnectForSplit(current || null);
+    autoConnectForSplit(second);
+  }
+
+  /** 开启四分屏（2×2）：当前会话进左上，右键指定的 tab 优先进右上，其余槽位按 tab 顺序填充。 */
+  function splitGridTab(tabKey?: string) {
+    const used = new Set<string>();
+    if (!splitEnabled.value) {
+      const current = activeTabKey.value;
+      if (current) used.add(current);
+      const slots: (string | null)[] = [current || null];
+      if (tabKey && tabKey !== current && tabs.value.some((t) => t.key === tabKey)) {
+        used.add(tabKey);
+        slots.push(tabKey);
+      }
+      for (let i = slots.length; i < SPLIT_SLOT_COUNT; i++) {
+        const next = tabs.value.find((t) => !used.has(t.key))?.key ?? null;
+        if (next) used.add(next);
+        slots.push(next);
+      }
+      splitGrid.value = true;
+      splitPaneKeys.value = slots;
+      focusedPaneIdx.value = 0;
+      splitEnabled.value = true;
+      for (const k of slots) autoConnectForSplit(k);
+      return;
+    }
+    if (!splitGrid.value) {
+      // 双格 → 四格：保留现有两格，空槽用隐藏 tab 补位
+      for (const k of splitPaneKeys.value) if (k) used.add(k);
+      for (let i = 0; i < SPLIT_SLOT_COUNT; i++) {
+        if (splitPaneKeys.value[i]) continue;
+        const next = tabs.value.find((t) => !used.has(t.key))?.key ?? null;
+        if (next) {
+          used.add(next);
+          splitPaneKeys.value[i] = next;
+          autoConnectForSplit(next);
+        }
+      }
+      splitGrid.value = true;
+    }
+    // 已是四分屏：无操作
+  }
+
+  /**
+   * 分屏入口（右键菜单 / 快捷键）：
+   * - 未分屏：开启双格分屏，tabKey 尽量放进副格；
+   * - 双格分屏：调整方向；tabKey 未显示时顺手放进非焦点窗格；
+   * - 四分屏：收敛为指定方向的双格（保留焦点格与下一个有会话窗格）。
+   */
+  function splitTab(dir: SplitDir, tabKey?: string) {
+    if (!splitEnabled.value) {
+      enableSplit(dir, tabKey);
+      return;
+    }
+    if (splitGrid.value) {
+      const focusedKey = splitPaneKeys.value[focusedPaneIdx.value];
+      const nextKey =
+        splitPaneKeys.value.find(
+          (k, i) => i !== focusedPaneIdx.value && k && tabs.value.some((t) => t.key === k),
+        ) ?? null;
+      const keep = focusedKey || nextKey;
+      splitGrid.value = false;
+      splitDir.value = dir;
+      splitPaneKeys.value = [keep || null, keep === focusedKey ? nextKey : null, null, null];
+      focusedPaneIdx.value = 0;
+      if (keep) activeTabKey.value = keep;
+      return;
+    }
+    splitDir.value = dir;
+    if (tabKey) {
+      const other = (1 - focusedPaneIdx.value) as SplitPaneIdx;
+      const inFocused = splitPaneKeys.value[focusedPaneIdx.value] === tabKey;
+      const inOther = splitPaneKeys.value[other] === tabKey;
+      if (!inFocused && !inOther) {
+        splitPaneKeys.value[other] = tabKey;
+        autoConnectForSplit(tabKey);
+      }
+    }
+  }
+
+  /** 分屏槽位里指向已关闭 tab 的 key 置空（closeTab 里调用）。 */
+  function sanitizeSplitSlots() {
+    if (!splitEnabled.value) return;
+    const alive = new Set(tabs.value.map((t) => t.key));
+    for (let i = 0; i < SPLIT_SLOT_COUNT; i++) {
+      const k = splitPaneKeys.value[i];
+      if (k && !alive.has(k)) splitPaneKeys.value[i] = null;
+    }
+  }
+
+  /** 分屏下仍有会话的窗格数（closeTab 后判断是否收缩为单格）。 */
+  function occupiedSlotCount(): number {
+    return splitPaneKeys.value.filter(
+      (k) => k && tabs.value.some((t) => t.key === k),
+    ).length;
+  }
 
   /**
    * 主机会话状态聚合:hostId → 该主机所有 tab 中最活跃的状态。
@@ -190,6 +466,16 @@ export function useTabs() {
             hostInfo: t.hostInfo,
           })),
           activeKey: activeTabKey.value,
+          split: splitEnabled.value
+            ? {
+                dir: splitDir.value,
+                ratio: splitRatio.value,
+                ratio2: splitRatio2.value,
+                grid: splitGrid.value,
+                keys: [...splitPaneKeys.value],
+                focused: focusedPaneIdx.value,
+              }
+            : null,
         };
         localStorage.setItem(TABS_KEY, JSON.stringify(snapshot));
       } catch {
@@ -198,7 +484,21 @@ export function useTabs() {
     }, 200);
   }
 
-  watch([tabs, activeTabKey], () => persistTabs(), { deep: true });
+  watch(
+    [
+      tabs,
+      activeTabKey,
+      splitEnabled,
+      splitDir,
+      splitGrid,
+      splitRatio,
+      splitRatio2,
+      splitPaneKeys,
+      focusedPaneIdx,
+    ],
+    () => persistTabs(),
+    { deep: true },
+  );
 
   // tabs 变化时把本窗口 tab 列表广播给其他窗口（跨窗口广播功能依赖此目录）
   watch(
@@ -288,7 +588,7 @@ export function useTabs() {
     if (!forceNew) {
       const existing = tabs.value.find((t) => t.hostKey === node.key);
       if (existing) {
-        activeTabKey.value = existing.key;
+        activateTab(existing.key);
         return;
       }
     }
@@ -314,7 +614,7 @@ export function useTabs() {
         username: node.username ?? "root",
       },
     });
-    activeTabKey.value = key;
+    activateTab(key);
     if (!hostsPinned.value) hostsOpen.value = false;
   }
 
@@ -336,7 +636,7 @@ export function useTabs() {
       icon: null,
       color: null,
     });
-    activeTabKey.value = key;
+    activateTab(key);
     if (!hostsPinned.value) hostsOpen.value = false;
   }
 
@@ -356,9 +656,20 @@ export function useTabs() {
       void aiStore.killFor(t.sid);
     }
     tabs.value.splice(idx, 1);
+    sanitizeSplitSlots();
     if (activeTabKey.value === key) {
       const next = tabs.value[idx] ?? tabs.value[idx - 1];
-      activeTabKey.value = next ? next.key : "";
+      activateTab(next ? next.key : "");
+    }
+    // 只剩一个有会话的窗格（或全部清空）时收起分屏，避免长期留着单格分屏
+    if (splitEnabled.value && occupiedSlotCount() <= 1) {
+      disableSplit();
+    }
+    if (tabs.value.length === 0) {
+      splitEnabled.value = false;
+      splitGrid.value = false;
+      splitPaneKeys.value = [null, null, null, null];
+      focusedPaneIdx.value = 0;
     }
     // 清理广播 store 里残留的引用，避免已关闭 tab 的 key 仍在 targetKeys / sourceKey 中
     broadcastStore.purgeKey(key);
@@ -612,5 +923,18 @@ export function useTabs() {
     closeHostsIfOpen,
     toggleHosts,
     sendCommandToActive,
+    splitEnabled,
+    splitDir,
+    splitGrid,
+    splitRatio,
+    splitRatio2,
+    splitPaneKeys,
+    focusedPaneIdx,
+    activateTab,
+    focusPane,
+    focusNextPane,
+    disableSplit,
+    splitTab,
+    splitGridTab,
   };
 }

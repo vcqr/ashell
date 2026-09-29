@@ -13,6 +13,9 @@ export default {
     openHosts: "Open Connections",
     openLocal: "Open Local",
   },
+  splitPane: {
+    empty: "Click a tab above to open a session in this pane",
+  },
   theme: {
     dark: "Dark",
     light: "Light",

@@ -13,6 +13,9 @@ export default {
     openHosts: "打开连接",
     openLocal: "新建本地终端",
   },
+  splitPane: {
+    empty: "点击上方标签页，在此窗格打开会话",
+  },
   theme: {
     dark: "深色",
     light: "浅色",

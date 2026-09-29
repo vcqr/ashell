@@ -171,6 +171,13 @@ export default {
         copy: "复制终端选中文本",
         paste: "粘贴到终端",
       },
+      view: {
+        splitRight: "向右分屏",
+        splitDown: "向下分屏",
+        splitGrid: "四分屏（2×2）",
+        splitClose: "取消分屏",
+        focusNextPane: "切换焦点窗格",
+      },
       font: {
         zoomIn: "终端字号增大",
         zoomOut: "终端字号减小",

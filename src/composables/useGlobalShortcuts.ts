@@ -19,6 +19,16 @@ export interface GlobalShortcutDeps {
   toggleForward: () => void;
   toggleTemplate: () => void;
   toggleActivityBar: () => void;
+  /** 向右分屏（左右并排） */
+  splitRight: () => void;
+  /** 向下分屏（上下堆叠） */
+  splitDown: () => void;
+  /** 四分屏（2×2） */
+  splitGrid: () => void;
+  /** 取消分屏 */
+  splitClose: () => void;
+  /** 焦点切到下一个窗格（循环） */
+  focusNextPane: () => void;
 }
 
 /**
@@ -133,6 +143,43 @@ export function useGlobalShortcuts(deps: GlobalShortcutDeps) {
       e.preventDefault();
       e.stopPropagation();
       if (deps.activeTabKey.value) deps.closeTab(deps.activeTabKey.value);
+      return;
+    }
+
+    // 分屏：向右 / 向下 / 取消（新增 tab 不重复触发）
+    if (matchesBinding(keybindingStore.getBinding("view.splitRight"), e)) {
+      if (e.repeat) return;
+      e.preventDefault();
+      e.stopPropagation();
+      deps.splitRight();
+      return;
+    }
+    if (matchesBinding(keybindingStore.getBinding("view.splitDown"), e)) {
+      if (e.repeat) return;
+      e.preventDefault();
+      e.stopPropagation();
+      deps.splitDown();
+      return;
+    }
+    if (matchesBinding(keybindingStore.getBinding("view.splitGrid"), e)) {
+      if (e.repeat) return;
+      e.preventDefault();
+      e.stopPropagation();
+      deps.splitGrid();
+      return;
+    }
+    if (matchesBinding(keybindingStore.getBinding("view.focusNextPane"), e)) {
+      // 放行按住重复：按住连续切换焦点窗格
+      e.preventDefault();
+      e.stopPropagation();
+      deps.focusNextPane();
+      return;
+    }
+    if (matchesBinding(keybindingStore.getBinding("view.splitClose"), e)) {
+      if (e.repeat) return;
+      e.preventDefault();
+      e.stopPropagation();
+      deps.splitClose();
       return;
     }
 

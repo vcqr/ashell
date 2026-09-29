@@ -172,6 +172,13 @@ export default {
         copy: "Copy terminal selection",
         paste: "Paste into terminal",
       },
+      view: {
+        splitRight: "Split right",
+        splitDown: "Split down",
+        splitGrid: "Split into 2×2 grid",
+        splitClose: "Exit split view",
+        focusNextPane: "Move focus to next pane",
+      },
       font: {
         zoomIn: "Increase terminal font size",
         zoomOut: "Decrease terminal font size",

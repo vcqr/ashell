@@ -16,6 +16,11 @@ export type ShortcutActionId =
   | "tab.next"
   | "tab.prev"
   | "tab.jump"
+  | "view.splitRight"
+  | "view.splitDown"
+  | "view.splitGrid"
+  | "view.splitClose"
+  | "view.focusNextPane"
   | "term.copy"
   | "term.paste"
   | "font.zoomIn"
@@ -83,6 +88,46 @@ export const SHORTCUT_ACTIONS: ShortcutActionDef[] = [
     defaults: {
       mac: { key: "digit", ctrl: false, meta: true, shift: false, alt: false },
       win: { key: "digit", ctrl: true, meta: false, shift: false, alt: true },
+    },
+  },
+  {
+    id: "view.splitRight",
+    category: "tabs",
+    defaults: {
+      mac: { key: "\\", ctrl: false, meta: true, shift: false, alt: false },
+      win: { key: "\\", ctrl: true, meta: false, shift: false, alt: false },
+    },
+  },
+  {
+    id: "view.splitDown",
+    category: "tabs",
+    defaults: {
+      mac: { key: "\\", ctrl: false, meta: true, shift: true, alt: false },
+      win: { key: "\\", ctrl: true, meta: false, shift: true, alt: false },
+    },
+  },
+  {
+    id: "view.splitClose",
+    category: "tabs",
+    defaults: {
+      mac: { key: "\\", ctrl: false, meta: true, shift: false, alt: true },
+      win: { key: "\\", ctrl: true, meta: false, shift: false, alt: true },
+    },
+  },
+  {
+    id: "view.splitGrid",
+    category: "tabs",
+    defaults: {
+      mac: { key: "g", ctrl: false, meta: true, shift: false, alt: true },
+      win: { key: "g", ctrl: true, meta: false, shift: false, alt: true },
+    },
+  },
+  {
+    id: "view.focusNextPane",
+    category: "tabs",
+    defaults: {
+      mac: { key: "arrowright", ctrl: false, meta: true, shift: false, alt: true },
+      win: { key: "arrowright", ctrl: true, meta: false, shift: false, alt: true },
     },
   },
   {

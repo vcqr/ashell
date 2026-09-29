@@ -47,7 +47,12 @@ import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
 import { useTrayStore } from "@/stores/tray";
 import { useTheme } from "@/composables/useTheme";
-import { useTabs, HOST_SESSION_STATUS_KEY } from "@/composables/useTabs";
+import {
+  useTabs,
+  HOST_SESSION_STATUS_KEY,
+  type SplitDir,
+  type SplitPaneIdx,
+} from "@/composables/useTabs";
 import { usePanels } from "@/composables/usePanels";
 import { useWindowControls } from "@/composables/useWindowControls";
 import { useGlobalShortcuts } from "@/composables/useGlobalShortcuts";
@@ -133,10 +138,180 @@ const {
   toggleHosts,
   sendCommandToActive,
   hostSessionStatus,
+  splitEnabled,
+  splitDir,
+  splitGrid,
+  splitRatio,
+  splitRatio2,
+  splitPaneKeys,
+  activateTab,
+  focusPane,
+  focusNextPane,
+  disableSplit,
+  splitTab,
+  splitGridTab,
 } = useTabs();
 
 // 主机会话状态下发给主机树/卡片视图(状态点);HostsDrawer 中间层无需透传
 provide(HOST_SESSION_STATUS_KEY, hostSessionStatus);
+
+// ── 分屏布局（split view）──
+// 每个包一层 .terminal-pane 绝对定位容器：未分屏时占满整个内容区（等价于
+// 历史上 TerminalView 直接作为 .app-content 子元素），分屏时按方向与比例切分
+// （双格 = 单条分隔条；四格 = 2×2 网格 + 竖横两条分隔条），分隔条是 8px 命中区
+// 的细线。TerminalView 实例自带的 ResizeObserver 会在窗格几何变化时自动 fit
+// 并把新行列发给后端，无需额外处理。
+
+/** 分隔条总宽（px）：两侧窗格各让出一半，避免终端画布贴死。 */
+const SPLIT_GAP = 8;
+/** 窗格最小占比，拖拽与恢复时夹取。 */
+const SPLIT_MIN_RATIO = 0.15;
+const SPLIT_MAX_RATIO = 0.85;
+
+const appContentRef = ref<HTMLDivElement | null>(null);
+
+/** 当前布局的窗格槽数：双格 2，四格 4。 */
+const splitSlotCount = computed(() => (splitGrid.value ? 4 : 2));
+
+/** 当前实际可见的 tab key 集合（v-show 判定源）。 */
+const visiblePaneKeys = computed<Set<string>>(() => {
+  if (!splitEnabled.value) {
+    return new Set(activeTabKey.value ? [activeTabKey.value] : []);
+  }
+  const s = new Set<string>();
+  for (const k of splitPaneKeys.value) if (k) s.add(k);
+  return s;
+});
+
+/** tab 所在窗格下标；不在任何窗格（隐藏）返回 -1。 */
+function paneIndex(key: string): SplitPaneIdx | -1 {
+  if (!splitEnabled.value) return activeTabKey.value === key ? 0 : -1;
+  return (splitPaneKeys.value.indexOf(key) as SplitPaneIdx | -1) ?? -1;
+}
+
+/** 按窗格下标计算绝对定位几何（双格 0-1，四格 0-3 = 左上/右上/左下/右下）。 */
+function paneStyleByIdx(idx: SplitPaneIdx): Record<string, string> {
+  const gap = SPLIT_GAP / 2;
+  if (splitGrid.value) {
+    const x = `${(splitRatio.value * 100).toFixed(4)}%`;
+    const y = `${(splitRatio2.value * 100).toFixed(4)}%`;
+    const leftCol = idx % 2 === 0;
+    const topRow = idx < 2;
+    return {
+      ...(leftCol
+        ? { left: "0", width: `calc(${x} - ${gap}px)` }
+        : { left: `calc(${x} + ${gap}px)`, right: "0" }),
+      ...(topRow
+        ? { top: "0", height: `calc(${y} - ${gap}px)` }
+        : { top: `calc(${y} + ${gap}px)`, bottom: "0" }),
+    };
+  }
+  const pct = `${(splitRatio.value * 100).toFixed(4)}%`;
+  if (splitDir.value === "h") {
+    return idx === 0
+      ? { left: "0", top: "0", bottom: "0", width: `calc(${pct} - ${gap}px)` }
+      : { left: `calc(${pct} + ${gap}px)`, top: "0", bottom: "0", right: "0" };
+  }
+  return idx === 0
+    ? { left: "0", right: "0", top: "0", height: `calc(${pct} - ${gap}px)` }
+    : { left: "0", right: "0", top: `calc(${pct} + ${gap}px)`, bottom: "0" };
+}
+
+/** 单个 tab 的窗格容器样式：隐藏 / 单窗格占满 / 分屏几何。 */
+function paneStyle(key: string): Record<string, string> {
+  if (!visiblePaneKeys.value.has(key)) return { display: "none" };
+  if (!splitEnabled.value) {
+    return { left: "0", right: "0", top: "0", bottom: "0" };
+  }
+  const idx = paneIndex(key);
+  return idx >= 0 ? paneStyleByIdx(idx as SplitPaneIdx) : { display: "none" };
+}
+
+/** 空窗格（槽位为 null）下标；没有空窗格返回 -1。 */
+const emptyPaneIdx = computed<SplitPaneIdx | -1>(() => {
+  if (!splitEnabled.value) return -1;
+  const idx = splitPaneKeys.value.findIndex((k) => k === null);
+  return idx >= 0 && idx < splitSlotCount.value ? (idx as SplitPaneIdx) : -1;
+});
+
+/**
+ * 点击窗格区域时切换焦点窗格。只有点在终端本体（.terminal-host）上才算
+ * "进入这个窗格工作"——点在搜索条 / 命令建议等浮层上不切换，避免激活窗格
+ * 时 TerminalView 的 rAF focus 把焦点从浮层输入框里抢走。
+ */
+function onPaneMousedown(key: string, e: MouseEvent) {
+  const el = e.target as HTMLElement | null;
+  if (!el || !el.closest(".terminal-host")) return;
+  const idx = paneIndex(key);
+  if (idx >= 0) focusPane(idx as SplitPaneIdx);
+}
+
+// ---- 分隔条拖拽（pointer capture：指针出界也持续跟踪，且不惊动 xterm）----
+const splitDragging = ref(false);
+/** 正在拖动的分隔条轴向：x = 竖条（调左右占比），y = 横条（调上下占比）。 */
+const splitDragAxis = ref<"x" | "y">("x");
+
+function onDividerPointerdown(e: PointerEvent, axis: "x" | "y") {
+  if (!splitEnabled.value) return;
+  e.preventDefault();
+  splitDragging.value = true;
+  splitDragAxis.value = axis;
+  // pointer capture 让指针拖出条外仍持续跟踪；个别环境（无活动指针）会抛错，忽略
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    // ignore
+  }
+}
+
+function onDividerPointermove(e: PointerEvent, axis: "x" | "y") {
+  if (!splitDragging.value || !appContentRef.value) return;
+  const rect = appContentRef.value.getBoundingClientRect();
+  const clamp = (raw: number) =>
+    Math.min(SPLIT_MAX_RATIO, Math.max(SPLIT_MIN_RATIO, raw));
+  if (axis === "x") {
+    splitRatio.value = clamp((e.clientX - rect.left) / rect.width);
+  } else if (splitGrid.value) {
+    // 四分屏的横条调独立的比例（splitRatio2），双格横条仍调 splitRatio
+    splitRatio2.value = clamp((e.clientY - rect.top) / rect.height);
+  } else {
+    splitRatio.value = clamp((e.clientY - rect.top) / rect.height);
+  }
+}
+
+function onDividerPointerup(e: PointerEvent) {
+  if (!splitDragging.value) return;
+  splitDragging.value = false;
+  try {
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  } catch {
+    // ignore
+  }
+}
+
+// 拖拽期间锁定光标与文本选区，松开后还原
+watch(splitDragging, (v) => {
+  document.body.style.cursor = v
+    ? splitDragAxis.value === "x"
+      ? "col-resize"
+      : "row-resize"
+    : "";
+  document.body.style.userSelect = v ? "none" : "";
+});
+
+const splitRatioPct = computed(() => `${(splitRatio.value * 100).toFixed(4)}%`);
+const splitRatio2Pct = computed(() =>
+  `${(splitRatio2.value * 100).toFixed(4)}%`,
+);
+
+/** TabBar 右键菜单分屏入口（事件参数为 tab key 在前）。 */
+function onTabSplit(key: string, dir: SplitDir) {
+  splitTab(dir, key);
+}
+
+function onTabSplitGrid(key: string) {
+  splitGridTab(key);
+}
 
 const {
   aiOpen,
@@ -255,6 +430,11 @@ useGlobalShortcuts({
   toggleForward,
   toggleTemplate,
   toggleActivityBar,
+  splitRight: () => splitTab("h"),
+  splitDown: () => splitTab("v"),
+  splitGrid: () => splitGridTab(),
+  splitClose: disableSplit,
+  focusNextPane,
 });
 
 // ── Web 形态浏览器保护 ──
@@ -366,8 +546,10 @@ if (!isTauri) {
                   <TabBar
                     :tabs="tabs"
                     :active-key="activeTabKey"
+                    :split-enabled="splitEnabled"
+                    :split-grid="splitGrid"
                     :get-session-content="getSessionContent"
-                    @update:active-key="(k: string) => (activeTabKey = k)"
+                    @update:active-key="activateTab"
                     @close="closeTab"
                     @new="onTabBarNew"
                     @reorder="reorderTabs"
@@ -379,6 +561,9 @@ if (!isTauri) {
                     @close-left="closeLeftTabs"
                     @close-right="closeRightTabs"
                     @open-in-new-window="openInNewWindow"
+                    @split="onTabSplit"
+                    @split-grid="onTabSplitGrid"
+                    @split-close="disableSplit"
                   />
                 </div>
                 <nav class="drag-spacer" data-tauri-drag-region />
@@ -418,6 +603,7 @@ if (!isTauri) {
               </header>
 
               <div
+                ref="appContentRef"
                 class="app-content"
                 :style="{
                   top: 'var(--ashell-header-h)',
@@ -428,23 +614,76 @@ if (!isTauri) {
                 }"
                 @mousedown="closeHostsIfOpen"
               >
-                <TerminalView
+                <div
                   v-for="tab in tabs"
-                  v-show="tab.key === activeTabKey"
                   :key="tab.key"
-                  :ref="(el) => setTerminalRef(tab.key, el)"
-                  :tab="tab"
-                  :active="tab.key === activeTabKey"
-                  :auto-connect="
-                    !restoredTabKeys.has(tab.key) ||
-                    startupStore.autoConnectRememberedTabs
+                  class="terminal-pane"
+                  :style="paneStyle(tab.key)"
+                  @mousedown.capture="onPaneMousedown(tab.key, $event)"
+                >
+                  <TerminalView
+                    :ref="(el) => setTerminalRef(tab.key, el)"
+                    :tab="tab"
+                    :active="tab.key === activeTabKey"
+                    :auto-connect="
+                      !restoredTabKeys.has(tab.key) ||
+                      startupStore.autoConnectRememberedTabs
+                    "
+                    @sid-ready="onSidReady"
+                    @status-change="onStatusChange"
+                    @title-change="onTitleChange"
+                    @cwd-change="onCwdChange"
+                    @send-to-ai="onSendToAi"
+                    @close-tab="closeTab"
+                  />
+                </div>
+                <!-- 分屏时的空窗格占位：点击聚焦该窗格，随后点标签页即在此打开 -->
+                <div
+                  v-if="emptyPaneIdx !== -1"
+                  class="terminal-pane pane-placeholder"
+                  :style="paneStyleByIdx(emptyPaneIdx)"
+                  @mousedown="focusPane(emptyPaneIdx)"
+                >
+                  <NIcon :size="40" depth="3"><TerminalOutline /></NIcon>
+                  <p>{{ t("app.splitPane.empty") }}</p>
+                </div>
+                <!-- 双格分隔条：8px 命中区，视觉上是一条 1px 线 -->
+                <div
+                  v-if="splitEnabled && !splitGrid"
+                  class="split-divider"
+                  :class="{
+                    'dir-h': splitDir === 'h',
+                    'dir-v': splitDir === 'v',
+                    dragging: splitDragging,
+                  }"
+                  :style="
+                    splitDir === 'h' ? { left: splitRatioPct } : { top: splitRatioPct }
                   "
-                  @sid-ready="onSidReady"
-                  @status-change="onStatusChange"
-                  @title-change="onTitleChange"
-                  @cwd-change="onCwdChange"
-                  @send-to-ai="onSendToAi"
-                  @close-tab="closeTab"
+                  @pointerdown="onDividerPointerdown($event, splitDir === 'h' ? 'x' : 'y')"
+                  @pointermove="onDividerPointermove($event, splitDir === 'h' ? 'x' : 'y')"
+                  @pointerup="onDividerPointerup"
+                  @pointercancel="onDividerPointerup"
+                />
+                <!-- 四分屏（2×2）的分隔条：竖横各一条，各自调一个比例 -->
+                <div
+                  v-if="splitEnabled && splitGrid"
+                  class="split-divider dir-h"
+                  :class="{ dragging: splitDragging && splitDragAxis === 'x' }"
+                  :style="{ left: splitRatioPct }"
+                  @pointerdown="onDividerPointerdown($event, 'x')"
+                  @pointermove="onDividerPointermove($event, 'x')"
+                  @pointerup="onDividerPointerup"
+                  @pointercancel="onDividerPointerup"
+                />
+                <div
+                  v-if="splitEnabled && splitGrid"
+                  class="split-divider dir-v"
+                  :class="{ dragging: splitDragging && splitDragAxis === 'y' }"
+                  :style="{ top: splitRatio2Pct }"
+                  @pointerdown="onDividerPointerdown($event, 'y')"
+                  @pointermove="onDividerPointermove($event, 'y')"
+                  @pointerup="onDividerPointerup"
+                  @pointercancel="onDividerPointerup"
                 />
                 <div v-if="tabs.length === 0" class="empty-state">
                   <NIcon :size="48" depth="3"><TerminalOutline /></NIcon>
@@ -649,6 +888,87 @@ if (!isTauri) {
   overflow: auto;
   background: transparent;
   z-index: 1;
+}
+
+/* ===== 分屏窗格 ===== */
+.terminal-pane {
+  position: absolute;
+  overflow: hidden;
+}
+
+/* 空窗格占位：虚线框 + 居中提示，可点击聚焦 */
+.pane-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--ashell-text-muted, rgba(128, 128, 128, 0.6));
+  background: var(--ashell-bg-alpha, transparent);
+  border: 1px dashed var(--ashell-border, rgba(128, 128, 128, 0.3));
+  border-radius: 8px;
+  margin: 2px;
+  user-select: none;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.pane-placeholder p {
+  margin: 0;
+  padding: 0 16px;
+  text-align: center;
+}
+
+/* 分隔条：8px 命中区，中间 1px 视觉线；悬停/拖拽时高亮 */
+.split-divider {
+  position: absolute;
+  z-index: 3;
+  background: transparent;
+  touch-action: none;
+}
+
+.split-divider.dir-h {
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+}
+
+.split-divider.dir-v {
+  left: 0;
+  right: 0;
+  height: 8px;
+  transform: translateY(-50%);
+  cursor: row-resize;
+}
+
+.split-divider::before {
+  content: "";
+  position: absolute;
+  background: var(--ashell-border, rgba(128, 128, 128, 0.3));
+  transition: background 120ms ease;
+}
+
+.split-divider.dir-h::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.split-divider.dir-v::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.split-divider:hover::before,
+.split-divider.dragging::before {
+  background: var(--ashell-accent, #80b5ff);
 }
 
 .empty-state {
