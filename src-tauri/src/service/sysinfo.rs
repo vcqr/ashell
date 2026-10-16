@@ -187,11 +187,13 @@ for h in /sys/class/hwmon/hwmon*; do
   done
 done
 # SATA/SCSI 硬盘温度：依赖 smartctl（通常需 root，无权限时自动跳过）
-if command -v smartctl >/dev/null 2>&1; then
+# 非交互 SSH 的 PATH 可能不含 /usr/sbin / /usr/local/sbin，补绝对路径兜底
+SMARTCTL=$(command -v smartctl 2>/dev/null || ls /usr/sbin/smartctl /usr/local/sbin/smartctl 2>/dev/null | head -n 1)
+if [ -n "$SMARTCTL" ] && [ -x "$SMARTCTL" ]; then
   for b in /sys/block/sd*; do
     dev="/dev/$(basename "$b")"
     [ -e "$dev" ] || continue
-    te=$(smartctl -A -n standby "$dev" 2>/dev/null | awk '
+    te=$("$SMARTCTL" -A -n standby "$dev" 2>/dev/null | awk '
       /Current Drive Temperature/ {print $4; exit}
       /Temperature_Celsius/ {print $10; exit}
       /Temperature:/ {print $2; exit}
@@ -223,8 +225,10 @@ for d in /sys/class/drm/card[0-9]*; do
   printf 'AM\t%s\t%s\t%s\t%s\t%s\n' "$name" "$busy" "$vu" "$vt" "$te"
 done
 # 华为昇腾 NPU：npu-smi 表格原样输出，由 Rust 侧解析
-if command -v npu-smi >/dev/null 2>&1; then
-  npu-smi info 2>/dev/null
+# npu-smi 常装在 /usr/local/sbin，非交互 SSH PATH 可能不含该目录，补绝对路径兜底
+NPU_SM=$(command -v npu-smi 2>/dev/null || ls /usr/local/sbin/npu-smi /usr/sbin/npu-smi 2>/dev/null | head -n 1)
+if [ -n "$NPU_SM" ] && [ -x "$NPU_SM" ]; then
+  "$NPU_SM" info 2>/dev/null
 fi
 echo '===SECTION:end==='
 "#;
