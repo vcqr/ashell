@@ -186,6 +186,19 @@ for h in /sys/class/hwmon/hwmon*; do
     printf 'HW\t%s\t%s\t%s\n' "$nm" "$lb" "$te"
   done
 done
+# SATA/SCSI 硬盘温度：依赖 smartctl（通常需 root，无权限时自动跳过）
+if command -v smartctl >/dev/null 2>&1; then
+  for b in /sys/block/sd*; do
+    dev="/dev/$(basename "$b")"
+    [ -e "$dev" ] || continue
+    te=$(smartctl -A -n standby "$dev" 2>/dev/null | awk '
+      /Current Drive Temperature/ {print $4; exit}
+      /Temperature_Celsius/ {print $10; exit}
+      /Temperature:/ {print $2; exit}
+    ')
+    [ -n "$te" ] && printf 'SD\t%s\t%s\n' "$(basename "$b")" "$te"
+  done
+fi
 echo '===SECTION:gpu==='
 # NVIDIA：nvidia-smi 一次拿全利用率/显存/温度
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -209,6 +222,10 @@ for d in /sys/class/drm/card[0-9]*; do
   [ -n "$name" ] || name="AMD GPU"
   printf 'AM\t%s\t%s\t%s\t%s\t%s\n' "$name" "$busy" "$vu" "$vt" "$te"
 done
+# 华为昇腾 NPU：npu-smi 表格原样输出，由 Rust 侧解析
+if command -v npu-smi >/dev/null 2>&1; then
+  npu-smi info 2>/dev/null
+fi
 echo '===SECTION:end==='
 "#;
 
@@ -371,7 +388,8 @@ fn parse_cpu(lines: &[&str]) -> f32 {
     0.0
 }
 
-/// 解析温度段：每行 `TZ\t<type>\t<毫摄氏度>` 或 `HW\t<hwmon名>\t<label>\t<毫摄氏度>`。
+/// 解析温度段：`TZ\t<type>\t<毫摄氏度>` / `HW\t<hwmon名>\t<label>\t<毫摄氏度>`
+/// / `SD\t<盘符>\t<摄氏度（smartctl 原始值）>`。
 /// hwmon 与 thermal_zone 可能重复暴露同一传感器，按 (label, 温度) 去重。
 fn parse_temps(lines: &[&str]) -> Vec<TempZone> {
     let mut out: Vec<TempZone> = Vec::new();
@@ -384,6 +402,8 @@ fn parse_temps(lines: &[&str]) -> Vec<TempZone> {
                 let label = if lb.trim().is_empty() { name } else { lb };
                 (label, te)
             }
+            // smartctl：SATA/SCSI 盘，值已是摄氏度
+            ["SD", dev, te] => (dev, te),
             _ => continue,
         };
         let label = label_raw.trim();
@@ -393,7 +413,12 @@ fn parse_temps(lines: &[&str]) -> Vec<TempZone> {
         let Some(milli) = raw.trim().parse::<f32>().ok() else {
             continue;
         };
-        let temp_c = milli / 1000.0;
+        // TZ/HW 为毫摄氏度，SD 已是摄氏度；SD 值一般 < 100，TZ 除以 1000 后也在同区间
+        let temp_c = if cols[0] == "SD" {
+            milli
+        } else {
+            milli / 1000.0
+        };
         // 过滤无效读数：挂载但无数据的传感器常报 0
         if !temp_c.is_finite() || temp_c <= 0.0 || temp_c > 150.0 {
             continue;
@@ -422,7 +447,16 @@ fn parse_temps(lines: &[&str]) -> Vec<TempZone> {
 /// 字段可能为 "[N/A]" / 空，宽松解析，取不到置 0。
 fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
     let mut out = Vec::new();
+    // 昇腾 NPU 行与 Chip 行分两行输出，先用 pending 缓存配对
+    let mut ascend_pending: Vec<(String, f32)> = Vec::new();
     for l in lines {
+        // npu-smi 表格行（含 '|'，非制表符格式）
+        if l.contains('|') {
+            if let Some(gpu) = ascend_table_line(l, &mut ascend_pending) {
+                out.push(gpu);
+            }
+            continue;
+        }
         let cols: Vec<&str> = l.split('\t').collect();
         if cols.len() < 6 {
             continue;
@@ -479,6 +513,65 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
         out.push(gpu);
     }
     out
+}
+
+/// 解析 npu-smi info 表格行。
+/// NPU 行：`| 0  910B4 | OK | 68.5  45 ... |` → 记下（型号, 温度）待配对；
+/// Chip 行（含 0x 总线号）：`| 0 | 0x0000 | 0 | 651 / 1517 ... |` → 取 AICore%
+/// 与显存（取最后一个 used / total 对，多芯片卡上即 HBM），与前一条 NPU 行合成一条记录。
+/// 老版本（如 20.x）一行格里塞多个字段，拆 '|' 后再按空白二次切分统一处理。
+fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32)>) -> Option<GpuInfo> {
+    let t = l.trim();
+    if t.starts_with('+') {
+        return None;
+    }
+    let tokens: Vec<&str> = t
+        .split(|c: char| c == '|' || c.is_whitespace())
+        .filter(|s| !s.is_empty())
+        .collect();
+    // 首个 token 必须是数字索引，否则是表头 / 版本行
+    if tokens.len() < 4 || tokens[0].parse::<u32>().is_err() {
+        return None;
+    }
+    let bus_idx = tokens
+        .iter()
+        .position(|tk| tk.len() > 2 && tk.starts_with("0x"));
+    match bus_idx {
+        Some(ix) => {
+            let util = tokens
+                .get(ix + 1)
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(0.0);
+            let (mem_used, mem_total) = match tokens.iter().rposition(|tk| *tk == "/") {
+                Some(j) if j >= 1 && j + 1 < tokens.len() => (
+                    tokens[j - 1].parse::<u64>().unwrap_or(0),
+                    tokens[j + 1].parse::<u64>().unwrap_or(0),
+                ),
+                _ => (0, 0),
+            };
+            let (name, temp_c) = pending
+                .pop()
+                .unwrap_or_else(|| ("Ascend NPU".to_string(), 0.0));
+            Some(GpuInfo {
+                vendor: "ascend".into(),
+                name,
+                util_percent: clamp_pct(util),
+                mem_used_mb: mem_used,
+                mem_total_mb: mem_total,
+                temp_c: temp_c.clamp(0.0, 150.0),
+            })
+        }
+        None => {
+            // NPU 行：tokens = [索引, 型号, 健康态, 功率, 温度, ...]
+            let name = tokens[1].to_string();
+            let temp_c = tokens
+                .get(4)
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(0.0);
+            pending.push((name, temp_c));
+            None
+        }
+    }
 }
 
 fn clamp_pct(v: f32) -> f32 {
@@ -765,4 +858,91 @@ fn rank_procs(procs: Vec<ProcStat>) -> (Vec<ProcStat>, Vec<ProcStat>) {
     top_mem.truncate(5);
 
     (top_cpu, top_mem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_temps_dedup_and_sd() {
+        let lines = vec![
+            "TZ\tx86_pkg_temp\t45000",
+            "HW\tcoretemp\tPackage id 0\t45000", // 与 TZ 温度相近但 label 不同，保留
+            "HW\tnvme\tComposite\t38500",
+            "HW\tnvme\t\t41000", // 无 label 时回退 hwmon 名
+            "SD\tsda\t34",
+            "SD\tsdb\t0",       // 无效读数过滤
+            "TZ\tbroken\tabc",  // 解析失败跳过
+        ];
+        let temps = parse_temps(&lines);
+        let labels: Vec<&str> = temps.iter().map(|t| t.label.as_str()).collect();
+        assert!(labels.contains(&"sda"));
+        assert!(labels.contains(&"Composite"));
+        assert!(labels.contains(&"nvme"));
+        assert!(!labels.contains(&"sdb"));
+        assert!(!labels.contains(&"broken"));
+        let sda = temps.iter().find(|t| t.label == "sda").unwrap();
+        assert!((sda.temp_c - 34.0).abs() < 0.01);
+        let nvme = temps.iter().find(|t| t.label == "Composite").unwrap();
+        assert!((nvme.temp_c - 38.5).abs() < 0.01);
+        // 按温度降序
+        assert!(temps.windows(2).all(|w| w[0].temp_c >= w[1].temp_c));
+    }
+
+    #[test]
+    fn test_parse_gpus_ascend_new_format() {
+        let lines = vec![
+            "+-------------------+-----------------+",
+            "| npu-smi 23.0      Version: 23.0.rc2 |",
+            "+===================+==================",
+            "| NPU     Name      | Health          |",
+            "| Chip              | Bus-Id          |",
+            "+===================+==================",
+            "| 0       910B4     | OK              | 68.5    45       0 / 15 |",
+            "| 0                 | 0x0000          | 0       651 / 1517   1141 / 32768 |",
+            "| 1       910B4     | OK              | 71.2    52       0 / 15 |",
+            "| 1                 | 0x0000          | 30      800 / 1517    2000 / 32768 |",
+        ];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 2);
+        assert_eq!(gpus[0].vendor, "ascend");
+        assert_eq!(gpus[0].name, "910B4");
+        assert!((gpus[0].temp_c - 45.0).abs() < 0.01);
+        assert!((gpus[0].util_percent - 0.0).abs() < 0.01);
+        assert_eq!(gpus[0].mem_used_mb, 1141);
+        assert_eq!(gpus[0].mem_total_mb, 32768);
+        assert!((gpus[1].util_percent - 30.0).abs() < 0.01);
+        assert_eq!(gpus[1].mem_used_mb, 2000);
+    }
+
+    #[test]
+    fn test_parse_gpus_ascend_old_format() {
+        let lines = vec![
+            "| 0         910             | OK              | 63.5         41               0 / 15          |",
+            "| 0                         | 0x0000          | 0            736  / 32268                     |",
+        ];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].name, "910");
+        assert!((gpus[0].temp_c - 41.0).abs() < 0.01);
+        assert_eq!(gpus[0].mem_used_mb, 736);
+        assert_eq!(gpus[0].mem_total_mb, 32268);
+    }
+
+    #[test]
+    fn test_parse_gpus_nv_am_unchanged() {
+        let lines = vec![
+            "NV\tNVIDIA A100\t80\t1024\t40960\t66",
+            "AM\tAMD Radeon RX 7900\t33\t4294967296\t17179869184\t45000",
+        ];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 2);
+        assert_eq!(gpus[0].vendor, "nvidia");
+        assert_eq!(gpus[0].mem_total_mb, 40960);
+        assert_eq!(gpus[1].vendor, "amd");
+        assert_eq!(gpus[1].mem_used_mb, 4096);
+        assert_eq!(gpus[1].mem_total_mb, 16384);
+        assert!((gpus[1].temp_c - 45.0).abs() < 0.01);
+    }
 }
