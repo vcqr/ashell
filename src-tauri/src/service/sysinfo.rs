@@ -519,6 +519,62 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
     out
 }
 
+/// 判断是否为总线号 token：老格式 `0x0000`，新格式 `0000:C1:00.0` / `C1:00.0`
+fn is_pci_bus(tk: &str) -> bool {
+    if tk.starts_with("0x") {
+        return true;
+    }
+    let parts: Vec<&str> = tk.split(':').collect();
+    parts.len() >= 2
+        && parts[..parts.len() - 1]
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 4 && p.chars().all(|c| c.is_ascii_hexdigit()))
+        && parts[parts.len() - 1]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '.')
+        && parts[parts.len() - 1].contains('.')
+}
+
+/// 从 token 流里提取所有 `used / total` 对，兼容 `0 / 0`、`60465/ 65536`、`736  / 32268` 等排版
+fn mem_pairs(tokens: &[&str]) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tk = tokens[i];
+        if tk == "/" {
+            if i >= 1 {
+                if let (Ok(a), Some(b)) = (
+                    tokens[i - 1].parse::<u64>(),
+                    tokens.get(i + 1).and_then(|s| s.parse::<u64>().ok()),
+                ) {
+                    out.push((a, b));
+                    i += 2;
+                    continue;
+                }
+            }
+        } else if let Some(u) = tk.strip_suffix('/') {
+            if let (Ok(a), Some(b)) = (
+                u.parse::<u64>(),
+                tokens.get(i + 1).and_then(|s| s.parse::<u64>().ok()),
+            ) {
+                out.push((a, b));
+                i += 2;
+                continue;
+            }
+        } else if let Some(b) = tk.strip_prefix('/') {
+            if i >= 1 {
+                if let (Ok(a), Ok(t)) = (tokens[i - 1].parse::<u64>(), b.parse::<u64>()) {
+                    out.push((a, t));
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 /// 解析 npu-smi info 表格行。
 /// NPU 行：`| 0  910B4 | OK | 68.5  45 ... |` → 记下（型号, 温度）待配对；
 /// Chip 行（含 0x 总线号）：`| 0 | 0x0000 | 0 | 651 / 1517 ... |` → 取 AICore%
@@ -537,22 +593,18 @@ fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32)>) -> Option<GpuInf
     if tokens.len() < 4 || tokens[0].parse::<u32>().is_err() {
         return None;
     }
-    let bus_idx = tokens
-        .iter()
-        .position(|tk| tk.len() > 2 && tk.starts_with("0x"));
+    let bus_idx = tokens.iter().position(|tk| is_pci_bus(tk));
     match bus_idx {
         Some(ix) => {
             let util = tokens
                 .get(ix + 1)
                 .and_then(|s| s.parse::<f32>().ok())
                 .unwrap_or(0.0);
-            let (mem_used, mem_total) = match tokens.iter().rposition(|tk| *tk == "/") {
-                Some(j) if j >= 1 && j + 1 < tokens.len() => (
-                    tokens[j - 1].parse::<u64>().unwrap_or(0),
-                    tokens[j + 1].parse::<u64>().unwrap_or(0),
-                ),
-                _ => (0, 0),
-            };
+            // 取最后一个 used / total 对：多芯片卡上即 HBM 显存
+            let (mem_used, mem_total) = mem_pairs(&tokens)
+                .last()
+                .copied()
+                .unwrap_or((0, 0));
             let (name, temp_c) = pending
                 .pop()
                 .unwrap_or_else(|| ("Ascend NPU".to_string(), 0.0));
@@ -567,6 +619,10 @@ fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32)>) -> Option<GpuInf
         }
         None => {
             // NPU 行：tokens = [索引, 型号, 健康态, 功率, 温度, ...]
+            // 健康态（OK/Warning/Error）非数字；底部进程表行第 3 个 token 是数字 PID，跳过避免污染配对
+            if tokens[2].parse::<u32>().is_ok() {
+                return None;
+            }
             let name = tokens[1].to_string();
             let temp_c = tokens
                 .get(4)
@@ -932,6 +988,37 @@ mod tests {
         assert!((gpus[0].temp_c - 41.0).abs() < 0.01);
         assert_eq!(gpus[0].mem_used_mb, 736);
         assert_eq!(gpus[0].mem_total_mb, 32268);
+    }
+
+    #[test]
+    fn test_parse_gpus_ascend_25_format() {
+        // npu-smi 25.2.0（910B2 实机输出）：总线号 0000:C1:00.0，显存 60465/ 65536
+        let lines = vec![
+            "+------------------------------------------------------------------------------------------------+",
+            "| npu-smi 25.2.0                   Version: 25.2.0                                               |",
+            "+---------------------------+---------------+----------------------------------------------------+",
+            "| NPU   Name                | Health        | Power(W)    Temp(C)           Hugepages-Usage(page)|",
+            "| Chip                      | Bus-Id        | AICore(%)   Memory-Usage(MB)  HBM-Usage(MB)        |",
+            "+===========================+===============+====================================================+",
+            "| 0     910B2               | OK            | 93.7        40                0    / 0             |",
+            "| 0                         | 0000:C1:00.0  | 0           0    / 0          60465/ 65536         |",
+            "+===========================+===============+====================================================+",
+            "| 1     910B2               | OK            | 96.2        42                0    / 0             |",
+            "| 0                         | 0000:01:00.0  | 0           0    / 0          60465/ 65536         |",
+            "+===========================+===============+====================================================+",
+            // 底部进程表：不应产生记录，也不能污染配对
+            "| NPU     Chip              | Process id    | Process name             | Process memory(MB)      |",
+            "| 0       0                 | 130489        | VLLMWorker_TP            | 57117                   |",
+        ];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 2);
+        assert_eq!(gpus[0].vendor, "ascend");
+        assert_eq!(gpus[0].name, "910B2");
+        assert!((gpus[0].temp_c - 40.0).abs() < 0.01);
+        assert!((gpus[0].util_percent - 0.0).abs() < 0.01);
+        assert_eq!(gpus[0].mem_used_mb, 60465);
+        assert_eq!(gpus[0].mem_total_mb, 65536);
+        assert!((gpus[1].temp_c - 42.0).abs() < 0.01);
     }
 
     #[test]
