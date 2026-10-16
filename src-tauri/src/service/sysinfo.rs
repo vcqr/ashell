@@ -244,10 +244,15 @@ if [ -n "$NPU_SM" ] && [ -x "$NPU_SM" ]; then
   "$NPU_SM" info 2>/dev/null
 fi
 echo '===SECTION:cpuinfo==='
-# CPU 型号：x86 优先 model name，ARM 回退 Processor / Hardware
+# CPU 型号：x86 优先 model name；ARM /proc/cpuinfo 各家不统一，逐级回退到 lscpu
 grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
+grep -m1 '^Model Name' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
+if command -v lscpu >/dev/null 2>&1; then
+  LC_ALL=C lscpu 2>/dev/null | grep -m1 '^Model name' | cut -d: -f2-
+fi
 grep -m1 '^Processor' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
 grep -m1 '^Hardware' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
+grep -m1 '^Model' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
 echo '===SECTION:dmi_mem==='
 # 内存规格：依赖 dmidecode（需 root），失败时留空由前端隐藏
 if command -v dmidecode >/dev/null 2>&1; then
