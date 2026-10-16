@@ -307,6 +307,8 @@ export interface DiskUsage {
   mount: string
   total_bytes: number
   used_bytes: number
+  /** 硬盘型号，匹配不到时缺省 */
+  model?: string
 }
 
 export interface NicStat {
@@ -361,8 +363,16 @@ export interface SysInfo {
   /** 0 - 100 */
   cpu_percent: number
   cpu_cores: number
+  /** CPU 型号，取不到时为空串 */
+  cpu_model: string
   mem_total_kb: number
   mem_used_kb: number
+  /** 内存类型（如 "DDR4"），dmidecode 不可用时为空 */
+  mem_type: string
+  /** 内存频率（如 "3200 MT/s"），dmidecode 不可用时为空 */
+  mem_speed: string
+  /** 已插入内存条数，未知时为 0 */
+  dimm_count: number
   swap_total_kb: number
   swap_used_kb: number
   disks: DiskUsage[]

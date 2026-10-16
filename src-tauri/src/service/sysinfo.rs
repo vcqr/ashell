@@ -16,6 +16,9 @@ pub struct DiskUsage {
     pub mount: String,
     pub total_bytes: u64,
     pub used_bytes: u64,
+    /// 硬盘型号（sysfs 匹配失败时为 None，序列化时省略）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,8 +78,16 @@ pub struct SysInfo {
     pub uptime_secs: u64,
     pub cpu_percent: f32,
     pub cpu_cores: u32,
+    /// CPU 型号（/proc/cpuinfo model name / Processor / Hardware）
+    pub cpu_model: String,
     pub mem_total_kb: u64,
     pub mem_used_kb: u64,
+    /// 内存类型（如 "DDR4"），dmidecode 不可用时为空
+    pub mem_type: String,
+    /// 内存频率（如 "3200 MT/s"），dmidecode 不可用时为空
+    pub mem_speed: String,
+    /// 已插入内存条数，未知时为 0
+    pub dimm_count: u32,
     pub swap_total_kb: u64,
     pub swap_used_kb: u64,
     pub disks: Vec<DiskUsage>,
@@ -232,6 +243,32 @@ NPU_SM=$(command -v npu-smi 2>/dev/null || ls /usr/local/sbin/npu-smi /usr/sbin/
 if [ -n "$NPU_SM" ] && [ -x "$NPU_SM" ]; then
   "$NPU_SM" info 2>/dev/null
 fi
+echo '===SECTION:cpuinfo==='
+# CPU 型号：x86 优先 model name，ARM 回退 Processor / Hardware
+grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
+grep -m1 '^Processor' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
+grep -m1 '^Hardware' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
+echo '===SECTION:dmi_mem==='
+# 内存规格：依赖 dmidecode（需 root），失败时留空由前端隐藏
+if command -v dmidecode >/dev/null 2>&1; then
+  dmidecode -t memory 2>/dev/null | awk -F': *' '
+    /^[[:space:]]*Size:/ && $2 != "" && $2 != "No Module Installed" { n++ }
+    /^[[:space:]]*Type:/ && $2 != "" { t = $2 }
+    /^[[:space:]]*Configured Memory Speed:/ && $2 != "" { cs = $2 }
+    /^[[:space:]]*Speed:/ && $2 != "" { s = $2 }
+    END { printf "DIM\t%d\t%s\t%s\n", n+0, t, (cs != "" ? cs : s) }
+  '
+fi
+echo '===SECTION:blkmod==='
+# 硬盘型号：sysfs 免工具获取
+for b in /sys/block/sd* /sys/block/nvme* /sys/block/vd*; do
+  [ -e "$b" ] || continue
+  dev=$(basename "$b")
+  case "$dev" in loop*|ram*|zram*|md*|dm-*) continue ;; esac
+  m=$(cat "$b/device/model" 2>/dev/null)
+  [ -n "$m" ] || continue
+  printf 'BLK\t%s\t%s\n' "$dev" "$m"
+done
 echo '===SECTION:end==='
 "#;
 
@@ -290,9 +327,12 @@ fn parse(text: &str) -> SysInfo {
         .iter()
         .find_map(|l| l.trim().parse::<u32>().ok())
         .unwrap_or(0);
+    let cpu_model = parse_cpu_model(&take("cpuinfo"));
+    let (mem_type, mem_speed, dimm_count) = parse_dmi_mem(&take("dmi_mem"));
 
+    let mut disks = parse_disks(&take("disk"));
+    attach_disk_models(&mut disks, parse_blk_models(&take("blkmod")));
     let (mem_total_kb, mem_used_kb, swap_total_kb, swap_used_kb) = parse_mem(&take("mem"));
-    let disks = parse_disks(&take("disk"));
     let nics = parse_nics(&take("net"));
     let net_rx_bytes = nics.iter().map(|n| n.rx_bytes).sum();
     let net_tx_bytes = nics.iter().map(|n| n.tx_bytes).sum();
@@ -314,8 +354,12 @@ fn parse(text: &str) -> SysInfo {
         uptime_secs,
         cpu_percent,
         cpu_cores,
+        cpu_model,
         mem_total_kb,
         mem_used_kb,
+        mem_type,
+        mem_speed,
+        dimm_count,
         swap_total_kb,
         swap_used_kb,
         disks,
@@ -392,6 +436,86 @@ fn parse_cpu(lines: &[&str]) -> f32 {
         }
     }
     0.0
+}
+
+fn parse_cpu_model(lines: &[&str]) -> String {
+    lines
+        .iter()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// 解析 dmidecode 汇总行：`DIM\t<已插条数>\t<类型>\t<频率>`
+fn parse_dmi_mem(lines: &[&str]) -> (String, String, u32) {
+    for l in lines {
+        let cols: Vec<&str> = l.split('\t').collect();
+        if cols.len() < 4 || cols[0] != "DIM" {
+            continue;
+        }
+        let count = cols[1].trim().parse::<u32>().unwrap_or(0);
+        let mtype = cols[2].trim().to_string();
+        let speed = cols[3].trim().to_string();
+        if count == 0 && mtype.is_empty() {
+            continue;
+        }
+        return (mtype, speed, count);
+    }
+    (String::new(), String::new(), 0)
+}
+
+/// 解析 sysfs 硬盘型号行：`BLK\t<设备名>\t<型号>`
+fn parse_blk_models(lines: &[&str]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for l in lines {
+        let cols: Vec<&str> = l.splitn(3, '\t').collect();
+        if cols.len() < 3 || cols[0] != "BLK" {
+            continue;
+        }
+        let model = cols[2].trim().to_string();
+        if model.is_empty() {
+            continue;
+        }
+        out.push((cols[1].to_string(), model));
+    }
+    out
+}
+
+/// 把 sysfs 设备型号按设备名前缀匹配回填到 df 盘点上。
+/// df 的 filesystem 形如 /dev/sda1、/dev/nvme0n1p2，取最长匹配键。
+fn attach_disk_models(disks: &mut [DiskUsage], models: Vec<(String, String)>) {
+    if models.is_empty() {
+        return;
+    }
+    for d in disks.iter_mut() {
+        let Some(devname) = d.filesystem.strip_prefix("/dev/") else {
+            continue;
+        };
+        let mut best: Option<&(String, String)> = None;
+        for kv in &models {
+            // sda 匹配 sda1；nvme0n1 匹配 nvme0n1p2（分区标记 p）
+            let matched = devname == kv.0
+                || devname.starts_with(&format!("{}p", kv.0))
+                || (devname.starts_with(&kv.0)
+                    && !kv.0.starts_with("nvme")
+                    && !kv.0
+                        .chars()
+                        .last()
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false));
+            let better = match best {
+                None => true,
+                Some(b) => kv.0.len() > b.0.len(),
+            };
+            if matched && better {
+                best = Some(kv);
+            }
+        }
+        if let Some((_, m)) = best {
+            d.model = Some(m.clone());
+        }
+    }
 }
 
 /// 解析温度段：`TZ\t<type>\t<毫摄氏度>` / `HW\t<hwmon名>\t<label>\t<毫摄氏度>`
@@ -715,6 +839,7 @@ fn parse_disks(lines: &[&str]) -> Vec<DiskUsage> {
             mount,
             total_bytes: total_kb.saturating_mul(1024),
             used_bytes: used_kb.saturating_mul(1024),
+            model: None,
         });
     }
     // 把 / 排第一
@@ -1043,5 +1168,63 @@ mod tests {
         assert_eq!(gpus[1].mem_used_mb, 4096);
         assert_eq!(gpus[1].mem_total_mb, 16384);
         assert!((gpus[1].temp_c - 45.0).abs() < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod tests2 {
+    use super::*;
+
+    #[test]
+    fn test_parse_cpu_model() {
+        assert_eq!(
+            parse_cpu_model(&[" Intel(R) Xeon(R) Gold 6248R CPU @ 3.00GHz", ""]),
+            "Intel(R) Xeon(R) Gold 6248R CPU @ 3.00GHz"
+        );
+        assert_eq!(parse_cpu_model(&["", " "]), "");
+    }
+
+    #[test]
+    fn test_parse_dmi_mem() {
+        let (t, sp, n) = parse_dmi_mem(&["DIM\t8\tDDR4\t3200 MT/s"]);
+        assert_eq!((t.as_str(), sp.as_str(), n), ("DDR4", "3200 MT/s", 8));
+        let (t, sp, n) = parse_dmi_mem(&["DIM\t0\t\t", "other"]);
+        assert_eq!((t.as_str(), sp.as_str(), n), ("", "", 0));
+    }
+
+    #[test]
+    fn test_attach_disk_models() {
+        let models = vec![
+            ("sda".to_string(), "SAMSUNG MZQL21T9".to_string()),
+            ("nvme0n1".to_string(), "INTEL SSDPE2KX010T8".to_string()),
+        ];
+        let mut disks = vec![
+            DiskUsage {
+                filesystem: "/dev/sda1".into(),
+                mount: "/".into(),
+                total_bytes: 1,
+                used_bytes: 0,
+                model: None,
+            },
+            DiskUsage {
+                filesystem: "/dev/nvme0n1p2".into(),
+                mount: "/data".into(),
+                total_bytes: 1,
+                used_bytes: 0,
+                model: None,
+            },
+            DiskUsage {
+                filesystem: "/dev/mapper/vg-root".into(),
+                mount: "/x".into(),
+                total_bytes: 1,
+                used_bytes: 0,
+                model: None,
+            },
+        ];
+        attach_disk_models(&mut disks, models);
+        assert_eq!(disks[0].model.as_deref(), Some("SAMSUNG MZQL21T9"));
+        assert_eq!(disks[1].model.as_deref(), Some("INTEL SSDPE2KX010T8"));
+        // LVM 等非物理设备不误挂型号
+        assert_eq!(disks[2].model, None);
     }
 }

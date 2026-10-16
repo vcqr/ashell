@@ -474,6 +474,15 @@ const panelStyle = computed(() => ({
                 <NDescriptionsItem :label="t('hostInfo.labels.kernel')" :span="2">
                   <span class="info-value mono">{{ info?.kernel || "-" }}</span>
                 </NDescriptionsItem>
+                <NDescriptionsItem
+                  v-if="info?.cpu_model"
+                  :label="t('hostInfo.labels.cpuModel')"
+                  :span="2"
+                >
+                  <span class="info-value mono" :title="info.cpu_model">
+                    {{ info.cpu_model }}
+                  </span>
+                </NDescriptionsItem>
                 <NDescriptionsItem :label="t('hostInfo.labels.uptime')" :span="2">
                   <span class="info-value">
                     {{ info ? humanUptime(info.uptime_secs, t) : "-" }}
@@ -533,7 +542,13 @@ const panelStyle = computed(() => ({
                           info
                             ? `${formatKB(info.mem_used_kb)} / ${formatKB(
                                 info.mem_total_kb,
-                              )}`
+                              )}${
+                                info.mem_type
+                                  ? ` · ${info.mem_type}${
+                                      info.mem_speed ? ` ${info.mem_speed}` : ""
+                                    }`
+                                  : ""
+                              }`
                             : "-"
                         }}
                       </span>
@@ -591,7 +606,7 @@ const panelStyle = computed(() => ({
                           rootDisk
                             ? `${humanSize(rootDisk.used_bytes)} / ${humanSize(
                                 rootDisk.total_bytes,
-                              )}`
+                              )}${rootDisk.model ? ` · ${rootDisk.model}` : ""}`
                             : "-"
                         }}
                       </span>
@@ -620,6 +635,7 @@ const panelStyle = computed(() => ({
                       <span class="disk-detail">
                         {{ humanSize(d.used_bytes) }} /
                         {{ humanSize(d.total_bytes) }}
+                        <template v-if="d.model">· {{ d.model }}</template>
                       </span>
                     </div>
                     <NProgress
