@@ -131,6 +131,17 @@ const otherDisks = computed(() => {
   return info.value.disks.filter((d) => d !== root)
 })
 
+/* ---------- 温度 / 显卡 ---------- */
+const displayTemps = computed(() => (info.value?.temps ?? []).slice(0, 12))
+const gpus = computed(() => info.value?.gpus ?? [])
+
+/** 温度分级配色：≥80°C 高温、≥60°C 偏高、其余正常 */
+function tempClass(c: number): string {
+  if (c >= 80) return "temp-hot"
+  if (c >= 60) return "temp-warm"
+  return "temp-cool"
+}
+
 /* ---------- 网卡相关 ---------- */
 const nicOptions = computed<SelectOption[]>(() => {
   const opts: SelectOption[] = [
@@ -497,6 +508,19 @@ const panelStyle = computed(() => ({
                   />
                 </div>
 
+                <div v-if="displayTemps.length > 0" class="temp-block">
+                  <span
+                    v-for="tp in displayTemps"
+                    :key="tp.label"
+                    class="temp-chip"
+                    :class="tempClass(tp.temp_c)"
+                    :title="tp.label"
+                  >
+                    {{ tp.label }}
+                    <b>{{ tp.temp_c.toFixed(0) }}°C</b>
+                  </span>
+                </div>
+
                 <div class="metric-row">
                   <div class="metric-row-head">
                     <span class="metric-row-label">{{ t("hostInfo.labels.memory") }}</span>
@@ -612,6 +636,60 @@ const panelStyle = computed(() => ({
                   </div>
                 </NCollapseItem>
               </NCollapse>
+            </section>
+
+            <section v-if="gpus.length > 0" class="card">
+              <div class="card-title">{{ t("hostInfo.gpu") }}</div>
+              <div
+                v-for="(g, i) in gpus"
+                :key="`${g.vendor}-${i}`"
+                class="gpu-item"
+              >
+                <div class="gpu-head">
+                  <span class="gpu-name" :title="g.name">{{ g.name }}</span>
+                  <span
+                    v-if="g.temp_c > 0"
+                    class="gpu-temp"
+                    :class="tempClass(g.temp_c)"
+                  >
+                    {{ g.temp_c.toFixed(0) }}°C
+                  </span>
+                </div>
+                <div class="gpu-row">
+                  <span class="gpu-row-label">{{ t("hostInfo.gpuUtil") }}</span>
+                  <div class="gpu-row-bar">
+                    <NProgress
+                      type="line"
+                      :percentage="clamp(g.util_percent)"
+                      :show-indicator="false"
+                      :height="6"
+                      color="#7c5cff"
+                      rail-color="var(--ashell-hover)"
+                    />
+                  </div>
+                  <span class="gpu-row-value mono">
+                    {{ g.util_percent.toFixed(0) }}%
+                  </span>
+                </div>
+                <div v-if="g.mem_total_mb > 0" class="gpu-row">
+                  <span class="gpu-row-label">{{ t("hostInfo.gpuVram") }}</span>
+                  <div class="gpu-row-bar">
+                    <NProgress
+                      type="line"
+                      :percentage="
+                        clamp((g.mem_used_mb / g.mem_total_mb) * 100)
+                      "
+                      :show-indicator="false"
+                      :height="6"
+                      color="#4ade80"
+                      rail-color="var(--ashell-hover)"
+                    />
+                  </div>
+                  <span class="gpu-row-value mono">
+                    {{ g.mem_used_mb }} / {{ g.mem_total_mb }} MB
+                  </span>
+                </div>
+              </div>
             </section>
 
             <section class="card">
@@ -926,6 +1004,137 @@ const panelStyle = computed(() => ({
 
 .other-disks {
   margin-top: 4px;
+}
+
+/* 温度芯片 */
+.temp-block {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -4px;
+}
+
+.temp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.6;
+  border: 1px solid var(--ashell-border-soft);
+  color: var(--ashell-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.temp-chip b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.temp-chip.temp-cool b {
+  color: var(--ashell-text);
+}
+
+.temp-chip.temp-warm {
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #f59e0b;
+}
+
+.temp-chip.temp-warm b {
+  color: #f59e0b;
+}
+
+.temp-chip.temp-hot {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+.temp-chip.temp-hot b {
+  color: #ef4444;
+}
+
+/* 显卡卡片 */
+.gpu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--ashell-border-soft);
+  border-radius: 8px;
+}
+
+.gpu-item + .gpu-item {
+  margin-top: 8px;
+}
+
+.gpu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gpu-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gpu-temp {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.gpu-temp.temp-cool {
+  color: var(--ashell-text-muted);
+}
+
+.gpu-temp.temp-warm {
+  color: #f59e0b;
+}
+
+.gpu-temp.temp-hot {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.gpu-row {
+  display: grid;
+  grid-template-columns: 42px 1fr 92px;
+  align-items: center;
+  gap: 8px;
+}
+
+.gpu-row-label {
+  font-size: 11px;
+  color: var(--ashell-text-muted);
+  flex-shrink: 0;
+}
+
+.gpu-row-bar {
+  min-width: 0;
+}
+
+.gpu-row-value {
+  font-size: 11px;
+  color: var(--ashell-text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .other-disks :deep(.n-collapse-item__header-main) {

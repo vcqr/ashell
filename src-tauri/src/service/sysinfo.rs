@@ -42,6 +42,28 @@ pub struct ProcStat {
     pub command: String,
 }
 
+/// 温度传感器读数（摄氏度）
+#[derive(Debug, Serialize)]
+pub struct TempZone {
+    /// 展示名：优先传感器 label（如 "Package id 0"），否则 thermal_zone type / hwmon name
+    pub label: String,
+    pub temp_c: f32,
+}
+
+/// 显卡信息
+#[derive(Debug, Serialize)]
+pub struct GpuInfo {
+    /// "nvidia" / "amd"
+    pub vendor: String,
+    /// 型号名；拿不到时用 "AMD GPU" 兼底
+    pub name: String,
+    /// 0 - 100；不支持读取时为 0
+    pub util_percent: f32,
+    pub mem_used_mb: u64,
+    pub mem_total_mb: u64,
+    pub temp_c: f32,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SysInfo {
     pub hostname: String,
@@ -65,6 +87,10 @@ pub struct SysInfo {
     pub top_cpu: Vec<ProcStat>,
     /// 按内存占用排序的前 5 个进程
     pub top_mem: Vec<ProcStat>,
+    /// 温度传感器读数（thermal_zone + hwmon），无传感器时为空
+    pub temps: Vec<TempZone>,
+    /// 显卡信息（NVIDIA via nvidia-smi，AMD via amdgpu sysfs），无显卡时为空
+    pub gpus: Vec<GpuInfo>,
 }
 
 const SCRIPT: &str = r#"
@@ -141,6 +167,48 @@ BEGIN {
   close(cmd)
 }
 ' 2>/dev/null
+echo '===SECTION:temp==='
+# thermal_zone：CPU 封装 / ACPI 温度，无需任何工具
+for z in /sys/class/thermal/thermal_zone*; do
+  [ -f "$z/temp" ] || continue
+  ty=$(cat "$z/type" 2>/dev/null)
+  te=$(cat "$z/temp" 2>/dev/null)
+  [ -n "$te" ] && printf 'TZ\t%s\t%s\n' "$ty" "$te"
+done
+# hwmon：补充 NVMe / 核心温度等带 label 的传感器
+for h in /sys/class/hwmon/hwmon*; do
+  [ -d "$h" ] || continue
+  nm=$(cat "$h/name" 2>/dev/null)
+  for tf in "$h"/temp*_input; do
+    [ -f "$tf" ] || continue
+    te=$(cat "$tf" 2>/dev/null)
+    lb=$(cat "${tf%_input}_label" 2>/dev/null)
+    printf 'HW\t%s\t%s\t%s\n' "$nm" "$lb" "$te"
+  done
+done
+echo '===SECTION:gpu==='
+# NVIDIA：nvidia-smi 一次拿全利用率/显存/温度
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null |
+  while IFS=, read -r n u mu mt tp; do
+    n=$(printf '%s' "$n" | sed 's/^ *//; s/ *$//')
+    printf 'NV\t%s\t%s\t%s\t%s\t%s\n' "$n" "$u" "$mu" "$mt" "$tp"
+  done
+fi
+# AMD（amdgpu 驱动）：走 drm sysfs，不依赖 rocm-smi
+for d in /sys/class/drm/card[0-9]*; do
+  [ -d "$d/device" ] || continue
+  ven=$(cat "$d/device/vendor" 2>/dev/null)
+  [ "$ven" = "0x1002" ] || continue
+  busy=$(cat "$d/device/gpu_busy_percent" 2>/dev/null)
+  te=$(cat "$d/device"/hwmon/hwmon*/temp1_input 2>/dev/null | head -n 1)
+  vu=$(cat "$d/device/mem_info_vram_used" 2>/dev/null)
+  vt=$(cat "$d/device/mem_info_vram_total" 2>/dev/null)
+  addr=$(basename "$(readlink -f "$d/device")" 2>/dev/null)
+  name=$(lspci -s "$addr" 2>/dev/null | sed 's/^.*: //')
+  [ -n "$name" ] || name="AMD GPU"
+  printf 'AM\t%s\t%s\t%s\t%s\t%s\n' "$name" "$busy" "$vu" "$vt" "$te"
+done
 echo '===SECTION:end==='
 "#;
 
@@ -212,6 +280,8 @@ fn parse(text: &str) -> SysInfo {
         &take("proc"),
         mem_total_kb,
     );
+    let temps = parse_temps(&take("temp"));
+    let gpus = parse_gpus(&take("gpu"));
 
     SysInfo {
         hostname,
@@ -231,6 +301,8 @@ fn parse(text: &str) -> SysInfo {
         nics,
         top_cpu,
         top_mem,
+        temps,
+        gpus,
     }
 }
 
@@ -297,6 +369,116 @@ fn parse_cpu(lines: &[&str]) -> f32 {
         }
     }
     0.0
+}
+
+/// 解析温度段：每行 `TZ\t<type>\t<毫摄氏度>` 或 `HW\t<hwmon名>\t<label>\t<毫摄氏度>`。
+/// hwmon 与 thermal_zone 可能重复暴露同一传感器，按 (label, 温度) 去重。
+fn parse_temps(lines: &[&str]) -> Vec<TempZone> {
+    let mut out: Vec<TempZone> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, u32)> = std::collections::HashSet::new();
+    for l in lines {
+        let cols: Vec<&str> = l.split('\t').collect();
+        let (label_raw, raw): (&str, &str) = match cols.as_slice() {
+            ["TZ", ty, te] => (ty, te),
+            ["HW", name, lb, te] => {
+                let label = if lb.trim().is_empty() { name } else { lb };
+                (label, te)
+            }
+            _ => continue,
+        };
+        let label = label_raw.trim();
+        if label.is_empty() {
+            continue;
+        }
+        let Some(milli) = raw.trim().parse::<f32>().ok() else {
+            continue;
+        };
+        let temp_c = milli / 1000.0;
+        // 过滤无效读数：挂载但无数据的传感器常报 0
+        if !temp_c.is_finite() || temp_c <= 0.0 || temp_c > 150.0 {
+            continue;
+        }
+        // 以 0.1°C 粒度去重
+        let key = (label.to_string(), (temp_c * 10.0).round() as u32);
+        if !seen.insert(key) {
+            continue;
+        }
+        out.push(TempZone {
+            label: label.to_string(),
+            temp_c: (temp_c * 10.0).round() / 10.0,
+        });
+    }
+    // 按温度从高到低，最热的排前面
+    out.sort_by(|a, b| {
+        b.temp_c
+            .partial_cmp(&a.temp_c)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
+/// 解析 GPU 段：每行 `NV\t<name>\t<util%>\t<used MiB>\t<total MiB>\t<°C>`
+/// 或 `AM\t<name>\t<busy%>\t<used bytes>\t<total bytes>\t<毫摄氏度>`。
+/// 字段可能为 "[N/A]" / 空，宽松解析，取不到置 0。
+fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
+    let mut out = Vec::new();
+    for l in lines {
+        let cols: Vec<&str> = l.split('\t').collect();
+        if cols.len() < 6 {
+            continue;
+        }
+        let name = cols[1].trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let f32_of = |s: &str| -> f32 {
+            s.trim()
+                .trim_start_matches('[')
+                .parse::<f32>()
+                .unwrap_or(0.0)
+        };
+        let u64_of = |s: &str| -> u64 { s.trim().parse::<u64>().unwrap_or(0) };
+        let gpu = match cols[0] {
+            "NV" => {
+                let temp = f32_of(cols[5]);
+                GpuInfo {
+                    vendor: "nvidia".into(),
+                    name,
+                    util_percent: clamp_pct(f32_of(cols[2])),
+                    mem_used_mb: u64_of(cols[3]),
+                    mem_total_mb: u64_of(cols[4]),
+                    temp_c: if (0.0..=150.0).contains(&temp) {
+                        temp
+                    } else {
+                        0.0
+                    },
+                }
+            }
+            "AM" => {
+                let temp_milli = f32_of(cols[5]);
+                let temp = if temp_milli > 200.0 {
+                    temp_milli / 1000.0 // hwmon 毫摄氏度
+                } else {
+                    temp_milli // 部分驱动直接给摄氏度
+                };
+                GpuInfo {
+                    vendor: "amd".into(),
+                    name,
+                    util_percent: clamp_pct(f32_of(cols[2])),
+                    mem_used_mb: u64_of(cols[3]) / (1024 * 1024),
+                    mem_total_mb: u64_of(cols[4]) / (1024 * 1024),
+                    temp_c: if (0.0..=150.0).contains(&temp) {
+                        temp
+                    } else {
+                        0.0
+                    },
+                }
+            }
+            _ => continue,
+        };
+        out.push(gpu);
+    }
+    out
 }
 
 fn clamp_pct(v: f32) -> f32 {

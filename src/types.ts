@@ -330,6 +330,25 @@ export interface ProcStat {
   command: string
 }
 
+export interface TempZone {
+  /** 展示名：传感器 label 或 thermal_zone type */
+  label: string
+  /** 摄氏度 */
+  temp_c: number
+}
+
+export interface GpuInfo {
+  /** "nvidia" / "amd" */
+  vendor: string
+  name: string
+  /** 0 - 100；不支持读取时为 0 */
+  util_percent: number
+  mem_used_mb: number
+  mem_total_mb: number
+  /** 摄氏度；不支持读取时为 0 */
+  temp_c: number
+}
+
 export interface SysInfo {
   hostname: string
   os_pretty: string
@@ -354,6 +373,10 @@ export interface SysInfo {
   top_cpu: ProcStat[]
   /** 按内存占用排序的前 5 个进程 */
   top_mem: ProcStat[]
+  /** 温度传感器读数，无传感器时为空数组 */
+  temps: TempZone[]
+  /** 显卡信息，无显卡 / 无驱动时为空数组 */
+  gpus: GpuInfo[]
 }
 
 /** 端口转发类型 */
