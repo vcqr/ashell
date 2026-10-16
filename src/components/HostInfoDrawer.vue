@@ -110,6 +110,25 @@ const swapPercent = computed(() => {
   if (!info.value || info.value.swap_total_kb <= 0) return 0
   return clamp((info.value.swap_used_kb / info.value.swap_total_kb) * 100)
 })
+/** swap 行是否显示：数据未到时先占位，确认未启用后整行隐藏 */
+const showSwapRow = computed(() => !info.value || info.value.swap_total_kb > 0)
+
+/** 内存行右侧明细：用量 + 规格（类型/频率来自 dmidecode，条数非 0 时一并列出） */
+const memDetail = computed(() => {
+  if (!info.value) return "-"
+  const spec: string[] = []
+  if (info.value.mem_type) {
+    spec.push(
+      info.value.mem_type + (info.value.mem_speed ? ` ${info.value.mem_speed}` : ""),
+    )
+  }
+  if (info.value.dimm_count > 0) {
+    spec.push(t("hostInfo.labels.dimmCount", { count: info.value.dimm_count }))
+  }
+  return `${formatKB(info.value.mem_used_kb)} / ${formatKB(info.value.mem_total_kb)}${
+    spec.length > 0 ? ` · ${spec.join(" · ")}` : ""
+  }`
+})
 const cpuPercent = computed(() =>
   info.value ? clamp(info.value.cpu_percent) : 0,
 )
@@ -255,6 +274,8 @@ function updateSample(
 
 async function refresh() {
   if (!props.sid) return
+  // 上一次请求在途时忽略重复触发：轮询与手动刷新互斥，复合采集脚本较重不并发跑
+  if (refreshing.value) return
   const sid = props.sid
   if (info.value === null) loading.value = true
   refreshing.value = true
@@ -404,7 +425,7 @@ const panelStyle = computed(() => ({
             size="small"
             quaternary
             circle
-            :loading="refreshing && info !== null"
+            :loading="refreshing"
             :title="t('hostInfo.refresh')"
             @click="manualRefresh"
           >
@@ -538,19 +559,7 @@ const panelStyle = computed(() => ({
                         {{ memPercent.toFixed(1) }}%
                       </span>
                       <span class="metric-row-detail">
-                        {{
-                          info
-                            ? `${formatKB(info.mem_used_kb)} / ${formatKB(
-                                info.mem_total_kb,
-                              )}${
-                                info.mem_type
-                                  ? ` · ${info.mem_type}${
-                                      info.mem_speed ? ` ${info.mem_speed}` : ""
-                                    }`
-                                  : ""
-                              }`
-                            : "-"
-                        }}
+                        {{ memDetail }}
                       </span>
                     </span>
                   </div>
@@ -565,7 +574,7 @@ const panelStyle = computed(() => ({
                   />
                 </div>
 
-                <div class="metric-row">
+                <div v-if="showSwapRow" class="metric-row">
                   <div class="metric-row-head">
                     <span class="metric-row-label">{{ t("hostInfo.labels.swap") }}</span>
                     <span class="metric-row-value">

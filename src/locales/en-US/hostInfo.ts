@@ -36,6 +36,7 @@ export default {
     swap: "Swap",
     swapDisabled: "Not enabled",
     cores: "{count} cores",
+    dimmCount: "{count} DIMMs",
     cpuModel: "CPU Model",
     allNics: "All ({count} NICs total)",
   },

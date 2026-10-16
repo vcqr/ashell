@@ -36,6 +36,7 @@ export default {
     swap: "交换",
     swapDisabled: "未启用",
     cores: "{count} 核",
+    dimmCount: "{count} 条",
     cpuModel: "CPU 型号",
     allNics: "全部（{count} 张网卡合计）",
   },

@@ -5,6 +5,10 @@
 //! 逐行处理。任意一段解析失败时该字段降级为默认值（数字 0 / 字符串空），不抛错，让前
 //! 端能继续显示其它字段。
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
 use serde::Serialize;
 
 use crate::errors::AppResult;
@@ -76,6 +80,7 @@ pub struct SysInfo {
     pub kernel: String,
     pub arch: String,
     pub uptime_secs: u64,
+    /// 瞬时占用率：由 collect 用相邻两次 /proc/stat 采样差分回填，拿不到差分时为 0
     pub cpu_percent: f32,
     pub cpu_cores: u32,
     /// CPU 型号（/proc/cpuinfo model name / Processor / Hardware）
@@ -117,10 +122,17 @@ echo '===SECTION:arch==='
 uname -m 2>/dev/null
 echo '===SECTION:uptime==='
 awk '{print $1}' /proc/uptime 2>/dev/null
-echo '===SECTION:cpu==='
-LC_ALL=C top -bn1 2>/dev/null | grep -i '^%\?Cpu'
+echo '===SECTION:stat==='
+# CPU 占用改走 /proc/stat 差分：top -bn1 首帧给的是开机以来的均值，BusyBox top
+# 只有累计帧且 token 是 idle 而非 id，两者都拿不到瞬时占用；Rust 侧按 sid 缓存
+# 上次采样做差分，同时摆脱对 top 是否存在的依赖
+head -n 1 /proc/stat 2>/dev/null
 echo '===SECTION:cores==='
+# nproc 反映当前进程的亲和性（taskset/cgroup cpuset 会少报），getconf 取系统在线
+# 核数更准；逐级兜底，解析端忽略 0
+getconf _NPROCESSORS_ONLN 2>/dev/null
 nproc 2>/dev/null
+grep -c '^processor' /proc/cpuinfo 2>/dev/null
 echo '===SECTION:mem==='
 cat /proc/meminfo 2>/dev/null
 echo '===SECTION:disk==='
@@ -258,15 +270,15 @@ echo '===SECTION:dmi_mem==='
 if command -v dmidecode >/dev/null 2>&1; then
   dmidecode -t memory 2>/dev/null | awk -F': *' '
     /^[[:space:]]*Size:/ && $2 != "" && $2 != "No Module Installed" { n++ }
-    /^[[:space:]]*Type:/ && $2 != "" { t = $2 }
-    /^[[:space:]]*Configured Memory Speed:/ && $2 != "" { cs = $2 }
-    /^[[:space:]]*Speed:/ && $2 != "" { s = $2 }
+    /^[[:space:]]*Type:/ && $2 != "" && $2 != "Unknown" { t = $2 }
+    /^[[:space:]]*Configured Memory Speed:/ && $2 != "" && $2 != "Unknown" { cs = $2 }
+    /^[[:space:]]*Speed:/ && $2 != "" && $2 != "Unknown" { s = $2 }
     END { printf "DIM\t%d\t%s\t%s\n", n+0, t, (cs != "" ? cs : s) }
   '
 fi
 echo '===SECTION:blkmod==='
-# 硬盘型号：sysfs 免工具获取
-for b in /sys/block/sd* /sys/block/nvme* /sys/block/vd*; do
+# 硬盘型号：sysfs 免工具获取（SATA/SCSI、NVMe、virtio、mmc/eMMC）
+for b in /sys/block/sd* /sys/block/nvme* /sys/block/vd* /sys/block/mmcblk*; do
   [ -e "$b" ] || continue
   dev=$(basename "$b")
   case "$dev" in loop*|ram*|zram*|md*|dm-*) continue ;; esac
@@ -277,13 +289,78 @@ done
 echo '===SECTION:end==='
 "#;
 
+/// /proc/stat 聚合 cpu 行的节拍采样（相邻两次差分出瞬时占用率）
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CpuTicks {
+    total: u64,
+    idle: u64,
+}
+
 pub async fn collect(sid: &str) -> AppResult<SysInfo> {
     let session = ssh_svc::get_client(sid).await?;
     let result = session.execute(SCRIPT).await?;
-    Ok(parse(&result.stdout))
+    let (mut info, cpu_ticks) = parse(&result.stdout);
+    info.cpu_percent = cpu_percent_for(sid, cpu_ticks);
+    Ok(info)
 }
 
-fn parse(text: &str) -> SysInfo {
+fn cpu_cache() -> &'static Mutex<HashMap<String, (CpuTicks, Instant)>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, (CpuTicks, Instant)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 用相邻两次 /proc/stat 采样差分计算瞬时 CPU 占用率。
+/// 首次采样、与上次间隔过短/过长（常规轮询 1.5s、失败退避 5s）、或计数回绕
+/// （主机重启）时差分不可信，本次返回 0，由下一次轮询补上。
+fn cpu_percent_for(sid: &str, ticks: Option<CpuTicks>) -> f32 {
+    let Some(ticks) = ticks else {
+        return 0.0;
+    };
+    let mut cache = cpu_cache().lock().unwrap();
+    let now = Instant::now();
+    let prev = cache.get(sid).copied();
+    // sid 断开后没有删除钩子：条目膨胀时顺手清理 1 分钟未活动的旧会话
+    if cache.len() > 256 {
+        cache.retain(|_, s| now.duration_since(s.1).as_secs() < 60);
+    }
+    cache.insert(sid.to_string(), (ticks, now));
+    prev.and_then(|(pt, pat)| cpu_pct_between(pt, ticks, now.duration_since(pat).as_secs_f64()))
+        .unwrap_or(0.0)
+}
+
+/// 两次采样的差分：busy = 1 - idle/total
+fn cpu_pct_between(prev: CpuTicks, cur: CpuTicks, dt_secs: f64) -> Option<f32> {
+    if !(0.2..=15.0).contains(&dt_secs) || cur.total <= prev.total {
+        return None;
+    }
+    let d_total = cur.total - prev.total;
+    let d_idle = cur.idle.saturating_sub(prev.idle).min(d_total);
+    Some(clamp_pct((d_total - d_idle) as f32 / d_total as f32 * 100.0))
+}
+
+/// 解析 /proc/stat 首行：`cpu  user nice system idle iowait irq softirq steal ...`
+/// guest/guest_nice 已计入 user/nice（man proc），total 只累加前 8 个字段；
+/// idle 连同 iowait 一起视为非忙碌（与常见监控口径一致，iowait 不虚增 CPU%）
+fn parse_cpu_stat(lines: &[&str]) -> Option<CpuTicks> {
+    for l in lines {
+        let mut it = l.split_whitespace();
+        if it.next() != Some("cpu") {
+            continue; // 跳过 cpu0/cpu1 等单核行
+        }
+        let f: Vec<u64> = it.map(|v| v.parse().unwrap_or(0)).collect();
+        if f.len() < 4 {
+            continue; // 连 idle 字段都没有，无法差分
+        }
+        let idle = f[3] + f.get(4).copied().unwrap_or(0);
+        let total = f.iter().take(8).sum();
+        return Some(CpuTicks { total, idle });
+    }
+    None
+}
+
+/// 解析脚本输出。cpu_percent 置 0 占位，由 collect 用相邻两次 /proc/stat
+/// 采样差分回填；同时把本次采样带出去。
+fn parse(text: &str) -> (SysInfo, Option<CpuTicks>) {
     let mut sections: std::collections::HashMap<&str, Vec<&str>> =
         std::collections::HashMap::new();
     let mut current: Option<&str> = None;
@@ -327,10 +404,10 @@ fn parse(text: &str) -> SysInfo {
         .map(|f| f as u64)
         .unwrap_or(0);
 
-    let cpu_percent = parse_cpu(&take("cpu"));
+    let cpu_ticks = parse_cpu_stat(&take("stat"));
     let cpu_cores = take("cores")
         .iter()
-        .find_map(|l| l.trim().parse::<u32>().ok())
+        .find_map(|l| l.trim().parse::<u32>().ok().filter(|v| *v > 0))
         .unwrap_or(0);
     let cpu_model = parse_cpu_model(&take("cpuinfo"));
     let (mem_type, mem_speed, dimm_count) = parse_dmi_mem(&take("dmi_mem"));
@@ -351,31 +428,34 @@ fn parse(text: &str) -> SysInfo {
     let temps = parse_temps(&take("temp"));
     let gpus = parse_gpus(&take("gpu"));
 
-    SysInfo {
-        hostname,
-        os_pretty,
-        kernel,
-        arch,
-        uptime_secs,
-        cpu_percent,
-        cpu_cores,
-        cpu_model,
-        mem_total_kb,
-        mem_used_kb,
-        mem_type,
-        mem_speed,
-        dimm_count,
-        swap_total_kb,
-        swap_used_kb,
-        disks,
-        net_rx_bytes,
-        net_tx_bytes,
-        nics,
-        top_cpu,
-        top_mem,
-        temps,
-        gpus,
-    }
+    (
+        SysInfo {
+            hostname,
+            os_pretty,
+            kernel,
+            arch,
+            uptime_secs,
+            cpu_percent: 0.0,
+            cpu_cores,
+            cpu_model,
+            mem_total_kb,
+            mem_used_kb,
+            mem_type,
+            mem_speed,
+            dimm_count,
+            swap_total_kb,
+            swap_used_kb,
+            disks,
+            net_rx_bytes,
+            net_tx_bytes,
+            nics,
+            top_cpu,
+            top_mem,
+            temps,
+            gpus,
+        },
+        cpu_ticks,
+    )
 }
 
 fn parse_os_pretty(lines: &[&str]) -> String {
@@ -403,44 +483,6 @@ fn parse_os_pretty(lines: &[&str]) -> String {
     } else {
         String::new()
     }
-}
-
-/// 从 top 输出中解析 idle 字段，返回 100 - idle 作为整体 CPU 占用率
-fn parse_cpu(lines: &[&str]) -> f32 {
-    for l in lines {
-        let lower = l.to_ascii_lowercase();
-        if !lower.contains("cpu") {
-            continue;
-        }
-        // 典型格式：%Cpu(s):  3.1 us,  1.2 sy,  0.0 ni, 95.5 id, ...
-        // 或：     Cpu(s):  3.1%us,  1.2%sy,  ...,  95.5%id, ...
-        // 在所有 token 中找 "id" 前面的数字
-        let tokens: Vec<&str> = l
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .filter(|s| !s.is_empty())
-            .collect();
-        // 优先按顺序两 token 形式：value, "id"
-        for i in 0..tokens.len() {
-            if tokens[i].eq_ignore_ascii_case("id") {
-                if i > 0 {
-                    if let Ok(idle) = tokens[i - 1].trim_end_matches('%').parse::<f32>() {
-                        return clamp_pct(100.0 - idle);
-                    }
-                }
-            }
-        }
-        // 兼容紧贴形式：95.5%id 或 95.5id
-        for t in &tokens {
-            let lower = t.to_ascii_lowercase();
-            if lower.ends_with("id") || lower.ends_with("%id") {
-                let trimmed = lower.trim_end_matches("id").trim_end_matches('%');
-                if let Ok(idle) = trimmed.parse::<f32>() {
-                    return clamp_pct(100.0 - idle);
-                }
-            }
-        }
-    }
-    0.0
 }
 
 fn parse_cpu_model(lines: &[&str]) -> String {
@@ -823,6 +865,17 @@ fn parse_mem(lines: &[&str]) -> (u64, u64, u64, u64) {
     (mem_total, used, swap_total, swap_used)
 }
 
+/// 挂载点前缀黑名单：第一列 fs 名过滤不全（如 efivarfs、bpffs），这些目录下
+/// 不会挂真实数据盘。注意不能加 /run——桌面发行版的 udisks 会把 U 盘挂到
+/// /run/media/<user>/<label>。
+const PSEUDO_MOUNT_PREFIXES: [&str; 3] = ["/proc", "/sys", "/dev"];
+
+fn is_pseudo_mount(mount: &str) -> bool {
+    PSEUDO_MOUNT_PREFIXES
+        .iter()
+        .any(|p| mount == *p || mount.starts_with(&format!("{p}/")))
+}
+
 fn parse_disks(lines: &[&str]) -> Vec<DiskUsage> {
     let mut out = Vec::new();
     for l in lines {
@@ -847,6 +900,7 @@ fn parse_disks(lines: &[&str]) -> Vec<DiskUsage> {
             model: None,
         });
     }
+    out.retain(|d| !is_pseudo_mount(&d.mount));
     // 把 / 排第一
     out.sort_by_key(|d| if d.mount == "/" { 0 } else { 1 });
     out
@@ -1187,6 +1241,79 @@ mod tests2 {
             "Intel(R) Xeon(R) Gold 6248R CPU @ 3.00GHz"
         );
         assert_eq!(parse_cpu_model(&["", " "]), "");
+    }
+
+    #[test]
+    fn test_parse_cpu_stat() {
+        // user nice sys idle iowait irq softirq steal + guest*2（guest 已计入 user，不计入 total）
+        let t =
+            parse_cpu_stat(&["cpu  100 10 200 600 40 5 5 5 3 3", "cpu0 50 5 100 300 20 2 2 2"])
+                .unwrap();
+        assert_eq!(t.total, 100 + 10 + 200 + 600 + 40 + 5 + 5 + 5);
+        assert_eq!(t.idle, 600 + 40);
+        // 单核行不参与；字段不足（缺 idle）丢弃
+        assert_eq!(parse_cpu_stat(&["cpu0 1 2 3 4"]), None);
+        assert_eq!(parse_cpu_stat(&["cpu  1 2 3"]), None);
+        assert_eq!(parse_cpu_stat(&[]), None);
+    }
+
+    #[test]
+    fn test_cpu_pct_between() {
+        let prev = CpuTicks {
+            total: 1000,
+            idle: 900,
+        };
+        // 1 秒内 total +100、idle +90 → 10%
+        let cur = CpuTicks {
+            total: 1100,
+            idle: 990,
+        };
+        assert!((cpu_pct_between(prev, cur, 1.0).unwrap() - 10.0).abs() < 0.01);
+        // 全忙：idle 不涨
+        let busy = CpuTicks {
+            total: 1100,
+            idle: 900,
+        };
+        assert_eq!(cpu_pct_between(prev, busy, 1.0), Some(100.0));
+        // 间隔过短 / 过长不可信
+        assert_eq!(cpu_pct_between(prev, busy, 0.1), None);
+        assert_eq!(cpu_pct_between(prev, busy, 30.0), None);
+        // 计数回绕（主机重启）
+        let rebooted = CpuTicks { total: 10, idle: 9 };
+        assert_eq!(cpu_pct_between(prev, rebooted, 1.0), None);
+    }
+
+    #[test]
+    fn test_parse_disks_filters_pseudo_mounts() {
+        let lines = vec![
+            "/dev/sda1 1024 512 512 50% /",
+            "efivarfs 56 27 27 50% /sys/firmware/efi/efivars",
+            "/dev/nvme0n1p1 2048 1024 1024 50% /boot/efi",
+            // 前缀与 /proc 相近但非伪目录，保留
+            "/dev/sdb1 4096 0 4096 0% /procedures",
+        ];
+        let disks = parse_disks(&lines);
+        let mounts: Vec<&str> = disks.iter().map(|d| d.mount.as_str()).collect();
+        assert!(mounts.contains(&"/"));
+        assert!(mounts.contains(&"/boot/efi"));
+        assert!(mounts.contains(&"/procedures"));
+        assert!(!mounts.iter().any(|m| m.contains("efivars")));
+        // / 排第一
+        assert_eq!(disks[0].mount, "/");
+    }
+
+    #[test]
+    fn test_attach_disk_models_mmc() {
+        let models = vec![("mmcblk0".to_string(), "SD SDSC".to_string())];
+        let mut disks = vec![DiskUsage {
+            filesystem: "/dev/mmcblk0p1".into(),
+            mount: "/".into(),
+            total_bytes: 1,
+            used_bytes: 0,
+            model: None,
+        }];
+        attach_disk_models(&mut disks, models);
+        assert_eq!(disks[0].model.as_deref(), Some("SD SDSC"));
     }
 
     #[test]
