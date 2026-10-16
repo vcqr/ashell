@@ -646,7 +646,12 @@ const panelStyle = computed(() => ({
                 class="gpu-item"
               >
                 <div class="gpu-head">
-                  <span class="gpu-name" :title="g.name">{{ g.name }}</span>
+                  <span class="gpu-name" :title="g.name">
+                    <span v-if="gpus.length > 1" class="gpu-index mono">
+                      #{{ g.index }}
+                    </span>
+                    {{ g.name }}
+                  </span>
                   <span
                     v-if="g.temp_c > 0"
                     class="gpu-temp"
@@ -1086,6 +1091,19 @@ const panelStyle = computed(() => ({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.gpu-index {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--ashell-hover);
+  color: var(--ashell-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: 1px;
 }
 
 .gpu-temp {

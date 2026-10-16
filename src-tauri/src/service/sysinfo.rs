@@ -53,7 +53,9 @@ pub struct TempZone {
 /// 显卡信息
 #[derive(Debug, Serialize)]
 pub struct GpuInfo {
-    /// "nvidia" / "amd"
+    /// 卡序号：昇腾为 NPU 编号，NVIDIA/AMD 为枚举序号
+    pub index: u32,
+    /// "nvidia" / "amd" / "ascend"
     pub vendor: String,
     /// 型号名；拿不到时用 "AMD GPU" 兼底
     pub name: String,
@@ -452,7 +454,7 @@ fn parse_temps(lines: &[&str]) -> Vec<TempZone> {
 fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
     let mut out = Vec::new();
     // 昇腾 NPU 行与 Chip 行分两行输出，先用 pending 缓存配对
-    let mut ascend_pending: Vec<(String, f32)> = Vec::new();
+    let mut ascend_pending: Vec<(String, f32, u32)> = Vec::new();
     for l in lines {
         // npu-smi 表格行（含 '|'，非制表符格式）
         if l.contains('|') {
@@ -480,6 +482,7 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
             "NV" => {
                 let temp = f32_of(cols[5]);
                 GpuInfo {
+                    index: out.len() as u32,
                     vendor: "nvidia".into(),
                     name,
                     util_percent: clamp_pct(f32_of(cols[2])),
@@ -500,6 +503,7 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
                     temp_milli // 部分驱动直接给摄氏度
                 };
                 GpuInfo {
+                    index: out.len() as u32,
                     vendor: "amd".into(),
                     name,
                     util_percent: clamp_pct(f32_of(cols[2])),
@@ -580,7 +584,7 @@ fn mem_pairs(tokens: &[&str]) -> Vec<(u64, u64)> {
 /// Chip 行（含 0x 总线号）：`| 0 | 0x0000 | 0 | 651 / 1517 ... |` → 取 AICore%
 /// 与显存（取最后一个 used / total 对，多芯片卡上即 HBM），与前一条 NPU 行合成一条记录。
 /// 老版本（如 20.x）一行格里塞多个字段，拆 '|' 后再按空白二次切分统一处理。
-fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32)>) -> Option<GpuInfo> {
+fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32, u32)>) -> Option<GpuInfo> {
     let t = l.trim();
     if t.starts_with('+') {
         return None;
@@ -605,10 +609,11 @@ fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32)>) -> Option<GpuInf
                 .last()
                 .copied()
                 .unwrap_or((0, 0));
-            let (name, temp_c) = pending
+            let (name, temp_c, npu_index) = pending
                 .pop()
-                .unwrap_or_else(|| ("Ascend NPU".to_string(), 0.0));
+                .unwrap_or_else(|| ("Ascend NPU".to_string(), 0.0, tokens[0].parse::<u32>().unwrap_or(0)));
             Some(GpuInfo {
+                index: npu_index,
                 vendor: "ascend".into(),
                 name,
                 util_percent: clamp_pct(util),
@@ -628,7 +633,8 @@ fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32)>) -> Option<GpuInf
                 .get(4)
                 .and_then(|s| s.parse::<f32>().ok())
                 .unwrap_or(0.0);
-            pending.push((name, temp_c));
+            let npu_index = tokens[0].parse::<u32>().unwrap_or(0);
+            pending.push((name, temp_c, npu_index));
             None
         }
     }
@@ -1012,6 +1018,8 @@ mod tests {
         ];
         let gpus = parse_gpus(&lines);
         assert_eq!(gpus.len(), 2);
+        assert_eq!(gpus[0].index, 0);
+        assert_eq!(gpus[1].index, 1);
         assert_eq!(gpus[0].vendor, "ascend");
         assert_eq!(gpus[0].name, "910B2");
         assert!((gpus[0].temp_c - 40.0).abs() < 0.01);

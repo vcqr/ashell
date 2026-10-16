@@ -338,7 +338,9 @@ export interface TempZone {
 }
 
 export interface GpuInfo {
-  /** "nvidia" / "amd" */
+  /** 卡序号：昇腾为 NPU 编号，NVIDIA/AMD 为枚举序号 */
+  index: number
+  /** "nvidia" / "amd" / "ascend" */
   vendor: string
   name: string
   /** 0 - 100；不支持读取时为 0 */
