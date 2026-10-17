@@ -7,7 +7,7 @@ import {
   RiEqualizerLine,
   RiInboxLine,
   RiInformationLine,
-  RiKeyLine,
+  RiKeyboardLine,
   RiPaletteLine,
   RiRocketLine,
   RiShieldCheckLine,
@@ -92,7 +92,7 @@ const navGroups = computed<
       { key: "general", icon: RiEqualizerLine },
       { key: "theme", icon: RiPaletteLine },
       { key: "terminal", icon: RiTerminalBoxLine },
-      { key: "shortcuts", icon: RiKeyLine },
+      { key: "shortcuts", icon: RiKeyboardLine },
     ],
   },
   {
