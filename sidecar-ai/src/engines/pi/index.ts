@@ -13,10 +13,12 @@ import path from "node:path";
 import os from "node:os";
 import {
   emitAIMSG,
+  emitCompact,
   emitSystemError,
   emitThinking,
   emitToolCall,
   emitToolRet,
+  emitUsage,
 } from "../../protocol";
 import { displayTodoProgress, type TodoItem } from "../../progress";
 import { createCmdExecTool } from "./cmdExecTool";
@@ -51,6 +53,16 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
   const piApiKey = process.env.PI_API_KEY || "";
   const piApi = process.env.PI_API || "openai-completions";
   const piThinkingLevel = process.env.PI_THINKING_LEVEL || "off";
+  // 上下文控制（宿主设置物化到 .env，两引擎通用）：窗口/输出上限覆盖模型默认，轮数限 0/空 = 不限
+  const aiContextWindow = Number.parseInt(process.env.AI_CONTEXT_WINDOW || "", 10);
+  const aiMaxTokens = Number.parseInt(process.env.AI_MAX_TOKENS || "", 10);
+  const aiMaxRounds = Number.parseInt(process.env.AI_MAX_ROUNDS || "", 10);
+  const ctxWindowOverride =
+    Number.isFinite(aiContextWindow) && aiContextWindow > 0 ? aiContextWindow : undefined;
+  const maxTokensOverride =
+    Number.isFinite(aiMaxTokens) && aiMaxTokens > 0 ? aiMaxTokens : undefined;
+  const maxRounds =
+    Number.isFinite(aiMaxRounds) && aiMaxRounds > 0 ? aiMaxRounds : undefined;
 
   const agentDir = path.join(os.homedir(), ".pi", "agent");
   const modelRuntime = await ModelRuntime.create({
@@ -74,8 +86,8 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
       reasoning: false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128000,
-      maxTokens: 16384,
+      contextWindow: ctxWindowOverride ?? 128000,
+      maxTokens: maxTokensOverride ?? 16384,
     };
 
     // 注册自定义 provider，使 ModelRuntime.getAuth() 能解析该 provider 的 API key
@@ -121,7 +133,19 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
       );
     }
 
+    // .env 显式配置的窗口/输出上限优先于模型注册表值（克隆覆盖，不动注册表对象）
+    if (ctxWindowOverride || maxTokensOverride) {
+      customModel = {
+        ...customModel,
+        ...(ctxWindowOverride && { contextWindow: ctxWindowOverride }),
+        ...(maxTokensOverride && { maxTokens: maxTokensOverride }),
+      } as Model<Api>;
+    }
+
     console.log(`[PI] Using model from registry: ${customModel.provider}/${customModel.id}`);
+    console.log(
+      `[PI] Context: window=${customModel.contextWindow} maxTokens=${customModel.maxTokens} maxRounds=${maxRounds ?? "unlimited"}`,
+    );
     console.log(`[PI] Thinking level: ${piThinkingLevel}`);
   }
 
@@ -166,14 +190,18 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
   });
   await resourceLoader.reload();
 
+  // 自动压缩开启：上下文逼近窗口（预留 reserveTokens）时自动摘要压缩，
+  // 溢出时压缩后重试；reserveTokens/keepRecentTokens 用 SDK 默认值
   const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
+    compaction: { enabled: true },
     retry: { enabled: true, maxRetries: 2 },
   });
 
   // ── Session 状态 ──
   let session: CreateAgentSessionResult | null = null;
   let stopped = false;
+  // 本轮（一次 prompt 内所有 LLM 调用）的用量累加，prompt 结束时上报
+  let turnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 
   function handleSessionEvent(event: AgentSessionEvent) {
     switch (event.type) {
@@ -197,9 +225,34 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
             }
           }
 
+          // 累加本轮每次 LLM 调用的用量（一次 prompt 可能多轮工具往返）
+          const u = msg.usage;
+          if (u) {
+            turnUsage.input += u.input ?? 0;
+            turnUsage.output += u.output ?? 0;
+            turnUsage.cacheRead += u.cacheRead ?? 0;
+            turnUsage.cacheWrite += u.cacheWrite ?? 0;
+            turnUsage.cost += u.cost?.total ?? 0;
+          }
+
           if (msg.stopReason === "error" && msg.errorMessage) {
             emitSystemError(ctx.ssid, msg.errorMessage);
           }
+        }
+        break;
+      }
+
+      case "compaction_end": {
+        // 自动/手动压缩完成：上报压缩事件供前端提示
+        if (event.aborted) break;
+        if (event.errorMessage) {
+          emitSystemError(ctx.ssid, `上下文压缩失败: ${event.errorMessage}`);
+        } else if (event.result) {
+          emitCompact(ctx.ssid, {
+            trigger: event.reason === "manual" ? "manual" : "auto",
+            tokensBefore: event.result.tokensBefore,
+            tokensAfter: event.result.estimatedTokensAfter,
+          });
         }
         break;
       }
@@ -232,6 +285,7 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
   async function handle(userPrompt: string): Promise<void> {
     console.log(`[HANDLE] Handling user message: "${userPrompt}"`);
     stopped = false;
+    turnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 
     if (!session) {
       session = await createAgentSession({
@@ -253,6 +307,23 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
         settingsManager,
       });
       console.log(`Session created: ${session.session.sessionId}`);
+
+      // 轮数滑窗：每次 LLM 调用前只发送最近 maxRounds 轮 + 首条用户消息之前的
+      // 系统基线；在用户消息边界裁剪，保证轮内 toolCall/toolResult 成对完整。
+      // 完整历史仍保留在会话里，只是不进入模型上下文。
+      if (maxRounds) {
+        session.session.agent.transformContext = async (messages) => {
+          const firstUser = messages.findIndex((m) => (m as { role?: string }).role === "user");
+          if (firstUser < 0) return messages;
+          const roundStarts: number[] = [];
+          for (let i = firstUser; i < messages.length; i++) {
+            if ((messages[i] as { role?: string }).role === "user") roundStarts.push(i);
+          }
+          if (roundStarts.length <= maxRounds) return messages;
+          const cut = roundStarts[roundStarts.length - maxRounds]!;
+          return [...messages.slice(0, firstUser), ...messages.slice(cut)];
+        };
+      }
     }
 
     // 订阅事件，prompt() 执行期间实时输出；结束后取消订阅避免重复
@@ -265,6 +336,19 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
     } finally {
       unsubscribe?.();
     }
+
+    // 轮末上报：用量为累加值；上下文占用取会话统计（估算，压缩后到下次响应前可能为 null）
+    const cu = session.session.getSessionStats().contextUsage;
+    emitUsage(ctx.ssid, {
+      input: turnUsage.input,
+      output: turnUsage.output,
+      cacheRead: turnUsage.cacheRead,
+      cacheWrite: turnUsage.cacheWrite,
+      cost: turnUsage.cost > 0 ? turnUsage.cost : undefined,
+      contextTokens: cu?.tokens ?? undefined,
+      contextWindow: cu?.contextWindow,
+      contextPercent: cu?.percent != null ? Math.round(cu.percent) : undefined,
+    });
   }
 
   return {

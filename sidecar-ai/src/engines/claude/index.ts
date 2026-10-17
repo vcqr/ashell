@@ -6,10 +6,12 @@ import { askUserQuestion, type AskUserQuestionItem } from "../../askUser";
 import { STOP_SENTINEL } from "../../stdin";
 import {
   emitAIMSG,
+  emitCompact,
   emitSystemError,
   emitToolCall,
   emitToolConfirm,
   emitToolRet,
+  emitUsage,
 } from "../../protocol";
 import { displayTodoProgress, type TodoItem } from "../../progress";
 import { createCmdExecMcpServer } from "./cmdMcpTool";
@@ -49,6 +51,22 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
   let todos: TodoItem[] = [];
   let currentQuery: ReturnType<typeof query> | null = null;
   let stopped = false;
+  // total_cost_usd 是跨 resume 的累计值，本轮成本需差分（新会话从 0 起算）
+  let lastCumulativeCost = 0;
+  // 上下文控制（.env 的 AI_*，两引擎通用）：输出上限经 env 下发给 CLI 子进程，
+  // 窗口配置覆盖用量上报的 contextWindow（进度条显示），轮数超限触发 /compact
+  const aiMaxTokens = Number.parseInt(process.env.AI_MAX_TOKENS || "", 10);
+  const aiContextWindow = Number.parseInt(process.env.AI_CONTEXT_WINDOW || "", 10);
+  const aiMaxRounds = Number.parseInt(process.env.AI_MAX_ROUNDS || "", 10);
+  const contextWindowOverride =
+    Number.isFinite(aiContextWindow) && aiContextWindow > 0 ? aiContextWindow : undefined;
+  const maxRounds =
+    Number.isFinite(aiMaxRounds) && aiMaxRounds > 0 ? aiMaxRounds : undefined;
+  if (Number.isFinite(aiMaxTokens) && aiMaxTokens > 0) {
+    // CLI 子进程继承 process.env；daemon 多会话共享，后建会话覆盖（与 ANTHROPIC_* 同模式）
+    process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(aiMaxTokens);
+  }
+  let roundCount = 0;
 
   const canUseTool: CanUseTool = async (toolName, input) => {
     if (toolName === "AskUserQuestion") {
@@ -92,11 +110,14 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
     currentQuery?.interrupt().catch(() => {});
   }
 
-  async function handle(userPrompt: string): Promise<void> {
-    stopped = false;
+  /**
+   * 跑一轮 query 并转译事件流。silent 模式用于轮数触发的 /compact：
+   * 吞掉文本/工具/用量输出，只保留 init 与 compact_boundary（压缩提示照常上报）。
+   */
+  async function runQuery(prompt: string, silent = false): Promise<void> {
     try {
       const queryIterator = query({
-        prompt: userPrompt,
+        prompt,
         options: {
           cwd: ctx.homedir,
           ...(sessionId && { resume: sessionId }),
@@ -145,9 +166,19 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
           if (message.subtype === "api_retry") {
             emitSystemError(ctx.ssid, String(message.error));
           }
+          // CLI 内置自动压缩：透传压缩事件给前端展示
+          if (message.subtype === "compact_boundary") {
+            const meta = message.compact_metadata;
+            emitCompact(ctx.ssid, {
+              trigger: meta.trigger === "manual" ? "manual" : "auto",
+              tokensBefore: meta.pre_tokens,
+              tokensAfter: meta.post_tokens,
+            });
+          }
         }
 
         if (
+          !silent &&
           message.type === "user" &&
           message.message?.content &&
           message.tool_use_result
@@ -155,7 +186,51 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
           emitToolRet(ctx.ssid, message.message.content);
         }
 
-        if (message.type === "assistant" && message.message?.content) {
+        // 每轮结束时 result 携带本轮 token 用量与累计成本
+        if (message.type === "result" && !silent) {
+          const usage = message.usage;
+          const cumulativeCost = message.total_cost_usd ?? 0;
+          const turnCost = Math.max(0, cumulativeCost - lastCumulativeCost);
+          lastCumulativeCost = cumulativeCost;
+
+          // 上下文窗口取本轮用量最大的模型条目（主循环模型）
+          let contextWindow: number | undefined;
+          let maxCost = -1;
+          for (const mu of Object.values(message.modelUsage ?? {})) {
+            if (mu.costUSD > maxCost) {
+              maxCost = mu.costUSD;
+              contextWindow = mu.contextWindow;
+            }
+          }
+          // .env 显式配置的窗口优先（进度条按用户配置的比例显示）
+          if (contextWindowOverride) contextWindow = contextWindowOverride;
+
+          emitUsage(ctx.ssid, {
+            input: usage.input_tokens,
+            output: usage.output_tokens,
+            cacheRead: usage.cache_read_input_tokens ?? 0,
+            cacheWrite: usage.cache_creation_input_tokens ?? 0,
+            cost: turnCost > 0 ? turnCost : undefined,
+            // 本轮 prompt 总量即请求时上下文占用
+            contextTokens:
+              usage.input_tokens +
+              (usage.cache_read_input_tokens ?? 0) +
+              (usage.cache_creation_input_tokens ?? 0),
+            contextWindow,
+            contextPercent:
+              contextWindow && contextWindow > 0
+                ? Math.round(
+                    ((usage.input_tokens +
+                      (usage.cache_read_input_tokens ?? 0) +
+                      (usage.cache_creation_input_tokens ?? 0)) /
+                      contextWindow) *
+                      100,
+                  )
+                : undefined,
+          });
+        }
+
+        if (!silent && message.type === "assistant" && message.message?.content) {
           for (const block of message.message.content) {
             if ("text" in block) {
               emitAIMSG(ctx.ssid, block.text);
@@ -186,6 +261,25 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
     } finally {
       currentQuery = null;
     }
+  }
+
+  async function handle(userPrompt: string): Promise<void> {
+    stopped = false;
+    // 轮数控制：达到上限后先静默跑一轮 /compact 把早期对话收敛为摘要，再处理真实提问
+    if (maxRounds && sessionId && roundCount >= maxRounds) {
+      console.log(`[CLAUDE] ${roundCount} rounds >= max ${maxRounds}, auto-compacting`);
+      try {
+        await runQuery("/compact", true);
+        roundCount = 0;
+      } catch (error) {
+        // 压缩失败不阻塞本轮提问；中断要向上传播
+        if (stopped) throw error;
+        console.warn("[CLAUDE] auto-compact failed:", error);
+      }
+    }
+    if (stopped) return; // 压缩期间被中断，不再继续本轮提问
+    roundCount += 1;
+    await runQuery(userPrompt);
   }
 
   return {

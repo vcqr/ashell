@@ -26,6 +26,35 @@ export interface AskUserQuestionPayload {
   tips?: string;
 }
 
+/** 单轮对话的 token 用量统计（[AI_USAGE] 帧负载） */
+export interface AiUsageStats {
+  /** 本轮输入 token（不含缓存命中/写入部分） */
+  input: number;
+  /** 本轮输出 token */
+  output: number;
+  /** 缓存读取 token */
+  cacheRead: number;
+  /** 缓存写入 token */
+  cacheWrite: number;
+  /** 本轮成本（美元），无价格信息时缺省 */
+  cost?: number;
+  /** 轮末上下文占用 token 估算 */
+  contextTokens?: number;
+  /** 模型上下文窗口大小 */
+  contextWindow?: number;
+  /** 上下文占用百分比（0-100+） */
+  contextPercent?: number;
+}
+
+/** 上下文压缩事件（[AI_COMPACT] 帧负载） */
+export interface AiCompactInfo {
+  trigger: "manual" | "auto";
+  /** 压缩前上下文 token */
+  tokensBefore: number;
+  /** 压缩后 token 估算 */
+  tokensAfter?: number;
+}
+
 export const END_OF_RESPONSE = "[END_OF_RESPONSE]";
 export const SESSION_STOP = "[SESSION_STOP]The conversation has ended.";
 
@@ -97,6 +126,16 @@ export function emitAskUserQuestion(sid: string, payload: AskUserQuestionPayload
 /** 系统级错误 / API 重试提示 */
 export function emitSystemError(sid: string, payload: string): void {
   emit(sid, "[SYSTEM_API_RETRY]", { type: "system", payload });
+}
+
+/** 每轮对话结束后的 token 用量统计 */
+export function emitUsage(sid: string, payload: AiUsageStats): void {
+  emit(sid, "[AI_USAGE]", { type: "usage", payload });
+}
+
+/** 上下文压缩事件 */
+export function emitCompact(sid: string, payload: AiCompactInfo): void {
+  emit(sid, "[AI_COMPACT]", { type: "compact", payload });
 }
 
 /** 用户中断本轮响应（payload 目前不被前端使用） */

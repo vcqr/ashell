@@ -51,6 +51,9 @@ const MANAGED_ENV_KEYS = [
   "PI_API_KEY",
   "PI_API",
   "PI_THINKING_LEVEL",
+  "AI_CONTEXT_WINDOW",
+  "AI_MAX_TOKENS",
+  "AI_MAX_ROUNDS",
 ];
 
 interface CreateFrame {
