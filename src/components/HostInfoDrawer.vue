@@ -30,6 +30,7 @@ import { humanSize } from "@/utils/humanSize"
 import { humanRate } from "@/utils/humanRate"
 import { humanUptime } from "@/utils/humanUptime"
 import { useDrawerWidth } from "@/composables/useDrawerWidth"
+import { usePanelSwitchClosed } from "@/composables/usePanels"
 import { useIconStore } from "@/stores/icons"
 import NetSparkline from "@/components/host/NetSparkline.vue"
 
@@ -390,9 +391,15 @@ const { width, resizing, onResizeStart } = useDrawerWidth({
   defaultWidth: 480,
 })
 
+// 被互斥切换关闭：跳过离场滑动动画，避免旧面板滑出与新面板滑入交叠出重影
+const switchClosed = usePanelSwitchClosed("hostInfo")
+
 const panelStyle = computed(() => ({
   width: `${width.value}px`,
-  transition: resizing.value ? "none" : "transform 0.25s ease, box-shadow 0.15s ease",
+  transition:
+    resizing.value || switchClosed.value
+      ? "none"
+      : "transform 0.25s ease, box-shadow 0.15s ease",
   // 关闭态平移叠加活动栏宽度，理由同 AiAssistant（锚定 right: 活动栏宽）
   transform: props.open
     ? "translateX(0)"

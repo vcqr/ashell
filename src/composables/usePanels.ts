@@ -1,4 +1,4 @@
-import { nextTick, ref, watch, type ComputedRef, type Ref } from "vue";
+import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from "vue";
 import type { TerminalTab } from "@/types";
 import type { AiAssistantExposed } from "./useTabs";
 import { useLocalFilesPin } from "./useLocalFilesPin";
@@ -10,6 +10,43 @@ function loadActivityBarVisible(): boolean {
   if (typeof localStorage === "undefined") return true;
   const raw = localStorage.getItem(ACTIVITY_BAR_KEY);
   return raw === null ? true : raw === "true";
+}
+
+/**
+ * 互斥切换时的离场动画抑制。
+ *
+ * 右栏抽屉共用同一锚点（right）与 z-index，A→B 切换时旧面板滑出与新面板
+ * 滑入两个 0.25s 动画同帧交叠会闪出重影；被互斥关掉的面板当帧以
+ * transition:none 消失，只保留新面板的滑入。模块级状态：六个抽屉组件
+ * 各自通过 usePanelSwitchClosed 读取自己那份。
+ */
+export type SwitchablePanelId =
+  | "ai"
+  | "sftp"
+  | "hostInfo"
+  | "forward"
+  | "template"
+  | "localFiles";
+
+const switchClosedIds = ref(new Set<SwitchablePanelId>());
+
+function markSwitchClosed(ids: SwitchablePanelId[]) {
+  if (!ids.length) return;
+  const next = new Set(switchClosedIds.value);
+  for (const id of ids) next.add(id);
+  switchClosedIds.value = next;
+  // 标志只需覆盖 open 翻转的那一帧渲染；略长于 0.25s 滑动动画后过期，
+  // 兜底防止残留影响后续普通开合（如面板自身关闭按钮）的动画
+  window.setTimeout(() => {
+    const expired = new Set(switchClosedIds.value);
+    for (const id of ids) expired.delete(id);
+    switchClosedIds.value = expired;
+  }, 300);
+}
+
+/** 抽屉组件用：本面板是否刚被互斥切换关闭（应跳过离场滑动动画） */
+export function usePanelSwitchClosed(id: SwitchablePanelId) {
+  return computed(() => switchClosedIds.value.has(id));
 }
 
 /**
@@ -64,26 +101,51 @@ export function usePanels(
     }
   });
 
+  /**
+   * 互斥收起除 except 外的全部右栏面板，返回被实际收起的面板 id
+   * （供 markSwitchClosed 跳过其离场动画）。AI / 本地文件走各自的
+   * dismiss：固定停靠态豁免收起，未实际收起则不记入。
+   */
+  function closeOthers(except: SwitchablePanelId): SwitchablePanelId[] {
+    const closed: SwitchablePanelId[] = [];
+    if (except !== "sftp" && sftpOpen.value) {
+      sftpOpen.value = false;
+      closed.push("sftp");
+    }
+    if (except !== "hostInfo" && hostInfoOpen.value) {
+      hostInfoOpen.value = false;
+      closed.push("hostInfo");
+    }
+    if (except !== "forward" && forwardOpen.value) {
+      forwardOpen.value = false;
+      closed.push("forward");
+    }
+    if (except !== "template" && templateOpen.value) {
+      templateOpen.value = false;
+      closed.push("template");
+    }
+    if (except !== "localFiles" && localFilesOpen.value) {
+      dismissLocalFiles();
+      if (!localFilesOpen.value) closed.push("localFiles");
+    }
+    if (except !== "ai" && aiOpen.value) {
+      dismissAi();
+      if (!aiOpen.value) closed.push("ai");
+    }
+    return closed;
+  }
+
   function toggleAi() {
     if (!activeAiTab.value) return;
     aiOpen.value = !aiOpen.value;
-    if (aiOpen.value) {
-      sftpOpen.value = false;
-      hostInfoOpen.value = false;
-      forwardOpen.value = false;
-      templateOpen.value = false;
-      dismissLocalFiles();
-    }
+    if (aiOpen.value) markSwitchClosed(closeOthers("ai"));
   }
 
   function onSendToAi(_tabKey: string, text: string) {
     if (!activeAiTab.value) return;
     if (!aiOpen.value) {
       aiOpen.value = true;
-      sftpOpen.value = false;
-      hostInfoOpen.value = false;
-      forwardOpen.value = false;
-      dismissLocalFiles();
+      markSwitchClosed(closeOthers("ai"));
     }
     void nextTick(() => aiAssistantRef.value?.sendText(text));
   }
@@ -95,61 +157,31 @@ export function usePanels(
   function toggleSftp() {
     if (!activeSftpTab.value) return;
     sftpOpen.value = !sftpOpen.value;
-    if (sftpOpen.value) {
-      dismissAi();
-      hostInfoOpen.value = false;
-      forwardOpen.value = false;
-      templateOpen.value = false;
-      dismissLocalFiles();
-    }
+    if (sftpOpen.value) markSwitchClosed(closeOthers("sftp"));
   }
 
   function toggleHostInfo() {
     if (!activeSftpTab.value) return;
     hostInfoOpen.value = !hostInfoOpen.value;
-    if (hostInfoOpen.value) {
-      dismissAi();
-      sftpOpen.value = false;
-      forwardOpen.value = false;
-      templateOpen.value = false;
-      dismissLocalFiles();
-    }
+    if (hostInfoOpen.value) markSwitchClosed(closeOthers("hostInfo"));
   }
 
   function toggleForward() {
     if (!activeSftpTab.value) return;
     forwardOpen.value = !forwardOpen.value;
-    if (forwardOpen.value) {
-      dismissAi();
-      sftpOpen.value = false;
-      hostInfoOpen.value = false;
-      templateOpen.value = false;
-      dismissLocalFiles();
-    }
+    if (forwardOpen.value) markSwitchClosed(closeOthers("forward"));
   }
 
   function toggleTemplate() {
     if (!activeTerminalTab.value) return;
     templateOpen.value = !templateOpen.value;
-    if (templateOpen.value) {
-      dismissAi();
-      sftpOpen.value = false;
-      hostInfoOpen.value = false;
-      forwardOpen.value = false;
-      dismissLocalFiles();
-    }
+    if (templateOpen.value) markSwitchClosed(closeOthers("template"));
   }
 
   function toggleLocalFiles() {
     if (!activeLocalTab.value) return;
     localFilesOpen.value = !localFilesOpen.value;
-    if (localFilesOpen.value) {
-      dismissAi();
-      sftpOpen.value = false;
-      hostInfoOpen.value = false;
-      forwardOpen.value = false;
-      templateOpen.value = false;
-    }
+    if (localFilesOpen.value) markSwitchClosed(closeOthers("localFiles"));
   }
 
   function toggleSettings() {

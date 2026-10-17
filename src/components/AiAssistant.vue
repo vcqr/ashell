@@ -54,6 +54,7 @@ import { getApiInfo } from "@/api/client";
 import { openAiInNewWindow } from "@/utils/newWindow";
 import { parseModelIds } from "@/composables/useAiConfig";
 import { useAiPin } from "@/composables/useAiPin";
+import { usePanelSwitchClosed } from "@/composables/usePanels";
 import { useDrawerWidth } from "@/composables/useDrawerWidth";
 
 const props = defineProps<{
@@ -211,6 +212,8 @@ const { width, resizing, onResizeStart } = useDrawerWidth({
 
 /** 固定（停靠）态：主内容区让位并排显示，切 tab / 开其他面板不自动收起 */
 const aiPinned = useAiPin();
+// 被互斥切换关闭：跳过离场滑动动画，避免旧面板滑出与新面板滑入交叠出重影
+const switchClosed = usePanelSwitchClosed("ai");
 
 // 固定时内容区让位（App 的 .app-content right 读同一变量）；独立窗口无停靠。
 // 锚点叠加本地文件停靠宽度：两个面板同时停靠时 AI 排在本地文件左侧
@@ -233,9 +236,10 @@ const panelStyle = computed(() => {
     width: `${width.value}px`,
     // 固定（停靠）态不做滑入动画：内容区让位变量已就位，
     // 滑入期间会看到面板盖在已让位的空白上（与 LocalFilesDrawer 同理）
-    transition: resizing.value || aiPinned.value
-      ? "none"
-      : "transform 0.25s ease, box-shadow 0.15s ease",
+    transition:
+      resizing.value || aiPinned.value || switchClosed.value
+        ? "none"
+        : "transform 0.25s ease, box-shadow 0.15s ease",
     // 关闭态平移要叠加活动栏宽度 + 本地文件停靠宽度：面板锚定
     // right: calc(活动栏 + 本地文件停靠宽)，只平移自身宽度会有残留
     transform: props.open

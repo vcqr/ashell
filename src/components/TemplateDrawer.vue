@@ -26,6 +26,7 @@ import { useI18n } from "vue-i18n";
 import { useTemplateStore } from "@/stores/templates";
 import { getRecentCommands } from "@/composables/useCommandSuggest";
 import type { CommandTemplate } from "@/types";
+import { usePanelSwitchClosed } from "@/composables/usePanels";
 
 const props = defineProps<{
   open: boolean;
@@ -35,6 +36,9 @@ const emit = defineEmits<{
   "update:open": [value: boolean];
   "run": [command: string];
 }>();
+
+// 被互斥切换关闭：跳过离场滑动动画，避免旧面板滑出与新面板滑入交叠出重影
+const switchClosed = usePanelSwitchClosed("template");
 
 const { t } = useI18n();
 const message = useMessage();
@@ -155,7 +159,7 @@ async function onDelete(id: number) {
   <Teleport to="body">
     <aside
       class="tpl-panel"
-      :class="{ open: props.open }"
+      :class="{ open: props.open, 'switch-closed': switchClosed }"
       :aria-hidden="!props.open"
     >
       <header class="panel-header">
@@ -329,6 +333,11 @@ async function onDelete(id: number) {
 .tpl-panel.open {
   transform: translateX(0);
   box-shadow: -8px 0 24px var(--ashell-shadow);
+}
+
+/* 被互斥切换关闭：跳过离场滑动，避免与新面板滑入交叠出重影 */
+.tpl-panel.switch-closed {
+  transition: none;
 }
 
 .panel-header {

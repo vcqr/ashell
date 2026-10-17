@@ -13,6 +13,7 @@ import { useI18n } from "vue-i18n"
 import LocalPane from "@/components/sftp/LocalPane.vue"
 import { useLocalFilesPin } from "@/composables/useLocalFilesPin"
 import { useDrawerWidth } from "@/composables/useDrawerWidth"
+import { usePanelSwitchClosed } from "@/composables/usePanels"
 import { useStartupStore } from "@/stores/startup"
 import type { OsDropFolder } from "@/types"
 
@@ -34,6 +35,8 @@ const { t } = useI18n()
 
 /** 固定（停靠）态：主内容区让位并排显示，切 tab / 开其他面板不自动收起 */
 const pinned = useLocalFilesPin()
+/** 被互斥切换关闭：跳过离场滑动动画，避免旧面板滑出与新面板滑入交叠出重影 */
+const switchClosed = usePanelSwitchClosed("localFiles")
 /** 目录跟随开关（设置 → 启动）：开启时抽屉跟随当前终端 cwd，关闭时只手动浏览 */
 const startupStore = useStartupStore()
 
@@ -200,7 +203,7 @@ async function onDrop(e: DragEvent) {
   <Teleport to="body">
     <aside
       class="local-files-panel"
-      :class="{ open: props.open, resizing: resizing, pinned: pinned }"
+      :class="{ open: props.open, resizing: resizing, pinned: pinned, 'switch-closed': switchClosed }"
       :style="{ width: `${width}px` }"
       :aria-hidden="!props.open"
       @dragover="onDragOver"
@@ -310,6 +313,11 @@ async function onDrop(e: DragEvent) {
 .local-files-panel.resizing {
   transition: none;
   user-select: none;
+}
+
+/* 被互斥切换关闭：跳过离场滑动，避免与新面板滑入交叠出重影 */
+.local-files-panel.switch-closed {
+  transition: none;
 }
 
 .resize-handle {
