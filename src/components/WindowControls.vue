@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue"
-import { NIcon } from "naive-ui"
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { NDropdown, NIcon, type DropdownOption } from "naive-ui"
 import { useI18n } from "vue-i18n"
-import { getCurrentWindow } from "@tauri-apps/api/window"
+import {
+  currentMonitor,
+  getCurrentWindow,
+  PhysicalPosition,
+  PhysicalSize,
+} from "@tauri-apps/api/window"
 import {
   AddOutline,
   CloseOutline,
@@ -14,29 +19,33 @@ import { detectMac } from "@/utils/platform"
 
 /**
  * 无边框窗口的最小化/最大化/关闭按钮，Windows 风格与 macOS 红绿灯风格
- * 双样式自适配（detectMac）。自维护 isMaximized（onResized 同步），
+ * 双样式自适配（detectMac）。自维护 isMaximized/isFullscreen（onResized 同步），
  * 可直接放进任意窗口的自绘标题栏；摆放位置（左/右）由父组件决定。
+ * mac 绿灯：单击=全屏（系统默认）、Alt+单击=最大化，悬停弹出等效 Sequoia
+ * 「Move & Resize」菜单（全屏/左右半屏平铺/最大化）。
  */
 const { t } = useI18n()
 const appWindow = getCurrentWindow()
 const isMac = detectMac()
 
 const isMaximized = ref(false)
+const isFullscreen = ref(false)
 let unlistenResize: (() => void) | null = null
 
-async function syncMaximized() {
+async function syncWinState() {
   try {
     isMaximized.value = await appWindow.isMaximized()
+    isFullscreen.value = await appWindow.isFullscreen()
   } catch {
     // ignore
   }
 }
 
 onMounted(() => {
-  void syncMaximized()
+  void syncWinState()
   void appWindow
     .onResized(() => {
-      void syncMaximized()
+      void syncWinState()
     })
     .then((un) => {
       unlistenResize = un
@@ -54,7 +63,59 @@ function minimizeWindow() {
 
 async function toggleMaximize() {
   await appWindow.toggleMaximize()
-  void syncMaximized()
+  void syncWinState()
+}
+
+async function toggleFullscreen() {
+  try {
+    await appWindow.setFullscreen(!isFullscreen.value)
+    void syncWinState()
+  } catch {
+    // ignore
+  }
+}
+
+/** 绿灯菜单「移到半屏」：按显示器工作区（去掉 Dock/菜单栏）平铺到左/右一半 */
+async function tileWindow(side: "left" | "right") {
+  try {
+    if (isFullscreen.value) await appWindow.setFullscreen(false)
+    const mon = await currentMonitor()
+    if (!mon) return
+    const wa = mon.workArea
+    const half = Math.floor(wa.size.width / 2)
+    const x = side === "left" ? wa.position.x : wa.position.x + half
+    await appWindow.setPosition(new PhysicalPosition(x, wa.position.y))
+    await appWindow.setSize(new PhysicalSize(half, wa.size.height))
+  } catch {
+    // ignore
+  }
+}
+
+/** 绿灯：单击=全屏（macOS 系统默认行为），Alt+单击=最大化/还原 */
+function onZoomClick(e: MouseEvent) {
+  if (e.altKey) void toggleMaximize()
+  else void toggleFullscreen()
+}
+
+/** 绿灯悬停菜单：等效 macOS Sequoia「Move & Resize」（该菜单属于 NSWindow
+ * 标准按钮，自绘按钮无法触发，用 setPosition/setSize 复刻同等动作） */
+const zoomOptions = computed<DropdownOption[]>(() => [
+  {
+    label: isFullscreen.value ? t("app.exitFullscreen") : t("app.fullscreen"),
+    key: "fullscreen",
+  },
+  { label: t("app.tileLeft"), key: "left" },
+  { label: t("app.tileRight"), key: "right" },
+  {
+    label: isMaximized.value ? t("app.restore") : t("app.maximize"),
+    key: "maximize",
+  },
+])
+
+function onZoomSelect(key: string) {
+  if (key === "fullscreen") void toggleFullscreen()
+  else if (key === "left" || key === "right") void tileWindow(key)
+  else void toggleMaximize()
 }
 
 function closeWindow() {
@@ -84,17 +145,24 @@ function closeWindow() {
         <RemoveOutline />
       </NIcon>
     </button>
-    <button
-      class="window-control mac-max"
-      type="button"
-      :title="isMaximized ? t('app.restore') : t('app.maximize')"
-      @click="toggleMaximize"
+    <NDropdown
+      trigger="hover"
+      placement="bottom-start"
+      :options="zoomOptions"
+      @select="onZoomSelect"
     >
-      <NIcon :size="10">
-        <CopyOutline v-if="isMaximized" />
-        <AddOutline v-else />
-      </NIcon>
-    </button>
+      <button
+        class="window-control mac-max"
+        type="button"
+        :title="isFullscreen ? t('app.exitFullscreen') : t('app.fullscreen')"
+        @click="onZoomClick"
+      >
+        <NIcon :size="10">
+          <CopyOutline v-if="isFullscreen" />
+          <AddOutline v-else />
+        </NIcon>
+      </button>
+    </NDropdown>
   </div>
   <div v-else class="window-controls" data-tauri-drag-region="false">
     <button

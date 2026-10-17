@@ -8,6 +8,10 @@ export default {
   restore: "Restore",
   maximize: "Maximize",
   closeWindow: "Close",
+  fullscreen: "Enter Full Screen",
+  exitFullscreen: "Exit Full Screen",
+  tileLeft: "Move to Left Half",
+  tileRight: "Move to Right Half",
   emptyState: {
     title: "No active terminal. Open a connection from the sidebar, or start a local shell on this machine.",
     openHosts: "Open Connections",

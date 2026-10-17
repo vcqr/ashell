@@ -8,6 +8,10 @@ export default {
   restore: "Restore",
   maximize: "Maximize",
   closeWindow: "Close",
+  fullscreen: "Enter Full Screen",
+  exitFullscreen: "Exit Full Screen",
+  tileLeft: "Move to Left Half",
+  tileRight: "Move to Right Half",
   emptyState: {
     title: "暂无打开的终端。从侧栏打开连接，或新建本地终端。",
     openHosts: "打开连接",
