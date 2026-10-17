@@ -2,8 +2,10 @@
 //!
 //! 通过 `Session::execute` 在已建立的 SSH 会话上执行一段复合 shell，把多块信息一次性
 //! 拉回来再在 Rust 侧解析。各段以 `===SECTION:<name>===` 分隔，单段内部按 Linux 习惯
-//! 逐行处理。任意一段解析失败时该字段降级为默认值（数字 0 / 字符串空），不抛错，让前
-//! 端能继续显示其它字段。
+//! 逐行处理。Linux 与 macOS 双路径：Darwin 分支用 sw_vers / sysctl / vm_stat /
+//! netstat / top 等命令采集，并伪装成 Linux 的行格式（/proc/stat、meminfo、net/dev），
+//! Rust 解析端保持不变。任意一段解析失败时该字段降级为默认值（数字 0 / 字符串空），
+//! 不抛错，让前端能继续显示其它字段。
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -112,21 +114,48 @@ pub struct SysInfo {
 }
 
 const SCRIPT: &str = r#"
+# zsh 默认 nomatch：无匹配的 glob（如 macOS 上不存在的 /sys 路径）是致命错误
+# 会终止整个脚本，转成与 sh/bash 一致的空展开；其它 shell 无此命令，静默跳过
+[ -n "$ZSH_VERSION" ] && setopt null_glob 2>/dev/null
+IS_DARWIN=0
+[ "$(uname -s)" = "Darwin" ] && IS_DARWIN=1
+
 echo '===SECTION:hostname==='
 hostname 2>/dev/null
 echo '===SECTION:os==='
-cat /etc/os-release 2>/dev/null
+if [ "$IS_DARWIN" = 1 ]; then
+  # macOS：sw_vers 拼成 PRETTY_NAME，复用 Linux 解析
+  P=$(sw_vers -productName 2>/dev/null)
+  [ -n "$P" ] || P=macOS
+  V=$(sw_vers -productVersion 2>/dev/null)
+  printf 'PRETTY_NAME="%s%s"\n' "$P" "${V:+ $V}"
+else
+  cat /etc/os-release 2>/dev/null
+fi
 echo '===SECTION:kernel==='
 uname -sr 2>/dev/null
 echo '===SECTION:arch==='
 uname -m 2>/dev/null
 echo '===SECTION:uptime==='
-awk '{print $1}' /proc/uptime 2>/dev/null
+if [ "$IS_DARWIN" = 1 ]; then
+  # 无 /proc/uptime：开机时刻（kern.boottime 的 sec 字段）与当前时间求差
+  bt=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ sec = \([0-9]*\).*/\1/p')
+  [ -n "$bt" ] && echo $(( $(date +%s) - bt ))
+else
+  awk '{print $1}' /proc/uptime 2>/dev/null
+fi
 echo '===SECTION:stat==='
-# CPU 占用改走 /proc/stat 差分：top -bn1 首帧给的是开机以来的均值，BusyBox top
-# 只有累计帧且 token 是 idle 而非 id，两者都拿不到瞬时占用；Rust 侧按 sid 缓存
-# 上次采样做差分，同时摆脱对 top 是否存在的依赖
-head -n 1 /proc/stat 2>/dev/null
+# CPU 占用走相邻两次采样差分：Linux 用 /proc/stat 节拍计数；top -bn1 首帧给的是
+# 开机以来的均值，BusyBox top 只有累计帧且 token 是 idle 而非 id，两者都拿不到
+# 瞬时占用。Rust 侧按 sid 缓存上次采样做差分，摆脱对 top 是否存在的依赖
+if [ "$IS_DARWIN" = 1 ]; then
+  # macOS 无 /proc/stat：top -l 1 单帧即瞬时占用，换算成 ×100 的伪节拍行，
+  # 交 Rust 侧同一套差分逻辑（两次轮询的百分比之差）
+  LC_ALL=C top -l 1 -n 0 2>/dev/null | awk -F'[:,%]' '
+    /^CPU usage:/ { printf "cpu %.0f 0 %.0f %.0f\n", $2 * 100, $4 * 100, $6 * 100; exit }'
+else
+  head -n 1 /proc/stat 2>/dev/null
+fi
 echo '===SECTION:cores==='
 # nproc 反映当前进程的亲和性（taskset/cgroup cpuset 会少报），getconf 取系统在线
 # 核数更准；逐级兜底，解析端忽略 0
@@ -134,22 +163,76 @@ getconf _NPROCESSORS_ONLN 2>/dev/null
 nproc 2>/dev/null
 grep -c '^processor' /proc/cpuinfo 2>/dev/null
 echo '===SECTION:mem==='
-cat /proc/meminfo 2>/dev/null
+if [ "$IS_DARWIN" = 1 ]; then
+  # 无 /proc/meminfo：总量取 hw.memsize；"可用"按活动监视器口径 =
+  # 空闲 + speculative + 可回收（purgeable + 文件缓存）页，页大小从表头读
+  TOT=$(sysctl -n hw.memsize 2>/dev/null)
+  if [ -n "$TOT" ]; then
+    vm_stat 2>/dev/null | awk -v tot_kb=$((TOT / 1024)) '
+      /page size of/        { ps = $8 + 0 }
+      /^Pages free:/        { free = $3 + 0 }
+      /^Pages speculative:/ { spec = $3 + 0 }
+      /^Pages purgeable:/   { purg = $3 + 0 }
+      /^File-backed pages:/ { fb = $3 + 0 }
+      END {
+        if (ps <= 0) ps = 4096
+        avail = int((free + spec + purg + fb) * ps / 1024)
+        if (avail > tot_kb) avail = tot_kb
+        printf "MemTotal: %d kB\n", tot_kb
+        printf "MemAvailable: %d kB\n", avail
+      }'
+  fi
+  # swap：vm.swapusage 形如 "total = 3072.00M  used = 1615.56M  free = ..."
+  su=$(sysctl -n vm.swapusage 2>/dev/null)
+  ST=$(printf '%s' "$su" | sed -n 's/.*total = \([0-9.]*\)M.*/\1/p')
+  SU=$(printf '%s' "$su" | sed -n 's/.*used = \([0-9.]*\)M.*/\1/p')
+  if [ -n "$ST" ] && [ -n "$SU" ]; then
+    awk -v t="$ST" -v u="$SU" 'BEGIN {
+      printf "SwapTotal: %d kB\n", t * 1024
+      printf "SwapFree: %d kB\n", (t - u) * 1024
+    }'
+  fi
+else
+  cat /proc/meminfo 2>/dev/null
+fi
 echo '===SECTION:disk==='
 LC_ALL=C df -Pk 2>/dev/null | grep -Ev '^(tmpfs|devtmpfs|overlay|aufs|squashfs|udev|run|none)\b' | grep -Ev '^Filesystem\b'
 echo '===SECTION:net==='
-cat /proc/net/dev 2>/dev/null
+if [ "$IS_DARWIN" = 1 ]; then
+  # 无 /proc/net/dev：netstat -ib 伪装成同形状。首两行空行占位供解析端跳过；
+  # 同网卡多地址行字节计数一致，只取首行；Link 行 Address 可能为空（utun 等）
+  # 导致列左移，按列数区分 rx/tx 位置
+  netstat -ib 2>/dev/null | awk '
+    BEGIN { print ""; print "" }
+    NR == 1 { next }
+    {
+      name = $1
+      sub(/\*$/, "", name)
+      if (name == "Name") next
+      if (name ~ /^(lo|awdl|llw|ap|bridge|anpi|stf|gif|pktap|feth|vmnet|vlan)/) next
+      if (seen[name]++) next
+      if (NF >= 11) { rx = $7 + 0; tx = $10 + 0 } else { rx = $6 + 0; tx = $9 + 0 }
+      # 恒 0 的 utun 是系统自带虚拟口，有流量的（活跃 VPN）才保留
+      if (name ~ /^utun/ && rx == 0 && tx == 0) next
+      printf "%s: %d 0 0 0 0 0 0 0 %d 0 0 0 0 0 0 0\n", name, rx, tx
+    }'
+else
+  cat /proc/net/dev 2>/dev/null
+fi
 echo '===SECTION:ps==='
 LC_ALL=C ps -eo pid,user,pcpu,pmem,comm 2>/dev/null
 echo '===SECTION:hertz==='
 getconf CLK_TCK 2>/dev/null
 echo '===SECTION:proc_uid_name==='
 # /etc/passwd 仅取 name:uid，给 /proc 路径用来回填用户名
-awk -F: '{print $3 " " $1}' /etc/passwd 2>/dev/null
+if [ "$IS_DARWIN" != 1 ]; then
+  awk -F: '{print $3 " " $1}' /etc/passwd 2>/dev/null
+fi
 echo '===SECTION:proc==='
 # 遍历 /proc/[0-9]*：每行输出
 #   pid <TAB> uid <TAB> rss_kb <TAB> utime_jiffies <TAB> stime_jiffies <TAB> comm
 # 兼容 BusyBox awk：用 getline < file 读；comm 取 stat 里第一对 () 之间内容。
+if [ "$IS_DARWIN" != 1 ]; then
 LC_ALL=C awk '
 BEGIN {
   cmd = "ls -1 /proc 2>/dev/null"
@@ -192,6 +275,7 @@ BEGIN {
   close(cmd)
 }
 ' 2>/dev/null
+fi
 echo '===SECTION:temp==='
 # thermal_zone：CPU 封装 / ACPI 温度，无需任何工具
 for z in /sys/class/thermal/thermal_zone*; do
@@ -257,6 +341,9 @@ if [ -n "$NPU_SM" ] && [ -x "$NPU_SM" ]; then
 fi
 echo '===SECTION:cpuinfo==='
 # CPU 型号：x86 优先 model name；ARM /proc/cpuinfo 各家不统一，逐级回退到 lscpu
+if [ "$IS_DARWIN" = 1 ]; then
+  sysctl -n machdep.cpu.brand_string 2>/dev/null
+else
 grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
 grep -m1 '^Model Name' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
 if command -v lscpu >/dev/null 2>&1; then
@@ -265,6 +352,7 @@ fi
 grep -m1 '^Processor' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
 grep -m1 '^Hardware' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
 grep -m1 '^Model' /proc/cpuinfo 2>/dev/null | cut -d: -f2-
+fi
 echo '===SECTION:dmi_mem==='
 # 内存规格：依赖 dmidecode（需 root），失败时留空由前端隐藏
 if command -v dmidecode >/dev/null 2>&1; then
@@ -1358,5 +1446,71 @@ mod tests2 {
         assert_eq!(disks[1].model.as_deref(), Some("INTEL SSDPE2KX010T8"));
         // LVM 等非物理设备不误挂型号
         assert_eq!(disks[2].model, None);
+    }
+
+    /// macOS 采集段的端到端解析：Darwin 分支伪装出的行格式要能走通 Linux 解析路径
+    #[test]
+    fn test_parse_macos_sections() {
+        let text = "\
+===SECTION:hostname===
+Mac-mini.local
+===SECTION:os===
+PRETTY_NAME=\"macOS 27.0.1\"
+===SECTION:kernel===
+Darwin 27.0.0
+===SECTION:arch===
+arm64
+===SECTION:uptime===
+1310096
+===SECTION:stat===
+cpu 324 0 9675 2222
+===SECTION:cores===
+10
+===SECTION:mem===
+MemTotal: 16777216 kB
+MemAvailable: 7312032 kB
+SwapTotal: 3145728 kB
+SwapFree: 1491394 kB
+===SECTION:net===
+
+
+en0: 11040591480 0 0 0 0 0 0 0 17299745655 0 0 0 0 0 0 0
+===SECTION:ps===
+  PID USER              %CPU %MEM COMM
+    1 root               0.1  0.1 /sbin/launchd
+  539 root               0.1  0.4 /usr/libexec/logd
+===SECTION:cpuinfo===
+Apple M4
+===SECTION:end===
+";
+        let (info, ticks) = parse(text);
+        assert_eq!(info.hostname, "Mac-mini.local");
+        assert_eq!(info.os_pretty, "macOS 27.0.1");
+        assert_eq!(info.kernel, "Darwin 27.0.0");
+        assert_eq!(info.arch, "arm64");
+        assert_eq!(info.uptime_secs, 1310096);
+        // 伪节拍行：user+sys+idle
+        let t = ticks.unwrap();
+        assert_eq!(t.total, 12221);
+        assert_eq!(t.idle, 2222);
+        assert_eq!(info.cpu_cores, 10);
+        assert_eq!(info.cpu_model, "Apple M4");
+        assert_eq!(info.mem_total_kb, 16777216);
+        assert_eq!(info.mem_used_kb, 16777216 - 7312032);
+        assert_eq!(info.swap_total_kb, 3145728);
+        assert_eq!(info.swap_used_kb, 3145728 - 1491394);
+        // 首两行空行占位被 skip，只落真实网卡
+        assert_eq!(info.nics.len(), 1);
+        assert_eq!(info.nics[0].name, "en0");
+        assert_eq!(info.nics[0].rx_bytes, 11040591480);
+        assert_eq!(info.nics[0].tx_bytes, 17299745655);
+        assert_eq!(info.net_rx_bytes, 11040591480);
+        // procps 路径解析 ps：表头跳过，comm 含完整路径
+        assert_eq!(info.top_cpu.len(), 2);
+        assert!(info.top_cpu.iter().any(|p| p.pid == 1));
+        assert!(info.top_mem.iter().any(|p| p.command == "/usr/libexec/logd"));
+        // 差分：两帧 total 增 1000、idle 增 222 → busy ≈ 77.8%
+        let prev = CpuTicks { total: 11221, idle: 2000 };
+        assert!((cpu_pct_between(prev, t, 1.5).unwrap() - 77.8).abs() < 0.1);
     }
 }
