@@ -77,6 +77,9 @@ export const useAiConfigStore = defineStore("aiConfig", () => {
     provider_id?: string;
     active_model_id?: string;
     thinking_level?: string;
+    context_window?: string;
+    max_tokens?: string;
+    max_rounds?: string;
   }) {
     const engine = enginesState.value?.active_engine;
     if (!engine || busy.value) return null;

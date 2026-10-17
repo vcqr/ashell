@@ -40,12 +40,13 @@ import {
   NPopover,
   NSelect,
   useMessage,
+  useThemeVars,
 } from "naive-ui";
 
 
 import { copyText as copyToClipboard } from "@/utils/clipboard";
 import { useI18n } from "vue-i18n";
-import type { ChatMessage, ProcessStep } from "@/types";
+import type { AiCompactInfo, AiUsageStats, ChatMessage, ProcessStep } from "@/types";
 import { useApiStore } from "@/stores/api";
 import { useAiStore } from "@/stores/ai";
 import { useAiConfigStore } from "@/stores/aiConfig";
@@ -79,6 +80,8 @@ const aiConfig = useAiConfigStore();
 const phraseStore = usePhraseStore();
 const message = useMessage();
 const { t } = useI18n();
+// naive-ui 主题变量：上下文状态位随占用率取 warning/error 色（自动适配明暗主题）
+const themeVars = useThemeVars();
 
 /** 复制文本：Tauri 插件优先（免 WKWebView 授权提示），失败降级浏览器 API */
 async function copyText(text: string) {
@@ -346,6 +349,10 @@ const isTyping = computed(() => currentSession.value?.isTyping ?? false);
 const isApprovalActive = computed(
   () => currentSession.value?.isApprovalActive ?? false,
 );
+/** 会话级上下文占用（输入框工具栏状态位） */
+const contextUsage = computed(() => currentSession.value?.contextUsage ?? null);
+/** 占用百分比收敛值：null 表示未知（刚压缩完等），chip 隐藏 */
+const ctxPercent = computed(() => contextUsage.value?.contextPercent);
 
 const canSend = computed(
   () =>
@@ -357,6 +364,76 @@ const canSend = computed(
 function nowStr() {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** token 数紧凑格式：1234 → 1.2k，1234567 → 1.2M */
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+/** 单条消息下方用量小字：↑in ↓out · cache xx% · ctx xx% · $cost */
+function formatUsage(u: AiUsageStats): string {
+  const parts = [
+    `↑${formatTokenCount(u.input)}`,
+    `↓${formatTokenCount(u.output)}`,
+  ];
+  const cacheTotal = u.cacheRead + u.cacheWrite;
+  const requestTotal = u.input + cacheTotal;
+  if (requestTotal > 0) {
+    parts.push(
+      t("ai.cacheRatio", {
+        percent: Math.round((u.cacheRead / requestTotal) * 100),
+      }),
+    );
+  }
+  if (u.contextPercent != null) {
+    parts.push(t("ai.ctxRatio", { percent: u.contextPercent }));
+  }
+  if (u.cost != null && u.cost > 0) {
+    parts.push(`$${u.cost < 0.01 ? u.cost.toFixed(4) : u.cost.toFixed(2)}`);
+  }
+  return parts.join(" · ");
+}
+
+/** 用量悬浮提示：缓存明细 + 上下文明细 */
+function usageTooltip(u: AiUsageStats): string {
+  const lines: string[] = [];
+  if (u.contextTokens != null && u.contextWindow != null) {
+    lines.push(
+      t("ai.ctxDetail", {
+        tokens: formatTokenCount(u.contextTokens),
+        window: formatTokenCount(u.contextWindow),
+      }),
+    );
+  }
+  if (u.cacheRead > 0 || u.cacheWrite > 0) {
+    lines.push(
+      t("ai.cacheDetail", {
+        read: formatTokenCount(u.cacheRead),
+        write: formatTokenCount(u.cacheWrite),
+      }),
+    );
+  }
+  return lines.join("\n");
+}
+
+/** 输入区上下文状态位的悬浮提示：占用明细 + 压缩行为说明 */
+function ctxTooltip(): string {
+  const lines: string[] = [];
+  const cu = contextUsage.value;
+  if (cu?.contextTokens != null && cu?.contextWindow != null) {
+    lines.push(
+      t("ai.ctxDetail", {
+        tokens: formatTokenCount(cu.contextTokens),
+        window: formatTokenCount(cu.contextWindow),
+      }),
+    );
+  }
+  lines.push(t("ai.ctxHint"));
+  return lines.join("\n");
 }
 
 /** 过程块折叠态文案：工具调用次数 + 最近一次工具名 */
@@ -583,6 +660,30 @@ function handleSidecarOutput(ssid: string, line: string) {
     const content = `**[error]** ${escapeHtml(msg.payload)}`;
     aiStore.finalizeProcess(ssid);
     pushAssistantMessage(ssid, content);
+    return;
+  }
+
+  if (line.startsWith("[AI_USAGE]")) {
+    const aiMsg = line.substring("[AI_USAGE]".length);
+    const msg = JSON.parse(aiMsg);
+    aiStore.attachUsage(ssid, msg.payload);
+    return;
+  }
+
+  if (line.startsWith("[AI_COMPACT]")) {
+    const aiMsg = line.substring("[AI_COMPACT]".length);
+    const msg = JSON.parse(aiMsg);
+    const { trigger, tokensBefore, tokensAfter } = msg.payload as AiCompactInfo;
+    // 压缩后旧占用值失效，清空待下轮 [AI_USAGE] 刷新
+    aiStore.patch(ssid, { contextUsage: null });
+    const detail =
+      tokensAfter != null
+        ? ` ${formatTokenCount(tokensBefore)} → ${formatTokenCount(tokensAfter)}`
+        : ` ${formatTokenCount(tokensBefore)}`;
+    pushAssistantMessage(
+      ssid,
+      `${t("ai.compacted", { trigger: trigger === "auto" ? t("ai.compactAuto") : t("ai.compactManual") })}${detail}`,
+    );
     return;
   }
 
@@ -1182,6 +1283,17 @@ defineExpose({
                 <span v-else class="dot">…</span>
                 <div v-if="!m.isProcess" class="bubble-footer">
                   <span class="bubble-time">{{ m.time }}</span>
+                  <NPopover
+                    v-if="m.role === 'assistant' && m.usage"
+                    trigger="hover"
+                    :show-arrow="false"
+                    :delay="200"
+                  >
+                    <template #trigger>
+                      <span class="bubble-usage">{{ formatUsage(m.usage) }}</span>
+                    </template>
+                    <span class="usage-tooltip">{{ usageTooltip(m.usage) }}</span>
+                  </NPopover>
                   <button
                     v-if="m.role === 'user' && m.content"
                     class="fav-btn"
@@ -1273,6 +1385,36 @@ defineExpose({
               <NIcon :size="12" style="margin-left: 2px"><RiArrowDownSLine /></NIcon>
             </NButton>
           </NDropdown>
+
+          <!-- 上下文占用状态位（模型选择后）：轮末 [AI_USAGE] 刷新，≥70% 黄色 ≥90% 红色 -->
+          <NPopover
+            v-if="ctxPercent != null"
+            trigger="hover"
+            placement="top-start"
+            :show-arrow="false"
+            :delay="200"
+          >
+            <template #trigger>
+              <span
+                class="ctx-chip"
+                :class="{ danger: ctxPercent >= 90 }"
+                :style="
+                  ctxPercent >= 70
+                    ? { color: ctxPercent >= 90 ? themeVars.errorColor : themeVars.warningColor }
+                    : undefined
+                "
+              >
+                <span class="ctx-bar">
+                  <span
+                    class="ctx-bar-fill"
+                    :style="{ width: Math.min(ctxPercent, 100) + '%' }"
+                  />
+                </span>
+                <span class="ctx-pct">{{ t("ai.ctxRatio", { percent: ctxPercent }) }}</span>
+              </span>
+            </template>
+            <span class="usage-tooltip">{{ ctxTooltip() }}</span>
+          </NPopover>
 
           <NPopover trigger="click" placement="top-start" :width="280">
             <template #trigger>
@@ -1638,6 +1780,65 @@ defineExpose({
   font-size: 10px;
   color: var(--ashell-text-subtle);
   text-align: right;
+}
+
+/* 消息用量小字：时间与用量间留出间隔，弱化视觉权重 */
+.bubble-usage {
+  font-size: 10px;
+  color: var(--ashell-text-subtle);
+  margin-left: auto;
+  margin-right: 4px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.usage-tooltip {
+  white-space: pre-line;
+  font-size: 12px;
+}
+
+/* 模型选择旁的上下文占用状态位：迷你进度条 + 百分比文字 */
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  font-size: 10px;
+  color: var(--ashell-text-subtle);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.ctx-bar {
+  display: inline-block;
+  width: 44px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--ashell-border, rgba(128, 128, 128, 0.35));
+  overflow: hidden;
+}
+
+.ctx-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: currentColor;
+  transition: width 0.4s ease;
+}
+
+.ctx-chip.danger .ctx-bar-fill {
+  /* ≥90% 时进度条加闪烁提示 */
+  animation: ctx-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes ctx-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 /* ── Favorite button (user bubbles) ── */

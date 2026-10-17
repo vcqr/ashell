@@ -4,12 +4,13 @@ import {
   RiCloseCircleLine,
   RiSearchLine,
 } from "@remixicon/vue";
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { storeToRefs } from "pinia";
 import {
   NForm,
   NFormItem,
   NInput,
+  NInputNumber,
   NSelect,
   NButton,
   NSpace,
@@ -68,12 +69,46 @@ async function switchEngine(engine: string) {
   }
 }
 
-async function patchEngine(input: { provider_id?: string; active_model_id?: string; thinking_level?: string }) {
+async function patchEngine(input: {
+  provider_id?: string;
+  active_model_id?: string;
+  thinking_level?: string;
+  context_window?: string;
+  max_tokens?: string;
+  max_rounds?: string;
+}) {
   try {
     await aiConfig.patchEngine(input);
   } catch (e) {
     message.error(t("settings.ai.saveFailed", { error: String(e) }));
   }
+}
+
+// ── 上下文控制（空串 = 模型默认/不限制）──
+// 本地 ref 承载输入：保存后 store 回写不会打断键入；失焦才提交（update-value-on-input=false）
+
+function tokenFieldOrNull(value: string | undefined): number | null {
+  const n = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+const ctxWindowInput = ref<number | null>(null);
+const maxTokensInput = ref<number | null>(null);
+const maxRoundsInput = ref<number | null>(null);
+
+// 仅在引擎行切换 / 首次加载时从 store 拉取，避免保存回写覆盖正在编辑的值
+watch(
+  () => currentEngine.value?.engine,
+  () => {
+    ctxWindowInput.value = tokenFieldOrNull(currentEngine.value?.context_window);
+    maxTokensInput.value = tokenFieldOrNull(currentEngine.value?.max_tokens);
+    maxRoundsInput.value = tokenFieldOrNull(currentEngine.value?.max_rounds);
+  },
+  { immediate: true },
+);
+
+function patchTokenField(field: "context_window" | "max_tokens" | "max_rounds", v: number | null) {
+  void patchEngine({ [field]: v && v > 0 ? String(Math.floor(v)) : "" });
 }
 
 // ── Claude Code 路径 ──
@@ -186,12 +221,51 @@ onMounted(async () => {
           @update:value="(v: string | null) => v && patchEngine({ active_model_id: v })"
         />
       </NFormItem>
-      <NFormItem v-if="isPiEngine" :label="t('settings.ai.engine.thinkingLevel')">
-        <NSelect
-          :value="currentEngine?.thinking_level || 'off'"
-          :options="thinkingLevelOptions"
+      <template v-if="isPiEngine">
+        <NFormItem :label="t('settings.ai.engine.thinkingLevel')">
+          <NSelect
+            :value="currentEngine?.thinking_level || 'off'"
+            :options="thinkingLevelOptions"
+            :disabled="engineSaving"
+            @update:value="(v: string) => patchEngine({ thinking_level: v })"
+          />
+        </NFormItem>
+      </template>
+
+      <NFormItem :label="t('settings.ai.engine.contextWindow')" :feedback="t('settings.ai.engine.tokenFieldHint')">
+        <NInputNumber
+          v-model:value="ctxWindowInput"
+          :update-value-on-input="false"
+          :min="1"
+          :step="1000"
           :disabled="engineSaving"
-          @update:value="(v: string) => patchEngine({ thinking_level: v })"
+          clearable
+          :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
+          @update:value="(v: number | null) => patchTokenField('context_window', v)"
+        />
+      </NFormItem>
+      <NFormItem :label="t('settings.ai.engine.maxTokens')" :feedback="t('settings.ai.engine.tokenFieldHint')">
+        <NInputNumber
+          v-model:value="maxTokensInput"
+          :update-value-on-input="false"
+          :min="1"
+          :step="1000"
+          :disabled="engineSaving"
+          clearable
+          :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
+          @update:value="(v: number | null) => patchTokenField('max_tokens', v)"
+        />
+      </NFormItem>
+      <NFormItem :label="t('settings.ai.engine.maxRounds')" :feedback="t('settings.ai.engine.maxRoundsHint')">
+        <NInputNumber
+          v-model:value="maxRoundsInput"
+          :update-value-on-input="false"
+          :min="1"
+          :step="1"
+          :disabled="engineSaving"
+          clearable
+          :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
+          @update:value="(v: number | null) => patchTokenField('max_rounds', v)"
         />
       </NFormItem>
 

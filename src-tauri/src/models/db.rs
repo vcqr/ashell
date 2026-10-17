@@ -362,6 +362,27 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v13: ai_engines 增加上下文控制字段（空串 = 默认/不限制；物化到 .env 供 pi sidecar 读取）
+    if current < 13 {
+        // sqlx 0.9 的 query() 只接受 &'static str，不能循环拼 SQL
+        sqlx::query("ALTER TABLE ai_engines ADD COLUMN context_window TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE ai_engines ADD COLUMN max_tokens TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE ai_engines ADD COLUMN max_rounds TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (13)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -370,7 +391,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 12;
+    const LATEST_VERSION: i64 = 13;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")

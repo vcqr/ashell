@@ -243,6 +243,23 @@ async fn active_engine(pool: &DbPool) -> AppResult<String> {
     Ok(v.unwrap_or_else(|| ENGINE_CLAUDE.to_string()))
 }
 
+/// 归一化 token 数字段：显式值去空白且需为合法正整数，否则回退现值/空串
+fn normalize_token_field(explicit: Option<&str>, current: &str) -> String {
+    match explicit {
+        Some(v) => {
+            let t = v.trim();
+            if t.is_empty() {
+                String::new()
+            } else if t.parse::<u64>().is_ok() {
+                t.to_string()
+            } else {
+                current.to_string()
+            }
+        }
+        None => current.to_string(),
+    }
+}
+
 /// 引擎配置总览：当前激活引擎 + 全部引擎行
 pub async fn list_engines(pool: &DbPool, key: &[u8; 32]) -> AppResult<AiEnginesState> {
     migrate_from_env_if_needed(pool, key).await?;
@@ -314,17 +331,31 @@ pub async fn update_engine(
         .unwrap_or(&current.thinking_level)
         .to_string();
 
+    // 上下文控制字段：显式指定优先，归一化数字（去空白；非法值保持空串语义）
+    let context_window = normalize_token_field(
+        input.context_window.as_deref(),
+        &current.context_window,
+    );
+    let max_tokens = normalize_token_field(input.max_tokens.as_deref(), &current.max_tokens);
+    let max_rounds = normalize_token_field(input.max_rounds.as_deref(), &current.max_rounds);
+
     sqlx::query(
         r#"UPDATE ai_engines SET
              provider_id = ?,
              active_model_id = ?,
              thinking_level = ?,
+             context_window = ?,
+             max_tokens = ?,
+             max_rounds = ?,
              updated_at = datetime('now')
            WHERE engine = ?"#,
     )
     .bind(provider_id.as_deref())
     .bind(&active_model_id)
     .bind(&thinking_level)
+    .bind(&context_window)
+    .bind(&max_tokens)
+    .bind(&max_rounds)
     .bind(engine)
     .execute(pool)
     .await?;
@@ -390,6 +421,10 @@ async fn materialize_env(pool: &DbPool, key: &[u8; 32]) -> AppResult<()> {
     };
 
     if let Some(row) = row {
+        // 上下文控制字段两引擎通用，激活引擎即物化
+        cfg.ai_context_window = row.context_window.clone();
+        cfg.ai_max_tokens = row.max_tokens.clone();
+        cfg.ai_max_rounds = row.max_rounds.clone();
         if let Some(pid) = row.provider_id.as_deref() {
             if let Ok(provider) = get_by_id(pool, key, pid).await {
                 if engine == ENGINE_PI {

@@ -266,6 +266,33 @@ export interface ProcessStep {
   time: string
 }
 
+/** 单轮对话的 token 用量统计（sidecar [AI_USAGE] 帧） */
+export interface AiUsageStats {
+  /** 本轮输入 token（不含缓存命中/写入部分） */
+  input: number
+  /** 本轮输出 token */
+  output: number
+  /** 缓存读取 token */
+  cacheRead: number
+  /** 缓存写入 token */
+  cacheWrite: number
+  /** 本轮成本（美元） */
+  cost?: number
+  /** 轮末上下文占用 token 估算 */
+  contextTokens?: number
+  /** 模型上下文窗口大小 */
+  contextWindow?: number
+  /** 上下文占用百分比（0-100+） */
+  contextPercent?: number
+}
+
+/** 上下文压缩事件（sidecar [AI_COMPACT] 帧） */
+export interface AiCompactInfo {
+  trigger: 'manual' | 'auto'
+  tokensBefore: number
+  tokensAfter?: number
+}
+
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'
@@ -277,6 +304,8 @@ export interface ChatMessage {
   processSteps?: ProcessStep[]
   /** 标记为 thinking 消息：渲染为可折叠的思考过程块 */
   thinking?: boolean
+  /** 本轮 token 用量统计（仅 assistant 消息，轮末 [AI_USAGE] 帧附着） */
+  usage?: AiUsageStats
 }
 
 /* ---------- 主机图标资源（/api/icons） ---------- */
@@ -457,6 +486,12 @@ export interface AiEngine {
   provider_id: string | null
   active_model_id: string
   thinking_level: string
+  /** 输入上下文窗口（token 数；空串 = 模型默认，仅 pi 生效） */
+  context_window: string
+  /** 单次输出上限（token 数；空串 = 模型默认，仅 pi 生效） */
+  max_tokens: string
+  /** 上下文保留对话轮数上限（空串 = 不限制，仅 pi 生效） */
+  max_rounds: string
   updated_at?: string | null
 }
 
@@ -464,6 +499,9 @@ export interface AiEngineUpdate {
   provider_id?: string | null
   active_model_id?: string
   thinking_level?: string
+  context_window?: string
+  max_tokens?: string
+  max_rounds?: string
 }
 
 export interface AiEnginesState {

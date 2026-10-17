@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { buildWsUrl, request } from '@/api/client'
 import { isTauri } from '@/utils/platform'
-import type { ChatMessage, ProcessStep } from '@/types'
+import type { AiUsageStats, ChatMessage, ProcessStep } from '@/types'
 
 /** 单个 ssid 对应的 AI 会话状态 */
 export interface AiSession {
@@ -15,6 +15,8 @@ export interface AiSession {
   sidecarPid: number | null
   /** 当前正在累积的"中间过程"消息 id；为 null 表示当前无活跃过程块 */
   currentProcessMsgId: number | null
+  /** 最近一次上报的上下文占用（[AI_USAGE] 帧更新；null 表示未知，如刚压缩完） */
+  contextUsage: Pick<AiUsageStats, 'contextTokens' | 'contextWindow' | 'contextPercent'> | null
   /** stdout 监听句柄（Web 端为关闭 sidecar 流 WS 的函数） */
   unlistenStdout: UnlistenFn | null
   /** stderr 监听句柄（Web 端为关闭 sidecar 流 WS 的函数） */
@@ -40,6 +42,7 @@ function emptySession(ssid: string): AiSession {
     isApprovalActive: false,
     sidecarPid: null,
     currentProcessMsgId: null,
+    contextUsage: null,
     unlistenStdout: null,
     unlistenStderr: null,
   }
@@ -141,6 +144,31 @@ export const useAiStore = defineStore('ai', () => {
     sessions.value = { ...sessions.value, [ssid]: { ...s, currentProcessMsgId: null } }
   }
 
+  /**
+   * 把本轮 token 用量附着到最后一条 assistant 消息（[AI_USAGE] 帧在轮末到达，
+   * 此时该轮的 AIMSG 已推送；跳过过程块向前找，找不到就丢弃）。
+   * 同时更新会话级上下文占用（输入框旁的状态位展示）。
+   */
+  function attachUsage(ssid: string, usage: AiUsageStats) {
+    const s = ensure(ssid)
+    if (usage.contextPercent != null) {
+      patch(ssid, {
+        contextUsage: {
+          contextTokens: usage.contextTokens,
+          contextWindow: usage.contextWindow,
+          contextPercent: usage.contextPercent,
+        },
+      })
+    }
+    for (let i = s.messages.length - 1; i >= 0; i--) {
+      const m = s.messages[i]!
+      if (m.role === 'assistant' && !m.isProcess) {
+        updateMessage(ssid, m.id, { usage })
+        return
+      }
+    }
+  }
+
   function clearMessages(ssid: string) {
     const s = sessions.value[ssid]
     if (!s) return
@@ -153,6 +181,7 @@ export const useAiStore = defineStore('ai', () => {
         isApprovalActive: false,
         isTyping: false,
         currentProcessMsgId: null,
+        contextUsage: null,
       },
     }
   }
@@ -425,6 +454,7 @@ export const useAiStore = defineStore('ai', () => {
     updateMessage,
     appendProcessStep,
     finalizeProcess,
+    attachUsage,
     clearMessages,
     hydrate,
     attachFor,

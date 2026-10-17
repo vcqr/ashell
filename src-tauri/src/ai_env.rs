@@ -38,6 +38,12 @@ const KEY_PI_API: &str = "PI_API";
 const KEY_PI_MODEL_IDS: &str = "PI_MODEL_IDS";
 /// Pi sidecar: thinking level
 const KEY_PI_THINKING_LEVEL: &str = "PI_THINKING_LEVEL";
+/// 输入上下文窗口（token 数，空 = 模型默认；pi 覆盖模型定义，claude 覆盖进度条显示）
+const KEY_AI_CONTEXT_WINDOW: &str = "AI_CONTEXT_WINDOW";
+/// 单次输出上限（token 数，空 = 模型默认；pi 覆盖模型定义，claude 经 CLAUDE_CODE_MAX_OUTPUT_TOKENS 下发）
+const KEY_AI_MAX_TOKENS: &str = "AI_MAX_TOKENS";
+/// 上下文保留对话轮数上限（空 = 不限制；pi 滑窗裁剪，claude 超限触发 /compact）
+const KEY_AI_MAX_ROUNDS: &str = "AI_MAX_ROUNDS";
 
 /// 前端 AI 设置弹窗的 schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -64,6 +70,12 @@ pub struct AiModelConfig {
     pub pi_api: String,
     /// Pi sidecar: thinking level（"off" / "minimal" / "low" / "medium" / "high" / "xhigh" / "max"）
     pub pi_thinking_level: String,
+    /// 输入上下文窗口（token 数，空 = 模型默认，两引擎通用）
+    pub ai_context_window: String,
+    /// 单次输出上限（token 数，空 = 模型默认，两引擎通用）
+    pub ai_max_tokens: String,
+    /// 上下文保留对话轮数上限（空 = 不限制，两引擎通用）
+    pub ai_max_rounds: String,
 }
 
 fn env_path() -> Result<PathBuf, String> {
@@ -93,6 +105,9 @@ pub(crate) fn read_env_config() -> Result<AiModelConfig, String> {
         pi_api_key: map.get(KEY_PI_API_KEY).cloned().unwrap_or_default(),
         pi_api: map.get(KEY_PI_API).cloned().unwrap_or_default(),
         pi_thinking_level: map.get(KEY_PI_THINKING_LEVEL).cloned().unwrap_or_default(),
+        ai_context_window: map.get(KEY_AI_CONTEXT_WINDOW).cloned().unwrap_or_default(),
+        ai_max_tokens: map.get(KEY_AI_MAX_TOKENS).cloned().unwrap_or_default(),
+        ai_max_rounds: map.get(KEY_AI_MAX_ROUNDS).cloned().unwrap_or_default(),
     })
 }
 
@@ -120,6 +135,9 @@ pub(crate) fn write_env_config(config: AiModelConfig) -> Result<(), String> {
     updates.insert(KEY_PI_API_KEY, config.pi_api_key.trim().to_string());
     updates.insert(KEY_PI_API, config.pi_api.trim().to_string());
     updates.insert(KEY_PI_THINKING_LEVEL, config.pi_thinking_level.trim().to_string());
+    updates.insert(KEY_AI_CONTEXT_WINDOW, config.ai_context_window.trim().to_string());
+    updates.insert(KEY_AI_MAX_TOKENS, config.ai_max_tokens.trim().to_string());
+    updates.insert(KEY_AI_MAX_ROUNDS, config.ai_max_rounds.trim().to_string());
 
     let merged = merge_env(&existing, &updates);
 

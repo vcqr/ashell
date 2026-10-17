@@ -224,6 +224,12 @@ pub struct AiEngine {
     pub active_model_id: String,
     /// Thinking Level（仅 pi 引擎使用）
     pub thinking_level: String,
+    /// 输入上下文窗口（token 数，空串 = 模型默认）
+    pub context_window: String,
+    /// 单次输出上限（token 数，空串 = 模型默认）
+    pub max_tokens: String,
+    /// 上下文保留对话轮数上限（空串 = 不限制，仅 pi 引擎生效）
+    pub max_rounds: String,
     pub updated_at: Option<String>,
 }
 
@@ -257,6 +263,9 @@ pub struct AiEngineUpdate {
     pub provider_id: Option<String>,
     pub active_model_id: Option<String>,
     pub thinking_level: Option<String>,
+    pub context_window: Option<String>,
+    pub max_tokens: Option<String>,
+    pub max_rounds: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
