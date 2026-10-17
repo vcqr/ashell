@@ -15,6 +15,8 @@ use sqlx::{Column, Row, TypeInfo};
 use crate::config;
 use crate::errors::{AppError, AppResult};
 use crate::models::DbPool;
+use crate::service::sftp_backup::{SftpConfig, SftpStorage};
+use crate::service::webdav::{WebDavClient, WebDavConfig};
 
 const MANIFEST_FILE: &str = "manifest.json";
 const PBKDF2_ITERATIONS: u32 = 100_000;
@@ -28,6 +30,12 @@ pub struct BackupConfig {
     pub access_key: String,
     pub secret_key: String,
     pub path_prefix: String,
+    /// WebDAV 备份配置；旧版 backup.json 无此字段，反序列化为 None
+    #[serde(default)]
+    pub webdav: Option<WebDavConfig>,
+    /// SFTP 备份配置（引用已保存主机）；旧版 backup.json 无此字段
+    #[serde(default)]
+    pub sftp: Option<SftpConfig>,
 }
 
 impl Default for BackupConfig {
@@ -39,6 +47,8 @@ impl Default for BackupConfig {
             access_key: String::new(),
             secret_key: String::new(),
             path_prefix: "ashell/".to_string(),
+            webdav: None,
+            sftp: None,
         }
     }
 }
@@ -253,6 +263,123 @@ pub fn save_config(cfg: &BackupConfig) -> AppResult<()> {
     Ok(())
 }
 
+// ── Storage abstraction (S3 / WebDAV) ──
+
+/// 归一化的远端存储：备份内容与 manifest 的读写统一走这里，
+/// 上层逻辑（加密、manifest 维护）与具体协议解耦。
+enum Storage {
+    S3(Box<Bucket>),
+    WebDav(WebDavClient),
+    Sftp(SftpStorage),
+}
+
+impl Storage {
+    /// 404 视为文件不存在返回 None（S3 的 400 同旧逻辑按缺失处理）
+    async fn get(&self, key: &str) -> AppResult<Option<Vec<u8>>> {
+        match self {
+            Storage::S3(bucket) => {
+                let response = bucket
+                    .get_object(key)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("s3 get_object: {e}")))?;
+                if response.status_code() == 404 || response.status_code() == 400 {
+                    return Ok(None);
+                }
+                if response.status_code() >= 300 {
+                    return Err(AppError::Internal(format!(
+                        "s3 get_object status: {}",
+                        response.status_code()
+                    )));
+                }
+                Ok(Some(response.as_slice().to_vec()))
+            }
+            Storage::WebDav(client) => client.get(key).await,
+            Storage::Sftp(storage) => storage.get(key).await,
+        }
+    }
+
+    async fn put(&self, key: &str, data: &[u8]) -> AppResult<()> {
+        match self {
+            Storage::S3(bucket) => {
+                let response = bucket
+                    .put_object(key, data)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("s3 put_object: {e}")))?;
+                if response.status_code() >= 300 {
+                    return Err(AppError::Internal(format!(
+                        "s3 put_object status: {}",
+                        response.status_code()
+                    )));
+                }
+                Ok(())
+            }
+            Storage::WebDav(client) => client.put(key, data).await,
+            Storage::Sftp(storage) => storage.put(key, data).await,
+        }
+    }
+
+    async fn delete(&self, key: &str) -> AppResult<()> {
+        match self {
+            Storage::S3(bucket) => bucket
+                .delete_object(key)
+                .await
+                .map(|_| ())
+                .map_err(|e| AppError::Internal(format!("s3 delete_object: {e}"))),
+            Storage::WebDav(client) => client.delete(key).await,
+            Storage::Sftp(storage) => storage.delete(key).await,
+        }
+    }
+
+    /// 操作结束的收尾：SFTP 断开连接，其余无连接需要释放
+    async fn shutdown(&self) {
+        if let Storage::Sftp(storage) = self {
+            storage.disconnect().await;
+        }
+    }
+}
+
+async fn create_storage(
+    pool: &DbPool,
+    crypto_key: &[u8; 32],
+    cfg: &BackupConfig,
+    backend: &str,
+) -> AppResult<Storage> {
+    match backend {
+        "webdav" => {
+            let wd = cfg
+                .webdav
+                .as_ref()
+                .ok_or_else(|| AppError::Internal("webdav is not configured".into()))?;
+            Ok(Storage::WebDav(WebDavClient::new(wd)?))
+        }
+        "sftp" => {
+            let sftp = cfg
+                .sftp
+                .as_ref()
+                .ok_or_else(|| AppError::Internal("sftp is not configured".into()))?;
+            Ok(Storage::Sftp(SftpStorage::connect(pool, crypto_key, sftp).await?))
+        }
+        _ => Ok(Storage::S3(create_bucket(cfg)?)),
+    }
+}
+
+/// 当前 backend 生效的远端目录前缀：S3 用平铺 path_prefix，WebDAV/SFTP 用各自配置
+fn path_prefix_for<'a>(cfg: &'a BackupConfig, backend: &str) -> &'a str {
+    match backend {
+        "webdav" => cfg
+            .webdav
+            .as_ref()
+            .map(|w| w.path_prefix.as_str())
+            .unwrap_or(""),
+        "sftp" => cfg
+            .sftp
+            .as_ref()
+            .map(|s| s.path_prefix.as_str())
+            .unwrap_or(""),
+        _ => cfg.path_prefix.as_str(),
+    }
+}
+
 // ── S3 helpers ──
 
 fn create_bucket(cfg: &BackupConfig) -> AppResult<Box<Bucket>> {
@@ -295,72 +422,53 @@ fn create_bucket(cfg: &BackupConfig) -> AppResult<Box<Bucket>> {
     Ok(bucket)
 }
 
-fn manifest_key(cfg: &BackupConfig) -> String {
-    format!("{}{}", cfg.path_prefix, MANIFEST_FILE)
+fn manifest_key(cfg: &BackupConfig, backend: &str) -> String {
+    format!("{}{}", path_prefix_for(cfg, backend), MANIFEST_FILE)
 }
 
-async fn load_manifest(bucket: &Bucket, cfg: &BackupConfig) -> AppResult<Manifest> {
-    let key = manifest_key(cfg);
-    let response = bucket
-        .get_object(&key)
-        .await
-        .map_err(|e| AppError::Internal(format!("s3 get_object: {e}")))?;
-
-    if response.status_code() == 404 || response.status_code() == 400 {
-        return Ok(Manifest::default());
+async fn load_manifest(
+    storage: &Storage,
+    cfg: &BackupConfig,
+    backend: &str,
+) -> AppResult<Manifest> {
+    let key = manifest_key(cfg, backend);
+    match storage.get(&key).await? {
+        None => Ok(Manifest::default()),
+        Some(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Internal(format!("parse manifest: {e}"))),
     }
-    if response.status_code() >= 300 {
-        return Err(AppError::Internal(format!(
-            "s3 get_object status: {}",
-            response.status_code()
-        )));
-    }
-
-    serde_json::from_slice(response.as_slice())
-        .map_err(|e| AppError::Internal(format!("parse manifest: {e}")))
 }
 
 async fn save_manifest(
-    bucket: &Bucket,
+    storage: &Storage,
     cfg: &BackupConfig,
+    backend: &str,
     manifest: &Manifest,
 ) -> AppResult<()> {
-    let key = manifest_key(cfg);
+    let key = manifest_key(cfg, backend);
     let json = serde_json::to_vec(manifest)
         .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let response = bucket
-        .put_object(&key, json.as_slice())
-        .await
-        .map_err(|e| AppError::Internal(format!("s3 put_object: {e}")))?;
-
-    if response.status_code() >= 300 {
-        return Err(AppError::Internal(format!(
-            "s3 put_object status: {}",
-            response.status_code()
-        )));
-    }
-    Ok(())
+    storage.put(&key, &json).await
 }
 
-pub async fn test_connection(cfg: &BackupConfig) -> AppResult<()> {
-    if cfg.bucket.is_empty() || cfg.access_key.is_empty() {
+pub async fn test_connection(
+    pool: &DbPool,
+    crypto_key: &[u8; 32],
+    cfg: &BackupConfig,
+    backend: &str,
+) -> AppResult<()> {
+    if backend != "webdav"
+        && backend != "sftp"
+        && (cfg.bucket.is_empty() || cfg.access_key.is_empty())
+    {
         return Err(AppError::Internal("bucket and access key are required".into()));
     }
-    let bucket = create_bucket(cfg)?;
-    let key = manifest_key(cfg);
-    let response = bucket
-        .get_object(&key)
-        .await
-        .map_err(|e| AppError::Internal(format!("s3 get_object: {e}")))?;
-
-    match response.status_code() {
-        200 | 404 => Ok(()),
-        code => Err(AppError::Internal(format!(
-            "s3 test_connection status: {}",
-            code
-        ))),
-    }
+    let storage = create_storage(pool, crypto_key, cfg, backend).await?;
+    // manifest 文件 GET 得到 200（已有备份）或 404（尚无备份）均视为可达
+    let result = storage.get(&manifest_key(cfg, backend)).await;
+    storage.shutdown().await;
+    result?;
+    Ok(())
 }
 
 // ── Table dump/restore ──
@@ -515,6 +623,7 @@ pub async fn create_backup(
     pool: &DbPool,
     crypto_key: &[u8; 32],
     cfg: &BackupConfig,
+    backend: &str,
     command_history: Vec<String>,
     frontend_prefs: Option<serde_json::Value>,
     password: String,
@@ -534,32 +643,35 @@ pub async fn create_backup(
     let json = serde_json::to_string_pretty(&backup)
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let encrypted = encrypt_with_password(&json, &password)?;
-    let key = format!("{}ashell-backup-{}.json", cfg.path_prefix, timestamp);
+    let key = format!(
+        "{}ashell-backup-{}.json",
+        path_prefix_for(cfg, backend),
+        timestamp
+    );
     let size = encrypted.len() as u64;
 
-    let bucket = create_bucket(cfg)?;
-    let response = bucket
-        .put_object(&key, encrypted.as_bytes())
-        .await
-        .map_err(|e| AppError::Internal(format!("s3 put_object: {e}")))?;
-
-    if response.status_code() >= 300 {
-        return Err(AppError::Internal(format!(
-            "s3 put_object status: {}",
-            response.status_code()
-        )));
+    let storage = create_storage(pool, crypto_key, cfg, backend).await?;
+    let put_result = storage.put(&key, encrypted.as_bytes()).await;
+    if let Err(e) = put_result {
+        storage.shutdown().await;
+        return Err(e);
     }
 
-    let mut manifest = load_manifest(&bucket, cfg).await?;
-    manifest.backups.push(ManifestEntry {
-        key: key.clone(),
-        timestamp: timestamp.clone(),
-        size,
-    });
-    manifest
-        .backups
-        .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    save_manifest(&bucket, cfg, &manifest).await?;
+    let manifest_result = async {
+        let mut manifest = load_manifest(&storage, cfg, backend).await?;
+        manifest.backups.push(ManifestEntry {
+            key: key.clone(),
+            timestamp: timestamp.clone(),
+            size,
+        });
+        manifest
+            .backups
+            .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        save_manifest(&storage, cfg, backend, &manifest).await
+    }
+    .await;
+    storage.shutdown().await;
+    manifest_result?;
 
     Ok(key)
 }
@@ -588,13 +700,39 @@ pub async fn export_backup(
     encrypt_with_password(&json, &password)
 }
 
-pub async fn list_backups(cfg: &BackupConfig) -> AppResult<Vec<BackupItem>> {
-    if cfg.bucket.is_empty() || cfg.access_key.is_empty() {
-        return Ok(Vec::new());
+pub async fn list_backups(
+    pool: &DbPool,
+    crypto_key: &[u8; 32],
+    cfg: &BackupConfig,
+    backend: &str,
+) -> AppResult<Vec<BackupItem>> {
+    match backend {
+        "webdav" => {
+            let unconfigured = cfg
+                .webdav
+                .as_ref()
+                .map_or(true, |w| w.url.trim().is_empty());
+            if unconfigured {
+                return Ok(Vec::new());
+            }
+        }
+        "sftp" => {
+            let unconfigured = cfg.sftp.as_ref().map_or(true, |s| s.host_id <= 0);
+            if unconfigured {
+                return Ok(Vec::new());
+            }
+        }
+        _ => {
+            if cfg.bucket.is_empty() || cfg.access_key.is_empty() {
+                return Ok(Vec::new());
+            }
+        }
     }
-    let bucket = create_bucket(cfg)?;
-    let manifest = load_manifest(&bucket, cfg).await?;
+    let storage = create_storage(pool, crypto_key, cfg, backend).await?;
+    let result = load_manifest(&storage, cfg, backend).await;
+    storage.shutdown().await;
 
+    let manifest = result?;
     let mut items: Vec<BackupItem> = manifest
         .backups
         .into_iter()
@@ -609,44 +747,50 @@ pub async fn list_backups(cfg: &BackupConfig) -> AppResult<Vec<BackupItem>> {
     Ok(items)
 }
 
-pub async fn delete_backup(cfg: &BackupConfig, key: &str) -> AppResult<()> {
-    let bucket = create_bucket(cfg)?;
+pub async fn delete_backup(
+    pool: &DbPool,
+    crypto_key: &[u8; 32],
+    cfg: &BackupConfig,
+    backend: &str,
+    key: &str,
+) -> AppResult<()> {
+    let storage = create_storage(pool, crypto_key, cfg, backend).await?;
 
-    // Best-effort delete from S3 — some services/credentials return 403 on delete.
-    // The manifest is the source of truth for the backup list, so we update it regardless.
-    if let Err(e) = bucket.delete_object(key).await {
-        eprintln!("[backup] s3 delete_object warning (non-fatal): {e}");
+    let result = async {
+        // Best-effort delete — some services/credentials return 403 on delete.
+        // The manifest is the source of truth for the backup list, so we update it regardless.
+        if let Err(e) = storage.delete(key).await {
+            eprintln!("[backup] storage delete warning (non-fatal): {e}");
+        }
+
+        // Remove from manifest
+        let mut manifest = load_manifest(&storage, cfg, backend).await?;
+        manifest.backups.retain(|e| e.key != key);
+        save_manifest(&storage, cfg, backend, &manifest).await
     }
-
-    // Remove from manifest
-    let mut manifest = load_manifest(&bucket, cfg).await?;
-    manifest.backups.retain(|e| e.key != key);
-    save_manifest(&bucket, cfg, &manifest).await?;
-
-    Ok(())
+    .await;
+    storage.shutdown().await;
+    result
 }
 
 pub async fn restore_backup(
     pool: &DbPool,
     crypto_key: &[u8; 32],
     cfg: &BackupConfig,
+    backend: &str,
     key: &str,
     password: &str,
 ) -> AppResult<RestoredBackup> {
-    let bucket = create_bucket(cfg)?;
-    let response = bucket
-        .get_object(key)
-        .await
-        .map_err(|e| AppError::Internal(format!("s3 get_object: {e}")))?;
-
-    if response.status_code() >= 300 {
-        return Err(AppError::Internal(format!(
-            "s3 get_object status: {}",
-            response.status_code()
-        )));
+    let storage = create_storage(pool, crypto_key, cfg, backend).await?;
+    let fetched = storage.get(key).await;
+    if fetched.is_err() {
+        storage.shutdown().await;
     }
+    let bytes = fetched?
+        .ok_or_else(|| AppError::Internal("backup not found".into()))?;
+    storage.shutdown().await;
 
-    let encrypted = String::from_utf8(response.as_slice().to_vec())
+    let encrypted = String::from_utf8(bytes)
         .map_err(|e| AppError::Internal(format!("utf8: {e}")))?;
     let json = decrypt_with_password(&encrypted, password)?;
 

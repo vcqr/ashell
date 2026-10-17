@@ -16,6 +16,8 @@ pub mod op_password;
 pub mod phrase;
 pub mod template;
 pub mod backup;
+pub mod sftp_backup;
+pub mod webdav;
 
 use std::sync::Arc;
 

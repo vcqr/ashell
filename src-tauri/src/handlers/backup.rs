@@ -1,9 +1,11 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::Json;
 
 use crate::errors::AppResult;
 use crate::handlers::ApiResponse;
 use crate::service::backup::{self, BackupConfig, BackupItem};
+use crate::service::sftp_backup::SftpConfig;
+use crate::service::webdav::WebDavConfig;
 use crate::service::AppState;
 
 use serde::Deserialize;
@@ -15,12 +17,22 @@ pub async fn get_config(State(_s): State<AppState>) -> AppResult<Json<ApiRespons
 
 #[derive(Deserialize)]
 pub struct SaveConfigInput {
+    #[serde(default)]
     pub endpoint: String,
+    #[serde(default)]
     pub bucket: String,
+    #[serde(default)]
     pub region: String,
+    #[serde(default)]
     pub access_key: String,
+    #[serde(default)]
     pub secret_key: String,
+    #[serde(default)]
     pub path_prefix: String,
+    #[serde(default)]
+    pub webdav: Option<WebDavConfig>,
+    #[serde(default)]
+    pub sftp: Option<SftpConfig>,
 }
 
 pub async fn save_config(
@@ -34,6 +46,8 @@ pub async fn save_config(
         access_key: input.access_key,
         secret_key: input.secret_key,
         path_prefix: input.path_prefix,
+        webdav: input.webdav,
+        sftp: input.sftp,
     };
     backup::save_config(&cfg)?;
     Ok(crate::handlers::ok_msg("saved"))
@@ -41,16 +55,29 @@ pub async fn save_config(
 
 #[derive(Deserialize)]
 pub struct TestInput {
+    /// 远端存储类型："s3"（默认）| "webdav"
+    #[serde(default)]
+    pub backend: Option<String>,
+    #[serde(default)]
     pub endpoint: String,
+    #[serde(default)]
     pub bucket: String,
+    #[serde(default)]
     pub region: String,
+    #[serde(default)]
     pub access_key: String,
+    #[serde(default)]
     pub secret_key: String,
+    #[serde(default)]
     pub path_prefix: String,
+    #[serde(default)]
+    pub webdav: Option<WebDavConfig>,
+    #[serde(default)]
+    pub sftp: Option<SftpConfig>,
 }
 
 pub async fn test_connection(
-    _state: State<AppState>,
+    State(s): State<AppState>,
     Json(input): Json<TestInput>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let cfg = BackupConfig {
@@ -60,8 +87,16 @@ pub async fn test_connection(
         access_key: input.access_key,
         secret_key: input.secret_key,
         path_prefix: input.path_prefix,
+        webdav: input.webdav,
+        sftp: input.sftp,
     };
-    backup::test_connection(&cfg).await?;
+    backup::test_connection(
+        &s.db,
+        &s.config.crypto_key,
+        &cfg,
+        input.backend.as_deref().unwrap_or("s3"),
+    )
+    .await?;
     Ok(crate::handlers::ok_msg("ok"))
 }
 
@@ -72,6 +107,9 @@ pub struct CreateBackupInput {
     #[serde(default)]
     pub frontend_prefs: Option<serde_json::Value>,
     pub password: String,
+    /// 远端存储类型："s3"（默认）| "webdav"
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 pub async fn create_backup(
@@ -83,12 +121,12 @@ pub async fn create_backup(
         &s.db,
         &s.config.crypto_key,
         &cfg,
+        input.backend.as_deref().unwrap_or("s3"),
         input.command_history,
         input.frontend_prefs,
         input.password,
     )
-    .await?;
-    Ok(Json(ApiResponse {
+    .await?;    Ok(Json(ApiResponse {
         code: 0,
         message: "ok".into(),
         data: Some(serde_json::json!({ "key": key })),
@@ -114,11 +152,25 @@ pub async fn export_backup(
     }))
 }
 
+#[derive(Deserialize)]
+pub struct ListBackupsQuery {
+    /// 远端存储类型："s3"（默认）| "webdav"
+    #[serde(default)]
+    pub backend: Option<String>,
+}
+
 pub async fn list_backups(
-    _state: State<AppState>,
+    State(s): State<AppState>,
+    Query(q): Query<ListBackupsQuery>,
 ) -> AppResult<Json<ApiResponse<Vec<BackupItem>>>> {
     let cfg = backup::load_config()?;
-    let items = backup::list_backups(&cfg).await?;
+    let items = backup::list_backups(
+        &s.db,
+        &s.config.crypto_key,
+        &cfg,
+        q.backend.as_deref().unwrap_or("s3"),
+    )
+    .await?;
     Ok(ApiResponse::ok(items))
 }
 
@@ -126,6 +178,9 @@ pub async fn list_backups(
 pub struct RestoreInput {
     pub key: String,
     pub password: String,
+    /// 远端存储类型："s3"（默认）| "webdav"
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 pub async fn restore_backup(
@@ -133,9 +188,15 @@ pub async fn restore_backup(
     Json(input): Json<RestoreInput>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let cfg = backup::load_config()?;
-    let restored =
-        backup::restore_backup(&s.db, &s.config.crypto_key, &cfg, &input.key, &input.password)
-            .await?;
+    let restored = backup::restore_backup(
+        &s.db,
+        &s.config.crypto_key,
+        &cfg,
+        input.backend.as_deref().unwrap_or("s3"),
+        &input.key,
+        &input.password,
+    )
+    .await?;
     Ok(Json(ApiResponse {
         code: 0,
         message: "ok".into(),
@@ -172,13 +233,23 @@ pub async fn import_backup(
 #[derive(Deserialize)]
 pub struct DeleteInput {
     pub key: String,
+    /// 远端存储类型："s3"（默认）| "webdav"
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 pub async fn delete_backup(
-    _state: State<AppState>,
+    State(s): State<AppState>,
     Json(input): Json<DeleteInput>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let cfg = backup::load_config()?;
-    backup::delete_backup(&cfg, &input.key).await?;
+    backup::delete_backup(
+        &s.db,
+        &s.config.crypto_key,
+        &cfg,
+        input.backend.as_deref().unwrap_or("s3"),
+        &input.key,
+    )
+    .await?;
     Ok(crate::handlers::ok_msg("deleted"))
 }

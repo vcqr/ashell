@@ -7,7 +7,7 @@ import {
   RiSaveLine,
   RiUploadCloudLine,
 } from "@remixicon/vue";
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, onMounted, watch, computed } from "vue";
 import {
   NForm,
   NFormItem,
@@ -17,6 +17,9 @@ import {
   NSpin,
   NEmpty,
   NPopconfirm,
+  NTabs,
+  NTabPane,
+  NSelect,
   NText,
   NModal,
   NCard,
@@ -25,6 +28,8 @@ import {
 
 import { useI18n } from "vue-i18n";
 import { openTextFile, saveTextFile } from "@/utils/fileInterop";
+import { listHosts } from "@/api/hosts";
+import type { Host } from "@/types";
 import {
   collectFrontendPrefs,
   applyFrontendPrefs,
@@ -41,7 +46,11 @@ import {
   restoreBackup,
   type BackupConfig,
   type BackupItem,
+  type BackupBackend,
   type RestoredBackup,
+  type SaveConfigInput,
+  type WebDavConfig,
+  type SftpConfig,
 } from "@/api/backup";
 
 const { t } = useI18n();
@@ -54,6 +63,55 @@ const config = ref<BackupConfig>({
   access_key: "",
   secret_key: "",
   path_prefix: "ashell/",
+});
+
+const webdavConfig = ref<WebDavConfig>({
+  url: "",
+  username: "",
+  password: "",
+  path_prefix: "ashell/",
+});
+
+const sftpConfig = ref<SftpConfig>({
+  host_id: 0,
+  path_prefix: "ashell/",
+});
+
+// ── SFTP target hosts ──
+
+const sftpHosts = ref<Host[]>([]);
+
+const sftpHostOptions = computed(() =>
+  sftpHosts.value.map((h) => ({
+    label: `${h.name} (${h.username}@${h.addr})`,
+    value: h.id,
+  })),
+);
+
+// ── Backend tabs ──
+
+const BACKEND_STORAGE_KEY = "ashell:backup-backend";
+
+function loadSavedBackend(): BackupBackend {
+  try {
+    const v = localStorage.getItem(BACKEND_STORAGE_KEY);
+    if (v === "s3" || v === "webdav") return v;
+  } catch {
+    // ignore
+  }
+  return "s3";
+}
+
+/** 当前选中的远端存储：S3 / WebDAV，同时决定备份操作与历史列表的目标 */
+const activeBackend = ref<BackupBackend>(loadSavedBackend());
+
+watch(activeBackend, (backend) => {
+  try {
+    localStorage.setItem(BACKEND_STORAGE_KEY, backend);
+  } catch {
+    // ignore
+  }
+  loadBackups();
 });
 
 const loading = ref(false);
@@ -107,9 +165,14 @@ function cancelPassword() {
 
 onMounted(async () => {
   await loadConfig();
-  if (config.value.bucket && config.value.access_key) {
-    loadBackups();
-  }
+  loadBackups();
+  listHosts()
+    .then((hosts) => {
+      sftpHosts.value = hosts.filter((h) => h.protocol === "ssh");
+    })
+    .catch(() => {
+      // 主机列表加载失败不阻塞备份页，选择时下拉为空
+    });
 });
 
 // ── Config ──
@@ -118,6 +181,12 @@ async function loadConfig() {
   loading.value = true;
   try {
     config.value = await getBackupConfig();
+    if (config.value.webdav) {
+      webdavConfig.value = { ...webdavConfig.value, ...config.value.webdav };
+    }
+    if (config.value.sftp) {
+      sftpConfig.value = { ...sftpConfig.value, ...config.value.sftp };
+    }
   } catch {
     // use defaults
   } finally {
@@ -125,17 +194,40 @@ async function loadConfig() {
   }
 }
 
+/** 保存载荷：三套配置一起提交（表单各持有自己的状态） */
+function buildPayload(): SaveConfigInput {
+  return {
+    endpoint: config.value.endpoint.trim(),
+    bucket: config.value.bucket.trim(),
+    region: config.value.region.trim(),
+    access_key: config.value.access_key.trim(),
+    secret_key: config.value.secret_key.trim(),
+    path_prefix: config.value.path_prefix.trim(),
+    webdav: {
+      url: webdavConfig.value.url.trim(),
+      username: webdavConfig.value.username.trim(),
+      password: webdavConfig.value.password,
+      path_prefix: webdavConfig.value.path_prefix.trim() || "ashell/",
+    },
+    sftp: {
+      host_id: sftpConfig.value.host_id ?? 0,
+      path_prefix: sftpConfig.value.path_prefix.trim() || "ashell/",
+    },
+  };
+}
+
 async function handleSave() {
+  if (activeBackend.value === "webdav" && !webdavConfig.value.url.trim()) {
+    message.warning(t("settings.backup.webdavUrlRequired"));
+    return;
+  }
+  if (activeBackend.value === "sftp" && !(sftpConfig.value.host_id > 0)) {
+    message.warning(t("settings.backup.sftpHostRequired"));
+    return;
+  }
   saving.value = true;
   try {
-    await saveBackupConfig({
-      endpoint: config.value.endpoint.trim(),
-      bucket: config.value.bucket.trim(),
-      region: config.value.region.trim(),
-      access_key: config.value.access_key.trim(),
-      secret_key: config.value.secret_key.trim(),
-      path_prefix: config.value.path_prefix.trim(),
-    });
+    await saveBackupConfig(buildPayload());
     message.success(t("settings.backup.saveSuccess"));
   } catch (e) {
     message.error(t("settings.backup.saveFailed", { error: String(e) }));
@@ -148,12 +240,8 @@ async function handleTest() {
   testing.value = true;
   try {
     await testBackupConnection({
-      endpoint: config.value.endpoint.trim(),
-      bucket: config.value.bucket.trim(),
-      region: config.value.region.trim(),
-      access_key: config.value.access_key.trim(),
-      secret_key: config.value.secret_key.trim(),
-      path_prefix: config.value.path_prefix.trim(),
+      ...buildPayload(),
+      backend: activeBackend.value,
     });
     message.success(t("settings.backup.testSuccess"));
   } catch (e) {
@@ -200,7 +288,7 @@ async function handleBackup() {
     );
     backing.value = true;
     const commandHistory = getCommandHistory();
-    await createBackup(commandHistory, collectFrontendPrefs(), password);
+    await createBackup(commandHistory, collectFrontendPrefs(), password, activeBackend.value);
     message.success(t("settings.backup.backupSuccess"));
     await loadBackups();
   } catch (e) {
@@ -212,7 +300,7 @@ async function handleBackup() {
 
 async function loadBackups() {
   try {
-    backups.value = await listBackups();
+    backups.value = await listBackups(activeBackend.value);
   } catch (e) {
     message.error(t("settings.backup.loadFailed", { error: String(e) }));
   }
@@ -267,7 +355,7 @@ async function handleRestore(key: string) {
       t("settings.backup.pwdRestoreHint"),
     );
     restoring.value = true;
-    const result = await restoreBackup(key, password);
+    const result = await restoreBackup(key, password, activeBackend.value);
     applyRestored(result);
     message.success(t("settings.backup.restoreSuccess"));
     setTimeout(() => window.location.reload(), 1500);
@@ -281,7 +369,7 @@ async function handleRestore(key: string) {
 async function handleDelete(key: string) {
   deleting.value = true;
   try {
-    await deleteBackup(key);
+    await deleteBackup(key, activeBackend.value);
     message.success(t("settings.backup.deleteSuccess"));
     await loadBackups();
   } catch (e) {
@@ -311,45 +399,110 @@ function formatTime(timestamp: string): string {
     <div class="settings-section-title">{{ t("settings.backup.title") }}</div>
 
     <NSpin :show="loading" size="small">
-      <NForm label-placement="top" size="small" :show-feedback="false">
-        <div class="settings-subgroup">{{ t("settings.backup.configTitle") }}</div>
-        <NFormItem :label="t('settings.backup.endpoint')" style="margin-top: 12px">
-          <NInput v-model:value="config.endpoint" placeholder="https://s3.amazonaws.com" />
-        </NFormItem>
-        <NFormItem :label="t('settings.backup.bucket')" style="margin-top: 12px">
-          <NInput v-model:value="config.bucket" placeholder="my-backup-bucket" />
-        </NFormItem>
-        <div class="form-row" style="margin-top: 12px">
-          <NFormItem :label="t('settings.backup.region')" style="flex: 1">
-            <NInput v-model:value="config.region" placeholder="us-east-1" />
-          </NFormItem>
-          <NFormItem :label="t('settings.backup.pathPrefix')" style="flex: 1">
-            <NInput v-model:value="config.path_prefix" placeholder="ashell/" />
-          </NFormItem>
-        </div>
-        <NFormItem :label="t('settings.backup.accessKey')" style="margin-top: 12px">
-          <NInput v-model:value="config.access_key" placeholder="AKIAIOSFODNN7EXAMPLE" />
-        </NFormItem>
-        <NFormItem :label="t('settings.backup.secretKey')" style="margin-top: 12px">
-          <NInput
-            v-model:value="config.secret_key"
-            type="password"
-            show-password-on="click"
-            placeholder="••••••••••••••••"
-          />
-        </NFormItem>
-      </NForm>
-      <p class="settings-hint">{{ t("settings.backup.pathPrefixHint") }}</p>
-      <div class="form-row" style="margin-top: 12px">
-        <NButton size="small" :loading="saving" @click="handleSave">
-          <template #icon><NIcon><RiSaveLine /></NIcon></template>
-          {{ t("settings.backup.saveConfig") }}
-        </NButton>
-        <NButton size="small" :loading="testing" @click="handleTest">
-          <template #icon><NIcon><RiCloudLine /></NIcon></template>
-          {{ t("settings.backup.testConnection") }}
-        </NButton>
-      </div>
+      <NTabs v-model:value="activeBackend" type="line" size="small">
+        <NTabPane name="s3" :tab="t('settings.backup.providerS3')">
+          <NForm label-placement="top" size="small" :show-feedback="false">
+            <NFormItem :label="t('settings.backup.endpoint')" style="margin-top: 12px">
+              <NInput v-model:value="config.endpoint" placeholder="https://s3.amazonaws.com" />
+            </NFormItem>
+            <NFormItem :label="t('settings.backup.bucket')" style="margin-top: 12px">
+              <NInput v-model:value="config.bucket" placeholder="my-backup-bucket" />
+            </NFormItem>
+            <div class="form-row" style="margin-top: 12px">
+              <NFormItem :label="t('settings.backup.region')" style="flex: 1">
+                <NInput v-model:value="config.region" placeholder="us-east-1" />
+              </NFormItem>
+              <NFormItem :label="t('settings.backup.pathPrefix')" style="flex: 1">
+                <NInput v-model:value="config.path_prefix" placeholder="ashell/" />
+              </NFormItem>
+            </div>
+            <NFormItem :label="t('settings.backup.accessKey')" style="margin-top: 12px">
+              <NInput v-model:value="config.access_key" placeholder="AKIAIOSFODNN7EXAMPLE" />
+            </NFormItem>
+            <NFormItem :label="t('settings.backup.secretKey')" style="margin-top: 12px">
+              <NInput
+                v-model:value="config.secret_key"
+                type="password"
+                show-password-on="click"
+                placeholder="••••••••••••••••"
+              />
+            </NFormItem>
+          </NForm>
+          <p class="settings-hint">{{ t("settings.backup.pathPrefixHint") }}</p>
+          <div class="form-row" style="margin-top: 12px">
+            <NButton size="small" :loading="saving" @click="handleSave">
+              <template #icon><NIcon><RiSaveLine /></NIcon></template>
+              {{ t("settings.backup.saveConfig") }}
+            </NButton>
+            <NButton size="small" :loading="testing" @click="handleTest">
+              <template #icon><NIcon><RiCloudLine /></NIcon></template>
+              {{ t("settings.backup.testConnection") }}
+            </NButton>
+          </div>
+        </NTabPane>
+
+        <NTabPane name="webdav" :tab="t('settings.backup.providerWebDav')">
+          <NForm label-placement="top" size="small" :show-feedback="false">
+            <NFormItem :label="t('settings.backup.webdavUrl')" style="margin-top: 12px">
+              <NInput v-model:value="webdavConfig.url" placeholder="https://dav.jianguoyun.com/dav/" />
+            </NFormItem>
+            <div class="form-row" style="margin-top: 12px">
+              <NFormItem :label="t('settings.backup.webdavUsername')" style="flex: 1">
+                <NInput v-model:value="webdavConfig.username" placeholder="user@example.com" />
+              </NFormItem>
+              <NFormItem :label="t('settings.backup.webdavPassword')" style="flex: 1">
+                <NInput
+                  v-model:value="webdavConfig.password"
+                  type="password"
+                  show-password-on="click"
+                  placeholder="••••••••••••••••"
+                />
+              </NFormItem>
+            </div>
+            <NFormItem :label="t('settings.backup.pathPrefix')" style="margin-top: 12px">
+              <NInput v-model:value="webdavConfig.path_prefix" placeholder="ashell/" />
+            </NFormItem>
+          </NForm>
+          <p class="settings-hint">{{ t("settings.backup.webdavHint") }}</p>
+          <div class="form-row" style="margin-top: 12px">
+            <NButton size="small" :loading="saving" @click="handleSave">
+              <template #icon><NIcon><RiSaveLine /></NIcon></template>
+              {{ t("settings.backup.saveConfig") }}
+            </NButton>
+            <NButton size="small" :loading="testing" @click="handleTest">
+              <template #icon><NIcon><RiCloudLine /></NIcon></template>
+              {{ t("settings.backup.testConnection") }}
+            </NButton>
+          </div>
+        </NTabPane>
+
+        <NTabPane name="sftp" :tab="t('settings.backup.providerSftp')">
+          <NForm label-placement="top" size="small" :show-feedback="false">
+            <NFormItem :label="t('settings.backup.sftpHost')" style="margin-top: 12px">
+              <NSelect
+                v-model:value="sftpConfig.host_id"
+                :options="sftpHostOptions"
+                :placeholder="t('settings.backup.sftpHostPlaceholder')"
+                clearable
+              />
+            </NFormItem>
+            <NFormItem :label="t('settings.backup.pathPrefix')" style="margin-top: 12px">
+              <NInput v-model:value="sftpConfig.path_prefix" placeholder="ashell/" />
+            </NFormItem>
+          </NForm>
+          <p class="settings-hint">{{ t("settings.backup.sftpHint") }}</p>
+          <div class="form-row" style="margin-top: 12px">
+            <NButton size="small" :loading="saving" @click="handleSave">
+              <template #icon><NIcon><RiSaveLine /></NIcon></template>
+              {{ t("settings.backup.saveConfig") }}
+            </NButton>
+            <NButton size="small" :loading="testing" @click="handleTest">
+              <template #icon><NIcon><RiCloudLine /></NIcon></template>
+              {{ t("settings.backup.testConnection") }}
+            </NButton>
+          </div>
+        </NTabPane>
+      </NTabs>
 
       <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.backup.operationTitle") }}</div>
       <p class="settings-hint">{{ t("settings.backup.scopeHint") }}</p>
