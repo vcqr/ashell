@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { isTauri } from "@/utils/platform"
+import { onTitlebarDblclick } from "@/utils/titlebar"
 import { computed, ref } from "vue"
 import { useI18n } from "vue-i18n"
 import { NButton, NIcon } from "naive-ui"
@@ -41,12 +42,8 @@ function onRequestNewChat() {
   aiRef.value?.openRestartConfirm()
 }
 
-/** macOS：双击标题栏切换最大化（与主窗口 onHeaderDblClick 同策略） */
-async function onHeaderDblClick(e: MouseEvent) {
-  if (!isMac) return
-  const target = e.target as HTMLElement | null
-  if (target?.closest('[data-tauri-drag-region="false"]')) return
-  e.stopPropagation()
+/** 双击标题栏切换最大化：统一走 onTitlebarDblclick（内建原生路径已被守卫拦下） */
+async function toggleMaximize() {
   if (!isTauri) return
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
@@ -59,15 +56,20 @@ async function onHeaderDblClick(e: MouseEvent) {
 
 <template>
   <div class="aiwin-root">
-    <header class="aiwin-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
+    <!-- deep：整条子树可拖拽（可交互元素与 ="false" 区域自动排除），与主窗口头部同策略 -->
+    <header
+      class="aiwin-header"
+      data-tauri-drag-region="deep"
+      @dblclick="onTitlebarDblclick($event, toggleMaximize)"
+    >
       <WindowControls v-if="isMac && isTauri" />
-      <div class="brand" data-tauri-drag-region>
+      <div class="brand">
         <div class="brand-logo">
           <img src="/icon.png" alt="AShell" />
         </div>
         <span class="brand-name">{{ windowTitle }}</span>
       </div>
-      <nav class="drag-spacer" data-tauri-drag-region />
+      <nav class="drag-spacer" />
       <NButton
         v-if="ssid"
         quaternary

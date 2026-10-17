@@ -39,6 +39,7 @@ import SettingsModal from "@/components/settings/SettingsModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
 import LoginGate from "@/components/LoginGate.vue";
 import { isTauri } from "@/utils/platform";
+import { installTauriDblclickGuard, onTitlebarDblclick } from "@/utils/titlebar";
 import { installDevtoolsShortcut } from "@/utils/devtools";
 import { useKeybindingStore } from "@/stores/keybindings";
 import { onBeforeUnmount } from "vue";
@@ -381,10 +382,13 @@ onBeforeUnmount(() => {
   document.documentElement.style.setProperty("--ashell-activity-w", "0px");
 });
 
-const {
-  isMac,
-  onHeaderDblClick,
-} = useWindowControls(terminalRefs, activeTabKey);
+const { isMac, toggleMaximize } = useWindowControls(terminalRefs, activeTabKey);
+
+// 标题栏双击守卫：deep 拖拽区上的多次点击（双击/三击）不再走 Tauri 内建脚本
+// （macOS 原生路径依赖 mouseup 像级同位，触控板轻点经常不触发），统一由头部
+// @dblclick → onTitlebarDblclick 处理；App.vue 同时是 solo 独立窗口的根组件，
+// 守卫按文档只装一次，对没有 deep 区域的 solo 窗口无影响
+installTauriDblclickGuard();
 
 // SFTP 面板右键目录 -> 当前终端 cd 到该目录（sendCommand 自动补 \r 执行）
 function onSftpOpenTerminalHere(path: string) {
@@ -521,9 +525,15 @@ if (!isTauri) {
                   opacity: 'var(--ashell-wallpaper-opacity, 1)',
                 }"
               />
-              <header class="app-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
+              <!-- deep：整条子树可拖拽（可交互元素与 ="false" 区域自动排除）；双击最大化
+                   统一走 onTitlebarDblclick，内建脚本的原生路径已被守卫拦下不叠加 -->
+              <header
+                class="app-header"
+                data-tauri-drag-region="deep"
+                @dblclick="onTitlebarDblclick($event, toggleMaximize)"
+              >
                 <WindowControls v-if="isMac && isTauri" />
-                <div v-if="!isMac || !isTauri" class="brand" data-tauri-drag-region>
+                <div v-if="!isMac || !isTauri" class="brand">
                   <div class="brand-logo">
                     <img src="/icon.png" alt="AShell" />
                   </div>
@@ -566,7 +576,7 @@ if (!isTauri) {
                     @split-close="disableSplit"
                   />
                 </div>
-                <nav class="drag-spacer" data-tauri-drag-region />
+                <nav class="drag-spacer" />
                 <NSpace
                   :size="8"
                   align="center"

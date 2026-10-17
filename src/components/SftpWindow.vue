@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { isTauri } from "@/utils/platform"
+import { onTitlebarDblclick } from "@/utils/titlebar"
 import { computed } from "vue"
 import WindowControls from "@/components/WindowControls.vue"
 import SftpDrawer from "@/components/SftpDrawer.vue"
@@ -30,12 +31,8 @@ const drawerTitle = computed(() => {
   return addr ? `${host} (${addr})` : host
 })
 
-/** macOS：双击标题栏切换最大化（与主窗口 onHeaderDblClick 同策略） */
-async function onHeaderDblClick(e: MouseEvent) {
-  if (!isMac) return
-  const target = e.target as HTMLElement | null
-  if (target?.closest('[data-tauri-drag-region="false"]')) return
-  e.stopPropagation()
+/** 双击标题栏切换最大化：统一走 onTitlebarDblclick（内建原生路径已被守卫拦下） */
+async function toggleMaximize() {
   if (!isTauri) return
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
@@ -48,15 +45,20 @@ async function onHeaderDblClick(e: MouseEvent) {
 
 <template>
   <div class="sftpwin-root">
-    <header class="sftpwin-header" data-tauri-drag-region @dblclick="onHeaderDblClick">
+    <!-- deep：整条子树可拖拽（可交互元素与 ="false" 区域自动排除），与主窗口头部同策略 -->
+    <header
+      class="sftpwin-header"
+      data-tauri-drag-region="deep"
+      @dblclick="onTitlebarDblclick($event, toggleMaximize)"
+    >
       <WindowControls v-if="isMac && isTauri" />
-      <div class="brand" data-tauri-drag-region>
+      <div class="brand">
         <div class="brand-logo">
           <img src="/icon.png" alt="AShell" />
         </div>
         <span class="brand-name">{{ drawerTitle }}</span>
       </div>
-      <nav class="drag-spacer" data-tauri-drag-region />
+      <nav class="drag-spacer" />
       <WindowControls v-if="!isMac && isTauri" />
     </header>
     <SftpDrawer

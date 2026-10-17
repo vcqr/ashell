@@ -138,22 +138,11 @@ export function useWindowControls(
     appWindow()?.close();
   }
 
-  function onHeaderDblClick(e: MouseEvent) {
-    if (!isMac) return;
-    const target = e.target as HTMLElement | null;
-    if (target?.closest('[data-tauri-drag-region="false"]')) return;
-    // 阻止 Tauri drag-region 脚本的 dblclick 处理器（会调用 unmaximize），
-    // 由我们统一用 toggleMaximize 处理双向切换
-    e.stopPropagation();
-    void toggleMaximize();
-  }
-
   return {
     isMaximized,
     isMac,
     minimizeWindow,
     toggleMaximize,
     closeWindow,
-    onHeaderDblClick,
   };
 }
