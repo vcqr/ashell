@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import {
+  RiCloseCircleLine,
+  RiRefreshLine,
+} from "@remixicon/vue"
 import { computed } from "vue"
 import { NButton, NEmpty, NIcon, NProgress, NTag } from "naive-ui"
 import { useI18n } from "vue-i18n"
-import { CloseCircleOutline, RefreshOutline } from "@vicons/ionicons5"
+
 import type { TransferStatus, TransferTask } from "@/types"
 import { humanDuration, humanSize } from "@/utils/humanSize"
 import { progressColor } from "@/utils/progressColor"
@@ -114,7 +118,7 @@ function statusLabel(s: TransferStatus): string {
           @click="emit('cancel', task.id)"
         >
           <template #icon>
-            <NIcon><CloseCircleOutline /></NIcon>
+            <NIcon><RiCloseCircleLine /></NIcon>
           </template>
           {{ t("common.cancel") }}
         </NButton>
@@ -129,7 +133,7 @@ function statusLabel(s: TransferStatus): string {
           @click="emit('retry', task.id)"
         >
           <template #icon>
-            <NIcon><RefreshOutline /></NIcon>
+            <NIcon><RiRefreshLine /></NIcon>
           </template>
           {{ t("sftp.transfer.retry") }}
         </NButton>

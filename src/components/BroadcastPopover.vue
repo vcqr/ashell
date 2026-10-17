@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  RiBroadcastLine,
+  RiMegaphoneLine,
+  RiServerLine,
+  RiTerminalBoxLine,
+} from "@remixicon/vue"
 import { computed } from "vue"
 import {
   NCheckbox,
@@ -12,12 +18,7 @@ import {
   NTooltip,
   type SelectOption,
 } from "naive-ui"
-import {
-  MegaphoneOutline,
-  RadioOutline,
-  TerminalOutline,
-  ServerOutline,
-} from "@vicons/ionicons5"
+
 import { useBroadcastStore } from "@/stores/broadcast"
 import { useI18n } from "vue-i18n"
 import type { TerminalTab } from "@/types"
@@ -159,7 +160,7 @@ const appendCRProxy = computed<boolean>({
 })
 
 function tabIcon(kind: string) {
-  return kind === "local" ? TerminalOutline : ServerOutline
+  return kind === "local" ? RiTerminalBoxLine : RiServerLine
 }
 </script>
 
@@ -167,7 +168,7 @@ function tabIcon(kind: string) {
   <div class="broadcast-popover">
     <header class="bp-header">
       <NIcon :size="16" :class="{ active: store.isActive }">
-        <MegaphoneOutline />
+        <RiMegaphoneLine />
       </NIcon>
       <span class="bp-title">{{ t("broadcast.title") }}</span>
       <NSwitch v-model:value="enabledProxy" size="small" />
@@ -236,7 +237,7 @@ function tabIcon(kind: string) {
                 <NTooltip v-if="row.isSource" trigger="hover">
                   <template #trigger>
                     <span class="bp-source-tag">
-                      <NIcon :size="12"><RadioOutline /></NIcon>
+                      <NIcon :size="12"><RiBroadcastLine /></NIcon>
                       {{ t("broadcast.sourceTag") }}
                     </span>
                   </template>

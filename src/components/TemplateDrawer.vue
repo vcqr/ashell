@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import {
+  RiAddLine,
+  RiCloseLine,
+  RiDeleteBinLine,
+  RiEditLine,
+  RiSearchLine,
+  RiTerminalBoxLine,
+} from "@remixicon/vue";
 import { ref, computed, watch, onMounted } from "vue";
 import {
   NButton,
@@ -13,14 +21,7 @@ import {
   NScrollbar,
   useMessage,
 } from "naive-ui";
-import {
-  AddOutline,
-  CloseOutline,
-  CreateOutline,
-  TrashOutline,
-  TerminalOutline,
-  SearchOutline,
-} from "@vicons/ionicons5";
+
 import { useI18n } from "vue-i18n";
 import { useTemplateStore } from "@/stores/templates";
 import { getRecentCommands } from "@/composables/useCommandSuggest";
@@ -159,13 +160,13 @@ async function onDelete(id: number) {
     >
       <header class="panel-header">
         <NSpace align="center" :size="8">
-          <NIcon :size="16"><TerminalOutline /></NIcon>
+          <NIcon :size="16"><RiTerminalBoxLine /></NIcon>
           <span class="drawer-title">{{ t("templates.title") }}</span>
         </NSpace>
         <NSpace :size="6" align="center" :wrap="false">
           <NButton size="small" type="primary" @click="openCreate">
             <template #icon>
-              <NIcon><AddOutline /></NIcon>
+              <NIcon><RiAddLine /></NIcon>
             </template>
             {{ t("templates.newButton") }}
           </NButton>
@@ -177,7 +178,7 @@ async function onDelete(id: number) {
             @click="onClose"
           >
             <template #icon>
-              <NIcon><CloseOutline /></NIcon>
+              <NIcon><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </NSpace>
@@ -191,7 +192,7 @@ async function onDelete(id: number) {
           size="small"
         >
           <template #prefix>
-            <NIcon :size="14"><SearchOutline /></NIcon>
+            <NIcon :size="14"><RiSearchLine /></NIcon>
           </template>
         </NInput>
       </div>
@@ -218,7 +219,7 @@ async function onDelete(id: number) {
                   :title="t('templates.edit')"
                   @click="openEdit(tpl)"
                 >
-                  <NIcon :size="14"><CreateOutline /></NIcon>
+                  <NIcon :size="14"><RiEditLine /></NIcon>
                 </button>
                 <NPopconfirm @positive-click="onDelete(tpl.id)">
                   <template #trigger>
@@ -226,7 +227,7 @@ async function onDelete(id: number) {
                       class="tpl-action-btn danger"
                       :title="t('templates.delete')"
                     >
-                      <NIcon :size="14"><TrashOutline /></NIcon>
+                      <NIcon :size="14"><RiDeleteBinLine /></NIcon>
                     </button>
                   </template>
                   {{ t("templates.deleteConfirm", { name: tpl.title }) }}
@@ -270,7 +271,7 @@ async function onDelete(id: number) {
                   :placeholder="t('templates.form.historyPlaceholder')"
                 >
                   <template #prefix>
-                    <NIcon :size="14"><SearchOutline /></NIcon>
+                    <NIcon :size="14"><RiSearchLine /></NIcon>
                   </template>
                 </NInput>
                 <div v-if="filteredHistory.length > 0" class="history-list">

@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  RiAddLine,
+  RiCloseLine,
+  RiDeleteBinLine,
+  RiRefreshLine,
+} from "@remixicon/vue"
 import { computed, h, onBeforeUnmount, ref, watch } from "vue"
 import {
   NButton,
@@ -19,12 +25,7 @@ import {
   useMessage,
   type DataTableColumns,
 } from "naive-ui"
-import {
-  AddOutline,
-  CloseOutline,
-  RefreshOutline,
-  TrashOutline,
-} from "@vicons/ionicons5"
+
 import { useI18n } from "vue-i18n"
 import {
   createForward,
@@ -177,7 +178,7 @@ const columns = computed<DataTableColumns<ForwardRule>>(() => [
             h(
               NButton,
               { size: "tiny", quaternary: true, circle: true, type: "error" },
-              { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }) },
+              { icon: () => h(NIcon, null, { default: () => h(RiDeleteBinLine) }) },
             ),
           default: () => t("forward.deleteConfirm"),
         },
@@ -336,7 +337,7 @@ function onClose() {
         <NSpace :size="6" align="center" :wrap="false">
           <NButton size="small" type="primary" @click="openForm">
             <template #icon>
-              <NIcon><AddOutline /></NIcon>
+              <NIcon><RiAddLine /></NIcon>
             </template>
             {{ t("forward.newButton") }}
           </NButton>
@@ -349,12 +350,12 @@ function onClose() {
             @click="refresh"
           >
             <template #icon>
-              <NIcon><RefreshOutline /></NIcon>
+              <NIcon><RiRefreshLine /></NIcon>
             </template>
           </NButton>
           <NButton size="small" quaternary circle :title="t('forward.close')" @click="onClose">
             <template #icon>
-              <NIcon><CloseOutline /></NIcon>
+              <NIcon><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </NSpace>

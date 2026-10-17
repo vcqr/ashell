@@ -1,4 +1,36 @@
 <script setup lang="ts">
+import {
+  RiArchiveLine,
+  RiArrowLeftSLine,
+  RiArrowRightSLine,
+  RiArrowUpLine,
+  RiBarChartLine,
+  RiBookmark2Line,
+  RiCheckDoubleLine,
+  RiCloseLine,
+  RiDeleteBinLine,
+  RiDownloadLine,
+  RiEditLine,
+  RiExternalLinkLine,
+  RiEyeLine,
+  RiEyeOffLine,
+  RiFileCopyLine,
+  RiFileTextLine,
+  RiFocus3Line,
+  RiFolderOpenLine,
+  RiMacbookLine,
+  RiRefreshLine,
+  RiScissorsCutLine,
+  RiSearchLine,
+  RiSendPlaneLine,
+  RiShieldCheckLine,
+  RiSparklingLine,
+  RiStarFill,
+  RiStarLine,
+  RiTerminalBoxLine,
+  RiTimeLine,
+  RiUploadCloudLine,
+} from "@remixicon/vue"
 import { isTauri } from "@/utils/platform"
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
@@ -26,38 +58,7 @@ import type {
   InputInst,
   UploadCustomRequestOptions,
 } from "naive-ui"
-import {
-  ArchiveOutline,
-  ArrowUpOutline,
-  BookmarksOutline,
-  ChevronBackOutline,
-  ChevronForwardOutline,
-  CloseOutline,
-  CloudUploadOutline,
-  CopyOutline,
-  CreateOutline,
-  CutOutline,
-  CheckmarkDoneOutline,
-  DocumentOutline,
-  DownloadOutline,
-  EyeOffOutline,
-  EyeOutline,
-  FolderOpenOutline,
-  LaptopOutline,
-  LocateOutline,
-  OpenOutline,
-  RefreshOutline,
-  SearchOutline,
-  SendOutline,
-  ShieldCheckmarkOutline,
-  SparklesOutline,
-  StarOutline,
-  Star,
-  StatsChartOutline,
-  TerminalOutline,
-  TimeOutline,
-  TrashOutline,
-} from "@vicons/ionicons5"
+
 import {
   compressSftp as compressApi,
   downloadStream,
@@ -2299,12 +2300,12 @@ const ctxMenuOptions = computed(() => {
       {
         label: t("sftp.ctxMenu.newFolder"),
         key: "new-mkdir",
-        icon: () => h(NIcon, null, { default: () => h(FolderOpenOutline) }),
+        icon: () => h(NIcon, null, { default: () => h(RiFolderOpenLine) }),
       },
       {
         label: t("sftp.ctxMenu.newFile"),
         key: "new-touch",
-        icon: () => h(NIcon, null, { default: () => h(DocumentOutline) }),
+        icon: () => h(NIcon, null, { default: () => h(RiFileTextLine) }),
       },
     ]
     if (remoteClipboard.value) {
@@ -2315,7 +2316,7 @@ const ctxMenuOptions = computed(() => {
             ? t("sftp.ctxMenu.pasteMulti", { count: clip.files.length })
             : t("sftp.ctxMenu.paste"),
         key: "paste",
-        icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
+        icon: () => h(NIcon, null, { default: () => h(RiFileCopyLine) }),
       })
     }
     opts.push(
@@ -2323,13 +2324,13 @@ const ctxMenuOptions = computed(() => {
       {
         label: t("sftp.ctxMenu.selectAll"),
         key: "select-all",
-        icon: () => h(NIcon, null, { default: () => h(CheckmarkDoneOutline) }),
+        icon: () => h(NIcon, null, { default: () => h(RiCheckDoubleLine) }),
       },
       { type: "divider", key: "d1" },
       {
         label: t("sftp.ctxMenu.refresh"),
         key: "refresh",
-        icon: () => h(NIcon, null, { default: () => h(RefreshOutline) }),
+        icon: () => h(NIcon, null, { default: () => h(RiRefreshLine) }),
       },
     )
     return opts
@@ -2344,13 +2345,13 @@ const ctxMenuOptions = computed(() => {
         opts.push({
           label: t("sftp.ctxMenu.preview"),
           key: "preview",
-          icon: () => h(NIcon, null, { default: () => h(EyeOutline) }),
+          icon: () => h(NIcon, null, { default: () => h(RiEyeLine) }),
         })
       }
       opts.push({
         label: t("sftp.ctxMenu.edit"),
         key: "edit",
-        icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
+        icon: () => h(NIcon, null, { default: () => h(RiEditLine) }),
       })
     }
     opts.push({
@@ -2361,7 +2362,7 @@ const ctxMenuOptions = computed(() => {
             ? t("sftp.ctxMenu.downloadDir")
             : t("sftp.ctxMenu.download"),
       key: "download",
-      icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
+      icon: () => h(NIcon, null, { default: () => h(RiDownloadLine) }),
     })
   }
   // 目录行附加操作：cd 终端（独立窗口无主终端，隐藏）与 du 大小统计
@@ -2370,13 +2371,13 @@ const ctxMenuOptions = computed(() => {
       opts.push({
         label: t("sftp.ctxMenu.openTerminalHere"),
         key: "terminal-here",
-        icon: () => h(NIcon, null, { default: () => h(TerminalOutline) }),
+        icon: () => h(NIcon, null, { default: () => h(RiTerminalBoxLine) }),
       })
     }
     opts.push({
       label: t("sftp.ctxMenu.calcSize"),
       key: "calc-size",
-      icon: () => h(NIcon, null, { default: () => h(StatsChartOutline) }),
+      icon: () => h(NIcon, null, { default: () => h(RiBarChartLine) }),
     })
   }
   // 压缩（任意文件/目录行）；解压（压缩包文件行）
@@ -2386,13 +2387,13 @@ const ctxMenuOptions = computed(() => {
         ? t("sftp.ctxMenu.compressMulti", { count: selCount })
         : t("sftp.ctxMenu.compress"),
     key: "compress",
-    icon: () => h(NIcon, null, { default: () => h(ArchiveOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiArchiveLine) }),
   })
   if (target.file_type === "file" && isArchiveName(target.file_name)) {
     opts.push({
       label: t("sftp.ctxMenu.extract"),
       key: "extract",
-      icon: () => h(NIcon, null, { default: () => h(ArchiveOutline) }),
+      icon: () => h(NIcon, null, { default: () => h(RiArchiveLine) }),
     })
   }
   opts.push({
@@ -2401,7 +2402,7 @@ const ctxMenuOptions = computed(() => {
         ? t("sftp.ctxMenu.copyMulti", { count: selCount })
         : t("sftp.ctxMenu.copy"),
     key: "clipboard-copy",
-    icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiFileCopyLine) }),
   })
   opts.push({
     label:
@@ -2409,35 +2410,35 @@ const ctxMenuOptions = computed(() => {
         ? t("sftp.ctxMenu.cutMulti", { count: selCount })
         : t("sftp.ctxMenu.cut"),
     key: "clipboard-cut",
-    icon: () => h(NIcon, null, { default: () => h(CutOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiScissorsCutLine) }),
   })
   opts.push({
     label: t("sftp.ctxMenu.rename"),
     key: "rename",
-    icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiEditLine) }),
   })
   opts.push({
     label: t("sftp.ctxMenu.delete"),
     key: "remove",
-    icon: () => h(NIcon, null, { default: () => h(TrashOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiDeleteBinLine) }),
   })
   opts.push({ type: "divider", key: "d1" })
   opts.push({
     label: t("sftp.ctxMenu.copyPath"),
     key: "copy-path",
-    icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiFileCopyLine) }),
   })
   if (startupStore.aiAssistantEnabled && !props.standalone) {
     opts.push({
       label: t("sftp.ctxMenu.sendToAi"),
       key: "send-to-ai",
-      icon: () => h(NIcon, null, { default: () => h(SparklesOutline) }),
+      icon: () => h(NIcon, null, { default: () => h(RiSparklingLine) }),
     })
   }
   opts.push({
     label: t("sftp.ctxMenu.properties"),
     key: "props",
-    icon: () => h(NIcon, null, { default: () => h(DocumentOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiFileTextLine) }),
   })
   return opts
 })
@@ -2573,12 +2574,12 @@ const newMenuOptions = computed(() => [
   {
     label: t("sftp.newMenu.newFolder"),
     key: "mkdir",
-    icon: () => h(NIcon, null, { default: () => h(FolderOpenOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiFolderOpenLine) }),
   },
   {
     label: t("sftp.newMenu.newFile"),
     key: "touch",
-    icon: () => h(NIcon, null, { default: () => h(DocumentOutline) }),
+    icon: () => h(NIcon, null, { default: () => h(RiFileTextLine) }),
   },
 ])
 
@@ -2835,8 +2836,8 @@ function openInStandaloneWindow() {
       <div v-if="dropHover && props.sid" class="drop-overlay">
         <div class="drop-overlay-inner">
           <NIcon :size="28">
-            <DownloadOutline v-if="dropHoverZone === 'local'" />
-            <CloudUploadOutline v-else />
+            <RiDownloadLine v-if="dropHoverZone === 'local'" />
+            <RiUploadCloudLine v-else />
           </NIcon>
           <span>
             {{
@@ -2858,7 +2859,7 @@ function openInStandaloneWindow() {
             <template #trigger>
               <NTag type="warning" size="small" round :bordered="false">
                 <template #icon>
-                  <NIcon :size="12"><ShieldCheckmarkOutline /></NIcon>
+                  <NIcon :size="12"><RiShieldCheckLine /></NIcon>
                 </template>
                 {{ t("sftp.elevate.badge") }}
               </NTag>
@@ -2877,12 +2878,12 @@ function openInStandaloneWindow() {
             @click="openInStandaloneWindow"
           >
             <template #icon>
-              <NIcon><OpenOutline /></NIcon>
+              <NIcon><RiExternalLinkLine /></NIcon>
             </template>
           </NButton>
           <NButton size="small" quaternary circle :title="t('sftp.close')" @click="onClose">
             <template #icon>
-              <NIcon><CloseOutline /></NIcon>
+              <NIcon><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </NSpace>
@@ -2944,7 +2945,7 @@ function openInStandaloneWindow() {
               @click="goBack"
             >
               <template #icon>
-                <NIcon><ChevronBackOutline /></NIcon>
+                <NIcon><RiArrowLeftSLine /></NIcon>
               </template>
             </NButton>
             <NButton
@@ -2956,7 +2957,7 @@ function openInStandaloneWindow() {
               @click="goForward"
             >
               <template #icon>
-                <NIcon><ChevronForwardOutline /></NIcon>
+                <NIcon><RiArrowRightSLine /></NIcon>
               </template>
             </NButton>
             <NButton
@@ -2968,7 +2969,7 @@ function openInStandaloneWindow() {
               @click="goUp"
             >
               <template #icon>
-                <NIcon><ArrowUpOutline /></NIcon>
+                <NIcon><RiArrowUpLine /></NIcon>
               </template>
             </NButton>
             <div class="address-bar">
@@ -3016,7 +3017,7 @@ function openInStandaloneWindow() {
               @click="toggleCwdFollow"
             >
               <template #icon>
-                <NIcon><LocateOutline /></NIcon>
+                <NIcon><RiFocus3Line /></NIcon>
               </template>
             </NButton>
             <NPopover trigger="click" placement="bottom-end" :show-arrow="false">
@@ -3029,7 +3030,7 @@ function openInStandaloneWindow() {
                   :disabled="pathEditing"
                 >
                   <template #icon>
-                    <NIcon><BookmarksOutline /></NIcon>
+                    <NIcon><RiBookmark2Line /></NIcon>
                   </template>
                 </NButton>
               </template>
@@ -3037,8 +3038,8 @@ function openInStandaloneWindow() {
                 <!-- 收藏/取消收藏当前目录：星标从路径栏收进浮层，路径栏少一个图标 -->
                 <div class="bm-add" @click="toggleBookmark">
                   <NIcon :size="14" :color="isBookmarked ? '#f1c27d' : undefined">
-                    <Star v-if="isBookmarked" />
-                    <StarOutline v-else />
+                    <RiStarFill v-if="isBookmarked" />
+                    <RiStarLine v-else />
                   </NIcon>
                   <span>{{
                     isBookmarked ? t("sftp.bookmarks.remove") : t("sftp.bookmarks.add")
@@ -3057,14 +3058,14 @@ function openInStandaloneWindow() {
                       @click.stop="removeBookmark(b.path)"
                     >
                       <template #icon>
-                        <NIcon :size="13"><TrashOutline /></NIcon>
+                        <NIcon :size="13"><RiDeleteBinLine /></NIcon>
                       </template>
                     </NButton>
                   </div>
                 </template>
                 <div v-else class="bm-empty">{{ t("sftp.bookmarks.empty") }}</div>
                 <div class="bm-section">
-                  <span class="bm-section-icon"><TimeOutline /></span>
+                  <span class="bm-section-icon"><RiTimeLine /></span>
                   {{ t("sftp.bookmarks.recent") }}
                 </div>
                 <template v-if="recentPaths.length > 0">
@@ -3088,7 +3089,7 @@ function openInStandaloneWindow() {
               @click="copyCurrentPath"
             >
               <template #icon>
-                <NIcon><CopyOutline /></NIcon>
+                <NIcon><RiFileCopyLine /></NIcon>
               </template>
             </NButton>
             <NButton
@@ -3101,8 +3102,8 @@ function openInStandaloneWindow() {
             >
               <template #icon>
                 <NIcon>
-                  <EyeOffOutline v-if="showHidden" />
-                  <EyeOutline v-else />
+                  <RiEyeOffLine v-if="showHidden" />
+                  <RiEyeLine v-else />
                 </NIcon>
               </template>
             </NButton>
@@ -3114,7 +3115,7 @@ function openInStandaloneWindow() {
               @click="refresh"
             >
               <template #icon>
-                <NIcon><RefreshOutline /></NIcon>
+                <NIcon><RiRefreshLine /></NIcon>
               </template>
             </NButton>
           </div>
@@ -3128,7 +3129,7 @@ function openInStandaloneWindow() {
               >
                 <NButton size="small" secondary>
                   <template #icon>
-                    <NIcon><CreateOutline /></NIcon>
+                    <NIcon><RiEditLine /></NIcon>
                   </template>
                   {{ t("sftp.newButton") }}
                 </NButton>
@@ -3142,7 +3143,7 @@ function openInStandaloneWindow() {
               >
                 <NButton size="small" secondary>
                   <template #icon>
-                    <NIcon><CloudUploadOutline /></NIcon>
+                    <NIcon><RiUploadCloudLine /></NIcon>
                   </template>
                   {{ t("sftp.uploadButton") }}
                 </NButton>
@@ -3155,7 +3156,7 @@ function openInStandaloneWindow() {
                 @click="triggerUploadFolder"
               >
                 <template #icon>
-                  <NIcon><FolderOpenOutline /></NIcon>
+                  <NIcon><RiFolderOpenLine /></NIcon>
                 </template>
                 {{ t("sftp.uploadFolderButton") }}
               </NButton>
@@ -3169,7 +3170,7 @@ function openInStandaloneWindow() {
                 @click="toggleElevate"
               >
                 <template #icon>
-                  <NIcon><ShieldCheckmarkOutline /></NIcon>
+                  <NIcon><RiShieldCheckLine /></NIcon>
                 </template>
                 {{ t("sftp.elevate.button") }}
               </NButton>
@@ -3190,7 +3191,7 @@ function openInStandaloneWindow() {
                 @click="toggleDualPane"
               >
                 <template #icon>
-                  <NIcon><LaptopOutline /></NIcon>
+                  <NIcon><RiMacbookLine /></NIcon>
                 </template>
                 {{ t("sftp.localPane.toggleButton") }}
               </NButton>
@@ -3204,7 +3205,7 @@ function openInStandaloneWindow() {
                 class="filter-input"
               >
                 <template #prefix>
-                  <NIcon :size="14"><SearchOutline /></NIcon>
+                  <NIcon :size="14"><RiSearchLine /></NIcon>
                 </template>
               </NInput>
               <NBadge
@@ -3222,7 +3223,7 @@ function openInStandaloneWindow() {
                   @click="uploadModalOpen = true"
                 >
                   <template #icon>
-                    <NIcon><CloudUploadOutline /></NIcon>
+                    <NIcon><RiUploadCloudLine /></NIcon>
                   </template>
                 </NButton>
               </NBadge>
@@ -3241,7 +3242,7 @@ function openInStandaloneWindow() {
                   @click="downloadModalOpen = true"
                 >
                   <template #icon>
-                    <NIcon><DownloadOutline /></NIcon>
+                    <NIcon><RiDownloadLine /></NIcon>
                   </template>
                 </NButton>
               </NBadge>
@@ -3332,7 +3333,7 @@ function openInStandaloneWindow() {
                   @click="submitAiPrompt"
                 >
                   <NIcon :size="14">
-                    <SendOutline />
+                    <RiSendPlaneLine />
                   </NIcon>
                 </NButton>
               </template>
@@ -3347,7 +3348,7 @@ function openInStandaloneWindow() {
                   @click="cancelAiPrompt"
                 >
                   <NIcon :size="14">
-                    <CloseOutline />
+                    <RiCloseLine />
                   </NIcon>
                 </NButton>
               </template>
@@ -3372,7 +3373,7 @@ function openInStandaloneWindow() {
               @click="clearFinishedUploads"
             >
               <template #icon>
-                <NIcon><TrashOutline /></NIcon>
+                <NIcon><RiDeleteBinLine /></NIcon>
               </template>
               {{ t("common.clearCompleted") }}
             </NButton>
@@ -3395,7 +3396,7 @@ function openInStandaloneWindow() {
               @click="clearFinishedDownloads"
             >
               <template #icon>
-                <NIcon><TrashOutline /></NIcon>
+                <NIcon><RiDeleteBinLine /></NIcon>
               </template>
               {{ t("common.clearCompleted") }}
             </NButton>

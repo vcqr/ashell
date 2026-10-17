@@ -1,4 +1,22 @@
 <script setup lang="ts">
+import {
+  RiAddLine,
+  RiArrowLeftRightLine,
+  RiArrowUpDownLine,
+  RiCloseLine,
+  RiDeleteBinLine,
+  RiDownloadLine,
+  RiEditLine,
+  RiExternalLinkLine,
+  RiFileCopyLine,
+  RiFileCopyLine as DuplicateOutline,
+  RiGridLine,
+  RiMegaphoneLine,
+  RiRefreshLine,
+  RiServerLine,
+  RiShutDownLine,
+  RiTerminalBoxLine,
+} from '@remixicon/vue'
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { saveTextFile } from '@/utils/fileInterop'
 import { useI18n } from 'vue-i18n'
@@ -12,24 +30,7 @@ import {
   useThemeVars,
   type DropdownOption,
 } from 'naive-ui'
-import {
-  AddOutline,
-  CloseOutline,
-  CopyOutline,
-  CreateOutline,
-  DownloadOutline,
-  DuplicateOutline,
-  MegaphoneOutline,
-  OpenOutline,
-  PowerOutline,
-  RefreshOutline,
-  ServerOutline,
-  SwapHorizontalOutline,
-  SwapVerticalOutline,
-  GridOutline,
-  TerminalOutline,
-  TrashOutline,
-} from '@vicons/ionicons5'
+
 import { useIconStore } from '@/stores/icons'
 import { useBroadcastStore } from '@/stores/broadcast'
 import type { TerminalTab } from '@/types'
@@ -265,12 +266,12 @@ const newTabOptions = computed<DropdownOption[]>(() => [
   {
     label: t('terminal.tabBar.openHost'),
     key: 'host',
-    icon: renderMenuIcon(ServerOutline),
+    icon: renderMenuIcon(RiServerLine),
   },
   {
     label: t('terminal.tabBar.newLocal'),
     key: 'local',
-    icon: renderMenuIcon(TerminalOutline),
+    icon: renderMenuIcon(RiTerminalBoxLine),
   },
 ])
 
@@ -306,12 +307,12 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
     {
       label: t('terminal.tabBar.reconnect'),
       key: 'reconnect',
-      icon: renderMenuIcon(RefreshOutline),
+      icon: renderMenuIcon(RiRefreshLine),
     },
     {
       label: t('terminal.tabBar.disconnect'),
       key: 'disconnect',
-      icon: renderMenuIcon(PowerOutline),
+      icon: renderMenuIcon(RiShutDownLine),
       disabled: !isConnected,
     },
     { type: 'divider', key: 'd1' },
@@ -324,7 +325,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
     {
       label: t('terminal.tabBar.openInNewWindow'),
       key: 'open-in-new-window',
-      icon: renderMenuIcon(OpenOutline),
+      icon: renderMenuIcon(RiExternalLinkLine),
     },
     // 分屏：未分屏时是"把该 tab 放到旁边格"，已分屏时变成切换布局 / 取消分屏
     {
@@ -332,14 +333,14 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
         ? t('terminal.tabBar.switchSideBySide')
         : t('terminal.tabBar.splitRight'),
       key: 'split-h',
-      icon: renderMenuIcon(SwapHorizontalOutline),
+      icon: renderMenuIcon(RiArrowLeftRightLine),
     },
     {
       label: props.splitEnabled
         ? t('terminal.tabBar.switchTopBottom')
         : t('terminal.tabBar.splitDown'),
       key: 'split-v',
-      icon: renderMenuIcon(SwapVerticalOutline),
+      icon: renderMenuIcon(RiArrowUpDownLine),
     },
     ...(props.splitEnabled && props.splitGrid
       ? []
@@ -349,7 +350,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
               ? t('terminal.tabBar.switchGrid')
               : t('terminal.tabBar.splitGrid'),
             key: 'split-grid',
-            icon: renderMenuIcon(GridOutline),
+            icon: renderMenuIcon(RiGridLine),
           },
         ]),
     ...(props.splitEnabled
@@ -357,48 +358,48 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
           {
             label: t('terminal.tabBar.splitClose'),
             key: 'split-close',
-            icon: renderMenuIcon(CloseOutline),
+            icon: renderMenuIcon(RiCloseLine),
           },
         ]
       : []),
     {
       label: t('terminal.tabBar.copySshAddr'),
       key: 'copy-addr',
-      icon: renderMenuIcon(CopyOutline),
+      icon: renderMenuIcon(RiFileCopyLine),
       disabled: !canCopyAddr,
     },
     {
       label: t('terminal.tabBar.rename'),
       key: 'rename',
-      icon: renderMenuIcon(CreateOutline),
+      icon: renderMenuIcon(RiEditLine),
     },
     {
       label: t('terminal.tabBar.exportSession'),
       key: 'export-session',
-      icon: renderMenuIcon(DownloadOutline),
+      icon: renderMenuIcon(RiDownloadLine),
     },
     { type: 'divider', key: 'd2' },
     {
       label: t('terminal.tabBar.closeCurrent'),
       key: 'close',
-      icon: renderMenuIcon(CloseOutline),
+      icon: renderMenuIcon(RiCloseLine),
     },
     {
       label: t('terminal.tabBar.closeRight'),
       key: 'close-right',
-      icon: renderMenuIcon(TrashOutline),
+      icon: renderMenuIcon(RiDeleteBinLine),
       disabled: !hasRight,
     },
     {
       label: t('terminal.tabBar.closeLeft'),
       key: 'close-left',
-      icon: renderMenuIcon(TrashOutline),
+      icon: renderMenuIcon(RiDeleteBinLine),
       disabled: !hasLeft,
     },
     {
       label: t('terminal.tabBar.closeOthers'),
       key: 'close-others',
-      icon: renderMenuIcon(TrashOutline),
+      icon: renderMenuIcon(RiDeleteBinLine),
       disabled: !hasOthers,
     },
   ]
@@ -673,7 +674,7 @@ onBeforeUnmount(() => {
               :color="tab.color ?? '#7c5cff'"
               class="tab-icon-default"
             >
-              <TerminalOutline />
+              <RiTerminalBoxLine />
             </NIcon>
             <span
               class="tab-status-dot"
@@ -702,7 +703,7 @@ onBeforeUnmount(() => {
             class="tab-broadcast-icon"
             :class="{ source: isBroadcastSource(tab.key) }"
           >
-            <MegaphoneOutline />
+            <RiMegaphoneLine />
           </NIcon>
           <NButton
             text
@@ -712,7 +713,7 @@ onBeforeUnmount(() => {
             @click.stop="confirmCloseSingle(tab.key)"
           >
             <template #icon>
-              <NIcon :size="14"><CloseOutline /></NIcon>
+              <NIcon :size="14"><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </div>
@@ -734,7 +735,7 @@ onBeforeUnmount(() => {
     >
       <NButton text size="small" class="add-tab-btn">
         <template #icon>
-          <NIcon :size="18"><AddOutline /></NIcon>
+          <NIcon :size="18"><RiAddLine /></NIcon>
         </template>
       </NButton>
     </NDropdown>

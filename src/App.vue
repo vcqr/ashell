@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  RiMenuLine,
+  RiSettings2Line,
+  RiSideBarLine,
+  RiTerminalBoxLine,
+} from "@remixicon/vue";
 import { computed, onErrorCaptured, provide, ref, watch, watchEffect } from "vue";
 import {
   NConfigProvider,
@@ -16,12 +22,7 @@ import {
 } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { currentLocale } from "@/locales";
-import {
-  TerminalOutline,
-  MenuOutline,
-  SettingsOutline,
-  GridOutline,
-} from "@vicons/ionicons5";
+
 import TabBar from "@/components/TabBar.vue";
 import HostsDrawer from "@/components/HostsDrawer.vue";
 import TerminalView from "@/components/TerminalView.vue";
@@ -548,7 +549,7 @@ if (!isTauri) {
                   @click="hostsOpen = !hostsOpen"
                 >
                   <template #icon>
-                    <NIcon :size="18"><MenuOutline /></NIcon>
+                    <NIcon :size="18"><RiMenuLine /></NIcon>
                   </template>
                 </NButton>
                 <div class="header-divider" />
@@ -592,7 +593,7 @@ if (!isTauri) {
                         @click="activityBarVisible = !activityBarVisible"
                       >
                         <template #icon>
-                          <NIcon :size="18"><GridOutline /></NIcon>
+                          <NIcon :size="18"><RiSideBarLine /></NIcon>
                         </template>
                       </NButton>
                     </template>
@@ -602,7 +603,7 @@ if (!isTauri) {
                     <template #trigger>
                       <NButton circle quaternary @click="settingsOpen = true">
                         <template #icon>
-                          <NIcon :size="18"><SettingsOutline /></NIcon>
+                          <NIcon :size="18"><RiSettings2Line /></NIcon>
                         </template>
                       </NButton>
                     </template>
@@ -654,7 +655,7 @@ if (!isTauri) {
                   :style="paneStyleByIdx(emptyPaneIdx)"
                   @mousedown="focusPane(emptyPaneIdx)"
                 >
-                  <NIcon :size="40" depth="3"><TerminalOutline /></NIcon>
+                  <NIcon :size="40" depth="3"><RiTerminalBoxLine /></NIcon>
                   <p>{{ t("app.splitPane.empty") }}</p>
                 </div>
                 <!-- 双格分隔条：8px 命中区，视觉上是一条 1px 线 -->
@@ -696,7 +697,7 @@ if (!isTauri) {
                   @pointercancel="onDividerPointerup"
                 />
                 <div v-if="tabs.length === 0" class="empty-state">
-                  <NIcon :size="48" depth="3"><TerminalOutline /></NIcon>
+                  <NIcon :size="48" depth="3"><RiTerminalBoxLine /></NIcon>
                   <p>{{ t("app.emptyState.title") }}</p>
                   <NSpace :size="12">
                     <NButton tertiary @click="hostsOpen = true">

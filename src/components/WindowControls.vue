@@ -1,5 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import {
+  RiAddLine,
+  RiCheckboxBlankLine,
+  RiCloseLine,
+  RiFileCopyLine,
+  RiFullscreenExitLine,
+  RiFullscreenLine,
+  RiLayoutLeftLine,
+  RiLayoutLine,
+  RiLayoutRightLine,
+  RiSubtractLine,
+} from "@remixicon/vue"
+import { computed, h, onBeforeUnmount, onMounted, ref } from "vue"
 import { NDropdown, NIcon, type DropdownOption } from "naive-ui"
 import { useI18n } from "vue-i18n"
 import {
@@ -8,13 +20,7 @@ import {
   PhysicalPosition,
   PhysicalSize,
 } from "@tauri-apps/api/window"
-import {
-  AddOutline,
-  CloseOutline,
-  CopyOutline,
-  RemoveOutline,
-  SquareOutline,
-} from "@vicons/ionicons5"
+
 import { detectMac } from "@/utils/platform"
 
 /**
@@ -103,12 +109,28 @@ const zoomOptions = computed<DropdownOption[]>(() => [
   {
     label: isFullscreen.value ? t("app.exitFullscreen") : t("app.fullscreen"),
     key: "fullscreen",
+    icon: () =>
+      h(NIcon, null, {
+        default: () => h(isFullscreen.value ? RiFullscreenExitLine : RiFullscreenLine),
+      }),
   },
-  { label: t("app.tileLeft"), key: "left" },
-  { label: t("app.tileRight"), key: "right" },
+  {
+    label: t("app.tileLeft"),
+    key: "left",
+    icon: () => h(NIcon, null, { default: () => h(RiLayoutLeftLine) }),
+  },
+  {
+    label: t("app.tileRight"),
+    key: "right",
+    icon: () => h(NIcon, null, { default: () => h(RiLayoutRightLine) }),
+  },
   {
     label: isMaximized.value ? t("app.restore") : t("app.maximize"),
     key: "maximize",
+    icon: () =>
+      h(NIcon, null, {
+        default: () => h(isMaximized.value ? RiFileCopyLine : RiLayoutLine),
+      }),
   },
 ])
 
@@ -132,7 +154,7 @@ function closeWindow() {
       @click="closeWindow"
     >
       <NIcon :size="10">
-        <CloseOutline />
+        <RiCloseLine />
       </NIcon>
     </button>
     <button
@@ -142,7 +164,7 @@ function closeWindow() {
       @click="minimizeWindow"
     >
       <NIcon :size="10">
-        <RemoveOutline />
+        <RiSubtractLine />
       </NIcon>
     </button>
     <NDropdown
@@ -158,8 +180,8 @@ function closeWindow() {
         @click="onZoomClick"
       >
         <NIcon :size="10">
-          <CopyOutline v-if="isFullscreen" />
-          <AddOutline v-else />
+          <RiFileCopyLine v-if="isFullscreen" />
+          <RiAddLine v-else />
         </NIcon>
       </button>
     </NDropdown>
@@ -172,7 +194,7 @@ function closeWindow() {
       @click="minimizeWindow"
     >
       <NIcon :size="14">
-        <RemoveOutline />
+        <RiSubtractLine />
       </NIcon>
     </button>
     <button
@@ -182,8 +204,8 @@ function closeWindow() {
       @click="toggleMaximize"
     >
       <NIcon :size="13">
-        <CopyOutline v-if="isMaximized" />
-        <SquareOutline v-else />
+        <RiFileCopyLine v-if="isMaximized" />
+        <RiCheckboxBlankLine v-else />
       </NIcon>
     </button>
     <button
@@ -193,7 +215,7 @@ function closeWindow() {
       @click="closeWindow"
     >
       <NIcon :size="14">
-        <CloseOutline />
+        <RiCloseLine />
       </NIcon>
     </button>
   </div>

@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import {
+  RiFolderOpenLine,
+  RiImageLine,
+  RiRefreshLine,
+} from "@remixicon/vue";
 import { onMounted } from "vue";
 import {
   NButton,
@@ -9,11 +14,7 @@ import {
   useMessage,
 } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import {
-  FolderOpenOutline,
-  RefreshOutline,
-  ImagesOutline,
-} from "@vicons/ionicons5";
+
 import { isTauri } from "@/utils/platform";
 import { useIconStore } from "@/stores/icons";
 
@@ -56,7 +57,7 @@ async function refresh() {
     <NSpace size="small">
       <NButton v-if="isTauri" size="small" @click="openDir">
         <template #icon>
-          <NIcon><FolderOpenOutline /></NIcon>
+          <NIcon><RiFolderOpenLine /></NIcon>
         </template>
         {{ t("settings.icons.openDir") }}
       </NButton>
@@ -66,7 +67,7 @@ async function refresh() {
         @click="refresh"
       >
         <template #icon>
-          <NIcon><RefreshOutline /></NIcon>
+          <NIcon><RiRefreshLine /></NIcon>
         </template>
         {{ t("settings.icons.refresh") }}
       </NButton>
@@ -80,7 +81,7 @@ async function refresh() {
         size="small"
       >
         <template #icon>
-          <NIcon><ImagesOutline /></NIcon>
+          <NIcon><RiImageLine /></NIcon>
         </template>
       </NEmpty>
       <div v-else class="icons-grid">

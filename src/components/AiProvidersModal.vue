@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { RiCloseLine } from "@remixicon/vue";
 import { NModal, NCard, NButton, NIcon } from "naive-ui";
-import { CloseOutline } from "@vicons/ionicons5";
+
 import { useI18n } from "vue-i18n";
 import AiProvidersSection from "./settings/AiProvidersSection.vue";
 
@@ -34,7 +35,7 @@ const { t } = useI18n();
     >
       <template #header-extra>
         <NButton quaternary circle size="small" :title="t('settings.close')" @click="emit('update:open', false)">
-          <template #icon><NIcon><CloseOutline /></NIcon></template>
+          <template #icon><NIcon><RiCloseLine /></NIcon></template>
         </NButton>
       </template>
 

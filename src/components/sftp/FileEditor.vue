@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  RiCloseLine,
+  RiCollapseDiagonalLine,
+  RiExpandDiagonalLine,
+  RiSaveLine,
+} from "@remixicon/vue"
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue"
 import {
   NButton,
@@ -8,7 +14,7 @@ import {
   useDialog,
   useMessage,
 } from "naive-ui"
-import { CloseOutline, ContractOutline, ExpandOutline, SaveOutline } from "@vicons/ionicons5"
+
 import { EditorView, keymap } from "@codemirror/view"
 import { Compartment, EditorState } from "@codemirror/state"
 import type { Extension } from "@codemirror/state"
@@ -513,7 +519,7 @@ const canSave = computed(
           @click="save"
         >
           <template #icon>
-            <NIcon><SaveOutline /></NIcon>
+            <NIcon><RiSaveLine /></NIcon>
           </template>
         </NButton>
         <NButton
@@ -525,8 +531,8 @@ const canSave = computed(
         >
           <template #icon>
             <NIcon>
-              <ContractOutline v-if="maximized" />
-              <ExpandOutline v-else />
+              <RiCollapseDiagonalLine v-if="maximized" />
+              <RiExpandDiagonalLine v-else />
             </NIcon>
           </template>
         </NButton>
@@ -538,7 +544,7 @@ const canSave = computed(
           @click="requestClose"
         >
           <template #icon>
-            <NIcon><CloseOutline /></NIcon>
+            <NIcon><RiCloseLine /></NIcon>
           </template>
         </NButton>
       </div>

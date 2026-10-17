@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import {
+  RiBox3Line,
+  RiDownloadCloudLine,
+  RiGitBranchLine,
+  RiGithubLine,
+  RiLoopLeftLine,
+} from "@remixicon/vue";
 import { ref, computed, onMounted } from "vue";
 import {
   NDescriptions,
@@ -10,13 +17,7 @@ import {
   useMessage,
 } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import {
-  LogoGithub,
-  GitNetworkOutline,
-  SyncOutline,
-  CloudDownloadOutline,
-  CubeOutline,
-} from "@vicons/ionicons5";
+
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { openExternal, isTauri } from "@/utils/platform";
@@ -121,7 +122,7 @@ function handleReleaseNotesClick(e: MouseEvent) {
       <NDescriptionsItem :label="t('settings.about.github')">
         <NButton text type="primary" @click="open(GITHUB_URL)">
           <template #icon>
-            <NIcon><LogoGithub /></NIcon>
+            <NIcon><RiGithubLine /></NIcon>
           </template>
           {{ GITHUB_URL }}
         </NButton>
@@ -129,7 +130,7 @@ function handleReleaseNotesClick(e: MouseEvent) {
       <NDescriptionsItem :label="t('settings.about.gitee')">
         <NButton text type="primary" @click="open(GITEE_URL)">
           <template #icon>
-            <NIcon><GitNetworkOutline /></NIcon>
+            <NIcon><RiGitBranchLine /></NIcon>
           </template>
           {{ GITEE_URL }}
         </NButton>
@@ -137,7 +138,7 @@ function handleReleaseNotesClick(e: MouseEvent) {
       <NDescriptionsItem :label="t('settings.about.docker')">
         <NButton text type="primary" @click="open(DOCKER_URL)">
           <template #icon>
-            <NIcon><CubeOutline /></NIcon>
+            <NIcon><RiBox3Line /></NIcon>
           </template>
           {{ DOCKER_URL }}
         </NButton>
@@ -152,7 +153,7 @@ function handleReleaseNotesClick(e: MouseEvent) {
         @click="handleCheck"
       >
         <template #icon>
-          <NIcon><SyncOutline /></NIcon>
+          <NIcon><RiLoopLeftLine /></NIcon>
         </template>
         {{
           updateState === "checking"
@@ -174,7 +175,7 @@ function handleReleaseNotesClick(e: MouseEvent) {
           @click="handleDownload"
         >
           <template #icon>
-            <NIcon><CloudDownloadOutline /></NIcon>
+            <NIcon><RiDownloadCloudLine /></NIcon>
           </template>
           {{ t("settings.about.downloadInstall") }}
         </NButton>

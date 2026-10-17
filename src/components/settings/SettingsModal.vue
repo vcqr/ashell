@@ -1,4 +1,20 @@
 <script setup lang="ts">
+import {
+  RiAppsLine,
+  RiBox3Line,
+  RiCloseLine,
+  RiCloudLine,
+  RiEqualizerLine,
+  RiInboxLine,
+  RiInformationLine,
+  RiKeyLine,
+  RiPaletteLine,
+  RiRocketLine,
+  RiShieldCheckLine,
+  RiSparklingLine,
+  RiTerminalBoxLine,
+  RiWindowLine,
+} from "@remixicon/vue";
 import { computed, ref, watch, type Component } from "vue";
 import {
   NModal,
@@ -6,22 +22,7 @@ import {
   NButton,
   NIcon,
 } from "naive-ui";
-import {
-  CloseOutline,
-  OptionsOutline,
-  ColorPaletteOutline,
-  TerminalOutline,
-  KeyOutline,
-  BrowsersOutline,
-  FileTrayFullOutline,
-  AppsOutline,
-  RocketOutline,
-  CubeOutline,
-  SparklesOutline,
-  ShieldCheckmarkOutline,
-  CloudOutline,
-  InformationCircleOutline,
-} from "@vicons/ionicons5";
+
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/platform";
 import GeneralSection from "./GeneralSection.vue";
@@ -88,40 +89,40 @@ const navGroups = computed<
   {
     label: t("settings.groups.general"),
     items: [
-      { key: "general", icon: OptionsOutline },
-      { key: "theme", icon: ColorPaletteOutline },
-      { key: "terminal", icon: TerminalOutline },
-      { key: "shortcuts", icon: KeyOutline },
+      { key: "general", icon: RiEqualizerLine },
+      { key: "theme", icon: RiPaletteLine },
+      { key: "terminal", icon: RiTerminalBoxLine },
+      { key: "shortcuts", icon: RiKeyLine },
     ],
   },
   {
     label: t("settings.groups.system"),
     // Web 端无系统托盘，隐藏托盘设置页
     items: [
-      { key: "window", icon: BrowsersOutline },
-      ...(isTauri ? [{ key: "tray" as SettingsTab, icon: FileTrayFullOutline }] : []),
-      { key: "icons", icon: AppsOutline },
-      { key: "startup", icon: RocketOutline },
+      { key: "window", icon: RiWindowLine },
+      ...(isTauri ? [{ key: "tray" as SettingsTab, icon: RiInboxLine }] : []),
+      { key: "icons", icon: RiAppsLine },
+      { key: "startup", icon: RiRocketLine },
     ],
   },
   {
     label: t("settings.groups.features"),
     // 供应商管理排在 AI 助手前：配置顺序上先有供应商、再进 AI 助手绑定引擎
     items: [
-      { key: "ai-providers", icon: CubeOutline },
-      { key: "ai", icon: SparklesOutline },
+      { key: "ai-providers", icon: RiBox3Line },
+      { key: "ai", icon: RiSparklingLine },
     ],
   },
   {
     label: t("settings.groups.data"),
     items: [
-      { key: "security", icon: ShieldCheckmarkOutline },
-      { key: "backup", icon: CloudOutline },
+      { key: "security", icon: RiShieldCheckLine },
+      { key: "backup", icon: RiCloudLine },
     ],
   },
   {
     label: "",
-    items: [{ key: "about", icon: InformationCircleOutline }],
+    items: [{ key: "about", icon: RiInformationLine }],
   },
 ]);
 
@@ -150,7 +151,7 @@ function close() {
           @click="close"
         >
           <template #icon>
-            <NIcon><CloseOutline /></NIcon>
+            <NIcon><RiCloseLine /></NIcon>
           </template>
         </NButton>
       </template>

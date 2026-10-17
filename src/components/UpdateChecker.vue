@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /* eslint-disable vue/valid-template-root -- headless component: no UI, updates are shown via naive-ui notification */
+import { RiDownloadCloudLine } from "@remixicon/vue";
 import { onMounted, watch, h, ref } from "vue";
 import {
   useNotification,
@@ -8,7 +9,7 @@ import {
   type NotificationReactive,
 } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { CloudDownloadOutline } from "@vicons/ionicons5";
+
 import { useUpdater } from "@/composables/useUpdater";
 
 const { t } = useI18n();
@@ -67,7 +68,7 @@ function showUpdateNotification() {
         {
           default: () => t("settings.about.downloadInstall"),
           icon: () =>
-            h(NIcon, null, { default: () => h(CloudDownloadOutline) }),
+            h(NIcon, null, { default: () => h(RiDownloadCloudLine) }),
         },
       ),
   });

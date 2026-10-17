@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RiDownloadLine } from "@remixicon/vue"
 import { computed, ref, watch } from 'vue'
 import {
   NModal,
@@ -15,7 +16,7 @@ import {
   useMessage,
   type TreeSelectOption,
 } from "naive-ui"
-import { DownloadOutline } from "@vicons/ionicons5"
+
 import { useI18n } from "vue-i18n"
 import { listSshConfigHosts } from "@/api/hosts"
 import { useHostStore } from "@/stores/hosts"
@@ -216,7 +217,7 @@ async function doImport() {
             @click="doImport"
           >
             <template #icon>
-              <NIcon><DownloadOutline /></NIcon>
+              <NIcon><RiDownloadLine /></NIcon>
             </template>
             {{ t("hosts.import.import", { count: checkedKeys.length }) }}
           </NButton>

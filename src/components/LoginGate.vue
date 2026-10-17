@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { RiLockLine } from "@remixicon/vue";
 import { onMounted, ref } from "vue";
 import { NButton, NIcon, NInput, NCard } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { LockClosedOutline } from "@vicons/ionicons5";
+
 import { getStoredToken, setStoredToken } from "@/api/client";
 import { isTauri } from "@/utils/platform";
 
@@ -102,7 +103,7 @@ onMounted(() => {
           @update:value="error = ''"
         >
           <template #prefix>
-            <NIcon :size="16" class="login-lock"><LockClosedOutline /></NIcon>
+            <NIcon :size="16" class="login-lock"><RiLockLine /></NIcon>
           </template>
         </NInput>
         <div v-if="error" class="login-error">{{ error }}</div>

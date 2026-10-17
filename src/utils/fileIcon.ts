@@ -1,6 +1,7 @@
+import { RiFolderFill, RiLink } from "@remixicon/vue"
 import { h } from "vue"
 import type { Component } from "vue"
-import { Folder, Link } from "@vicons/fa"
+
 import { NIcon } from "naive-ui"
 import type { SftpFile } from "@/types"
 // Material Icon Theme 图标集（VS Code 最流行的文件图标主题）：构建期由
@@ -315,10 +316,10 @@ function fileIconOf(fileName: string): Component {
  *  Material Icon Theme 彩色图标，本地与远程列表共用 */
 export function sftpFileIcon(file: SftpFile) {
   if (file.file_type === "dir") {
-    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.dir }, { default: () => h(Folder) })
+    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.dir }, { default: () => h(RiFolderFill) })
   }
   if (file.file_type === "symlink") {
-    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.symlink }, { default: () => h(Link) })
+    return h(NIcon, { size: 16, color: FILE_TYPE_COLORS.symlink }, { default: () => h(RiLink) })
   }
   return h(fileIconOf(file.file_name), { width: 16, height: 16 })
 }

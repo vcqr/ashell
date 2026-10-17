@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  RiAddLine,
+  RiDeleteBinLine,
+  RiDownloadCloudLine,
+  RiSaveLine,
+} from "@remixicon/vue";
 import { ref, computed, onMounted, watch } from "vue";
 import { storeToRefs } from "pinia";
 import {
@@ -14,12 +20,7 @@ import {
   NScrollbar,
   useMessage,
 } from "naive-ui";
-import {
-  AddOutline,
-  TrashOutline,
-  CloudDownloadOutline,
-  SaveOutline,
-} from "@vicons/ionicons5";
+
 import { useI18n } from "vue-i18n";
 import type { AiProvider, AiProviderCreate } from "@/types";
 import {
@@ -214,7 +215,7 @@ onMounted(() => {
           </NSpin>
         </div>
         <NButton block dashed size="small" @click="addProvider">
-          <template #icon><NIcon><AddOutline /></NIcon></template>
+          <template #icon><NIcon><RiAddLine /></NIcon></template>
           {{ t("settings.ai.provider.add") }}
         </NButton>
       </div>
@@ -243,7 +244,7 @@ onMounted(() => {
               </NFormItem>
               <NFormItem>
                 <NButton size="small" :loading="fetching" :disabled="!canFetchModels" @click="fetchModels">
-                  <template #icon><NIcon><CloudDownloadOutline /></NIcon></template>
+                  <template #icon><NIcon><RiDownloadCloudLine /></NIcon></template>
                   {{ fetching ? t("settings.ai.provider.fetching") : t("settings.ai.provider.fetchModels") }}
                 </NButton>
               </NFormItem>
@@ -261,14 +262,14 @@ onMounted(() => {
             <NPopconfirm @positive-click="removeProvider">
               <template #trigger>
                 <NButton type="error">
-                  <template #icon><NIcon><TrashOutline /></NIcon></template>
+                  <template #icon><NIcon><RiDeleteBinLine /></NIcon></template>
                   {{ t("settings.ai.provider.delete") }}
                 </NButton>
               </template>
               {{ t("settings.ai.provider.deleteConfirm") }}
             </NPopconfirm>
             <NButton type="primary" :loading="saving" @click="saveProvider">
-              <template #icon><NIcon><SaveOutline /></NIcon></template>
+              <template #icon><NIcon><RiSaveLine /></NIcon></template>
               {{ saving ? t("settings.ai.provider.saving") : t("settings.ai.provider.save") }}
             </NButton>
           </div>

@@ -1,13 +1,14 @@
 <script setup lang="ts">
+import {
+  RiCloseLine,
+  RiCollapseDiagonalLine,
+  RiDownloadLine,
+  RiExpandDiagonalLine,
+  RiMusic2Line,
+} from "@remixicon/vue"
 import { computed, onBeforeUnmount, ref, watch } from "vue"
 import { NButton, NIcon, NModal, NSpin } from "naive-ui"
-import {
-  CloseOutline,
-  ContractOutline,
-  DownloadOutline,
-  ExpandOutline,
-  MusicalNotesOutline,
-} from "@vicons/ionicons5"
+
 import { downloadStream, isAbortError } from "@/api/sftp"
 import type { SftpFile } from "@/types"
 import { useI18n } from "vue-i18n"
@@ -302,7 +303,7 @@ const modalStyle = computed(() =>
           @click="onDownload"
         >
           <template #icon>
-            <NIcon><DownloadOutline /></NIcon>
+            <NIcon><RiDownloadLine /></NIcon>
           </template>
         </NButton>
         <NButton
@@ -314,8 +315,8 @@ const modalStyle = computed(() =>
         >
           <template #icon>
             <NIcon>
-              <ContractOutline v-if="maximized" />
-              <ExpandOutline v-else />
+              <RiCollapseDiagonalLine v-if="maximized" />
+              <RiExpandDiagonalLine v-else />
             </NIcon>
           </template>
         </NButton>
@@ -327,7 +328,7 @@ const modalStyle = computed(() =>
           @click="requestClose"
         >
           <template #icon>
-            <NIcon><CloseOutline /></NIcon>
+            <NIcon><RiCloseLine /></NIcon>
           </template>
         </NButton>
       </div>
@@ -346,7 +347,7 @@ const modalStyle = computed(() =>
           @click="onDownload"
         >
           <template #icon>
-            <NIcon><DownloadOutline /></NIcon>
+            <NIcon><RiDownloadLine /></NIcon>
           </template>
           {{ t('common.download') }}
         </NButton>
@@ -376,7 +377,7 @@ const modalStyle = computed(() =>
       </div>
       <div v-else-if="objectUrl && previewType === 'audio'" class="preview-content audio-wrap">
         <NIcon :size="64" class="audio-icon">
-          <MusicalNotesOutline />
+          <RiMusic2Line />
         </NIcon>
         <audio :src="objectUrl" controls autoplay class="preview-audio" @error="onMediaError" @loadedmetadata="onMediaLoadedMetadata" />
       </div>

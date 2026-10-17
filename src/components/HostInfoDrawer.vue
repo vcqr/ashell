@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import {
+  RiCloseLine,
+  RiRefreshLine,
+} from "@remixicon/vue"
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NAlert,
@@ -17,7 +21,7 @@ import {
   NTabs,
 } from "naive-ui"
 import type { SelectOption } from "naive-ui"
-import { CloseOutline, RefreshOutline } from "@vicons/ionicons5"
+
 import { useI18n } from "vue-i18n"
 import { getSysInfo } from "@/api/sysinfo"
 import { ApiError } from "@/api/client"
@@ -430,12 +434,12 @@ const panelStyle = computed(() => ({
             @click="manualRefresh"
           >
             <template #icon>
-              <NIcon><RefreshOutline /></NIcon>
+              <NIcon><RiRefreshLine /></NIcon>
             </template>
           </NButton>
           <NButton size="small" quaternary circle :title="t('hostInfo.close')" @click="onClose">
             <template #icon>
-              <NIcon><CloseOutline /></NIcon>
+              <NIcon><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </NSpace>

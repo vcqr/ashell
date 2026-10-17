@@ -1,4 +1,27 @@
 <script setup lang="ts">
+import {
+  RiArrowUpLine,
+  RiCheckDoubleLine,
+  RiCloseLine,
+  RiDeleteBinFill,
+  RiDeleteBinLine,
+  RiEditLine,
+  RiExternalLinkLine,
+  RiEyeLine,
+  RiEyeOffLine,
+  RiFileCopyLine,
+  RiFileLine,
+  RiFocus3Line,
+  RiFolderLine,
+  RiFolderOpenLine,
+  RiHardDrive2Line,
+  RiHomeLine,
+  RiRefreshLine,
+  RiScissorsCutLine,
+  RiSearchLine,
+  RiTerminalBoxLine,
+  RiUploadCloudLine,
+} from "@remixicon/vue"
 import { computed, h, nextTick, onMounted, ref, watch } from "vue"
 import {
   NButton,
@@ -18,27 +41,8 @@ import type {
   DropdownOption,
   InputInst,
 } from "naive-ui"
-import {
-  ArrowUpOutline,
-  CheckmarkDoneOutline,
-  CloseOutline,
-  CloudUploadOutline,
-  CopyOutline,
-  CreateOutline,
-  CutOutline,
-  EyeOffOutline,
-  EyeOutline,
-  FolderOpenOutline,
-  HomeOutline,
-  LocateOutline,
-  OpenOutline,
-  RefreshOutline,
-  SearchOutline,
-  TerminalOutline,
-  TrashOutline,
-  TrashSharp,
-} from "@vicons/ionicons5"
-import { FileRegular, Folder, HddRegular } from "@vicons/fa"
+
+
 import { useI18n } from "vue-i18n"
 import {
   copyLocalFs,
@@ -407,7 +411,7 @@ function fileIcon(row: SftpFile) {
     return h(
       NIcon,
       { size: 16, class: "file-icon", color: FILE_TYPE_COLORS.dir },
-      () => h(HddRegular),
+      () => h(RiHardDrive2Line),
     )
   }
   return sftpFileIcon(row)
@@ -547,12 +551,12 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
         {
           key: "local-mkdir",
           label: t("sftp.ctxMenu.newFolder"),
-          icon: () => h(NIcon, null, () => h(Folder)),
+          icon: () => h(NIcon, null, () => h(RiFolderLine)),
         },
         {
           key: "local-touch",
           label: t("sftp.ctxMenu.newFile"),
-          icon: () => h(NIcon, null, () => h(FileRegular)),
+          icon: () => h(NIcon, null, () => h(RiFileLine)),
         },
       )
       if (localClipboard.value) {
@@ -563,7 +567,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
             clip.files.length > 1
               ? t("sftp.ctxMenu.pasteMulti", { count: clip.files.length })
               : t("sftp.ctxMenu.paste"),
-          icon: () => h(NIcon, null, () => h(CopyOutline)),
+          icon: () => h(NIcon, null, () => h(RiFileCopyLine)),
         })
       }
       opts.push(
@@ -571,7 +575,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
         {
           key: "local-select-all",
           label: t("sftp.ctxMenu.selectAll"),
-          icon: () => h(NIcon, null, () => h(CheckmarkDoneOutline)),
+          icon: () => h(NIcon, null, () => h(RiCheckDoubleLine)),
         },
         { type: "divider", key: "d-local-blank-2" },
       )
@@ -580,19 +584,19 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       opts.push({
         key: "local-open-in-terminal",
         label: t("sftp.localPane.ctxOpenInTerminal"),
-        icon: () => h(NIcon, null, () => h(TerminalOutline)),
+        icon: () => h(NIcon, null, () => h(RiTerminalBoxLine)),
       })
     }
     opts.push({
       key: "local-refresh",
       label: t("sftp.ctxMenu.refresh"),
-      icon: () => h(NIcon, null, () => h(RefreshOutline)),
+      icon: () => h(NIcon, null, () => h(RiRefreshLine)),
     })
     if (!viewingRoots.value) {
       opts.push({
         key: "local-roots",
         label: t("sftp.localPane.goRoots"),
-        icon: () => h(NIcon, null, () => h(HddRegular)),
+        icon: () => h(NIcon, null, () => h(RiHardDrive2Line)),
       })
     }
     return opts
@@ -602,7 +606,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
     {
       key: "copy-path",
       label: t("sftp.ctxMenu.copyPath"),
-      icon: () => h(NIcon, null, () => h(CopyOutline)),
+      icon: () => h(NIcon, null, () => h(RiFileCopyLine)),
     },
   ]
   // 独立抽屉（本地终端）：把终端 cd 到目标目录（文件则取其父目录）
@@ -610,7 +614,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
     opts.push({
       key: "open-in-terminal",
       label: t("sftp.localPane.ctxOpenInTerminal"),
-      icon: () => h(NIcon, null, () => h(TerminalOutline)),
+      icon: () => h(NIcon, null, () => h(RiTerminalBoxLine)),
     })
   }
   // 多选（右键行必然在选择集内）：合并为批量上传项；单选按行类型单项。
@@ -619,19 +623,19 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
     opts.push({
       key: "upload-selection",
       label: t("sftp.localPane.ctxUploadMulti", { count: selCount }),
-      icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
+      icon: () => h(NIcon, null, () => h(RiUploadCloudLine)),
     })
   } else if (!props.standalone && row.file_type === "file" && !viewingRoots.value) {
     opts.push({
       key: "upload",
       label: t("sftp.localPane.ctxUpload"),
-      icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
+      icon: () => h(NIcon, null, () => h(RiUploadCloudLine)),
     })
   } else if (!props.standalone && row.file_type === "dir" && !viewingRoots.value) {
     opts.push({
       key: "upload-dir",
       label: t("sftp.localPane.ctxUploadDir"),
-      icon: () => h(NIcon, null, () => h(CloudUploadOutline)),
+      icon: () => h(NIcon, null, () => h(RiUploadCloudLine)),
     })
   }
   if (!viewingRoots.value) {
@@ -643,7 +647,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
           selCount > 1
             ? t("sftp.ctxMenu.copyMulti", { count: selCount })
             : t("sftp.ctxMenu.copy"),
-        icon: () => h(NIcon, null, () => h(CopyOutline)),
+        icon: () => h(NIcon, null, () => h(RiFileCopyLine)),
       },
       {
         key: "clipboard-cut",
@@ -651,12 +655,12 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
           selCount > 1
             ? t("sftp.ctxMenu.cutMulti", { count: selCount })
             : t("sftp.ctxMenu.cut"),
-        icon: () => h(NIcon, null, () => h(CutOutline)),
+        icon: () => h(NIcon, null, () => h(RiScissorsCutLine)),
       },
       {
         key: "local-rename",
         label: t("sftp.ctxMenu.rename"),
-        icon: () => h(NIcon, null, () => h(CreateOutline)),
+        icon: () => h(NIcon, null, () => h(RiEditLine)),
       },
     )
     opts.push(
@@ -664,12 +668,12 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       {
         key: "trash",
         label: t("sftp.localPane.ctxTrash"),
-        icon: () => h(NIcon, null, () => h(TrashOutline)),
+        icon: () => h(NIcon, null, () => h(RiDeleteBinLine)),
       },
       {
         key: "delete",
         label: t("sftp.ctxMenu.delete"),
-        icon: () => h(NIcon, null, () => h(TrashSharp)),
+        icon: () => h(NIcon, null, () => h(RiDeleteBinFill)),
       },
     )
     opts.push(
@@ -677,12 +681,12 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       {
         key: "local-reveal",
         label: t("sftp.localPane.ctxReveal"),
-        icon: () => h(NIcon, null, () => h(FolderOpenOutline)),
+        icon: () => h(NIcon, null, () => h(RiFolderOpenLine)),
       },
       {
         key: "local-open",
         label: t("sftp.localPane.ctxOpen"),
-        icon: () => h(NIcon, null, () => h(OpenOutline)),
+        icon: () => h(NIcon, null, () => h(RiExternalLinkLine)),
       },
     )
   }
@@ -1161,7 +1165,7 @@ onMounted(() => {
         @click="goUp"
       >
         <template #icon>
-          <NIcon><ArrowUpOutline /></NIcon>
+          <NIcon><RiArrowUpLine /></NIcon>
         </template>
       </NButton>
       <div class="address-bar">
@@ -1200,7 +1204,7 @@ onMounted(() => {
         @click="startupStore.setCwdFollowEnabled(!startupStore.cwdFollowEnabled)"
       >
         <template #icon>
-          <NIcon><LocateOutline /></NIcon>
+          <NIcon><RiFocus3Line /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1212,8 +1216,8 @@ onMounted(() => {
       >
         <template #icon>
           <NIcon>
-            <EyeOffOutline v-if="showHidden" />
-            <EyeOutline v-else />
+            <RiEyeOffLine v-if="showHidden" />
+            <RiEyeLine v-else />
           </NIcon>
         </template>
       </NButton>
@@ -1225,7 +1229,7 @@ onMounted(() => {
         @click="refresh"
       >
         <template #icon>
-          <NIcon><RefreshOutline /></NIcon>
+          <NIcon><RiRefreshLine /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1237,7 +1241,7 @@ onMounted(() => {
         @click="emit('close')"
       >
         <template #icon>
-          <NIcon><CloseOutline /></NIcon>
+          <NIcon><RiCloseLine /></NIcon>
         </template>
       </NButton>
     </div>
@@ -1254,7 +1258,7 @@ onMounted(() => {
         @click="goRoots"
       >
         <template #icon>
-          <NIcon><HddRegular /></NIcon>
+          <NIcon><RiHardDrive2Line /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1265,7 +1269,7 @@ onMounted(() => {
         @click="goHome"
       >
         <template #icon>
-          <NIcon><HomeOutline /></NIcon>
+          <NIcon><RiHomeLine /></NIcon>
         </template>
       </NButton>
       <span class="toolbar-divider" />
@@ -1278,7 +1282,7 @@ onMounted(() => {
         @click="openLocalMkdir"
       >
         <template #icon>
-          <NIcon><Folder /></NIcon>
+          <NIcon><RiFolderLine /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1290,7 +1294,7 @@ onMounted(() => {
         @click="openLocalTouch"
       >
         <template #icon>
-          <NIcon><FileRegular /></NIcon>
+          <NIcon><RiFileLine /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1302,7 +1306,7 @@ onMounted(() => {
         @click="pasteLocal"
       >
         <template #icon>
-          <NIcon><CopyOutline /></NIcon>
+          <NIcon><RiFileCopyLine /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1315,7 +1319,7 @@ onMounted(() => {
         @click="emit('upload-selection')"
       >
         <template #icon>
-          <NIcon><CloudUploadOutline /></NIcon>
+          <NIcon><RiUploadCloudLine /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1327,7 +1331,7 @@ onMounted(() => {
         @click="trashSelection"
       >
         <template #icon>
-          <NIcon><TrashOutline /></NIcon>
+          <NIcon><RiDeleteBinLine /></NIcon>
         </template>
       </NButton>
       <NInput
@@ -1338,7 +1342,7 @@ onMounted(() => {
         class="filter-input"
       >
         <template #prefix>
-          <NIcon :size="14"><SearchOutline /></NIcon>
+          <NIcon :size="14"><RiSearchLine /></NIcon>
         </template>
       </NInput>
     </div>

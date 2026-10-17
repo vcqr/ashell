@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import {
+  RiCheckboxCircleLine,
+  RiCloseCircleLine,
+  RiSearchLine,
+} from "@remixicon/vue";
 import { ref, computed, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 import {
@@ -14,11 +19,7 @@ import {
   NTag,
   useMessage,
 } from "naive-ui";
-import {
-  SearchOutline,
-  CheckmarkCircleOutline,
-  CloseCircleOutline,
-} from "@vicons/ionicons5";
+
 import { request } from "@/api/client";
 import { isTauri } from "@/utils/platform";
 import { useI18n } from "vue-i18n";
@@ -207,14 +208,14 @@ onMounted(async () => {
           <NSpace align="center" :size="8">
             <NButton size="small" :loading="detecting" @click="detectClaude">
               <template #icon>
-                <NIcon><SearchOutline /></NIcon>
+                <NIcon><RiSearchLine /></NIcon>
               </template>
               {{ t("settings.ai.detect") }}
             </NButton>
             <template v-if="detectedPath !== null">
               <NTag size="small" type="success" :bordered="false">
                 <template #icon>
-                  <NIcon><CheckmarkCircleOutline /></NIcon>
+                  <NIcon><RiCheckboxCircleLine /></NIcon>
                 </template>
                 {{ detectedPath }}
               </NTag>
@@ -225,7 +226,7 @@ onMounted(async () => {
             <template v-else-if="detectionAttempted && !detecting">
               <NTag size="small" type="warning" :bordered="false">
                 <template #icon>
-                  <NIcon><CloseCircleOutline /></NIcon>
+                  <NIcon><RiCloseCircleLine /></NIcon>
                 </template>
                 {{ t("settings.ai.notDetected") }}
               </NTag>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { RiRefreshLine } from "@remixicon/vue"
 import { isTauri } from "@/utils/platform"
 import { onTitlebarDblclick } from "@/utils/titlebar"
 import { computed, ref } from "vue"
 import { useI18n } from "vue-i18n"
 import { NButton, NIcon } from "naive-ui"
-import { RefreshOutline } from "@vicons/ionicons5"
+
 import WindowControls from "@/components/WindowControls.vue"
 import AiAssistant from "@/components/AiAssistant.vue"
 import AiProvidersModal from "@/components/AiProvidersModal.vue"
@@ -80,7 +81,7 @@ async function toggleMaximize() {
         @click="onRequestNewChat"
       >
         <template #icon>
-          <NIcon><RefreshOutline /></NIcon>
+          <NIcon><RiRefreshLine /></NIcon>
         </template>
       </NButton>
       <WindowControls v-if="!isMac && isTauri" />

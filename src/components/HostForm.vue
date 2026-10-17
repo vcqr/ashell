@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import {
+  RiEyeLine,
+  RiEyeOffLine,
+} from "@remixicon/vue"
 import { computed, h, onMounted, reactive, ref, watch } from "vue"
 import {
   NForm,
@@ -21,7 +25,7 @@ import {
   type SelectOption,
   type SelectRenderTag,
 } from "naive-ui"
-import { EyeOutline, EyeOffOutline } from "@vicons/ionicons5"
+
 import { useI18n } from "vue-i18n"
 import { uploadPrivateKey } from "@/utils/fileInterop"
 import { useHostStore } from "@/stores/hosts"
@@ -497,8 +501,8 @@ function onOpPasswordDone() {
                   <template v-if="isEditableHost" #suffix>
                     <div class="eye-toggle" @click="handlePasswordEyeClick">
                       <NIcon :size="18">
-                        <EyeOffOutline v-if="passwordVisible" />
-                        <EyeOutline v-else />
+                        <RiEyeOffLine v-if="passwordVisible" />
+                        <RiEyeLine v-else />
                       </NIcon>
                     </div>
                   </template>
@@ -520,7 +524,7 @@ function onOpPasswordDone() {
                     />
                     <div v-if="isEditableHost" class="private-key-eye" @click="startReveal('private_key')">
                       <NIcon :size="16">
-                        <EyeOutline />
+                        <RiEyeLine />
                       </NIcon>
                     </div>
                   </div>

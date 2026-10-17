@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import {
+  RiCloseLine,
+  RiComputerLine,
+  RiDownloadLine,
+  RiMoonLine,
+  RiShareLine,
+  RiSunLine,
+} from "@remixicon/vue";
 import { computed, ref, watch } from "vue";
 import {
   NRadioGroup,
@@ -16,14 +24,7 @@ import {
   useMessage,
 } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import {
-  DesktopOutline,
-  MoonOutline,
-  SunnyOutline,
-  DownloadOutline,
-  ShareOutline,
-  CloseOutline,
-} from "@vicons/ionicons5";
+
 import {
   TERMINAL_THEME_FIELDS,
   type TerminalThemeName,
@@ -193,19 +194,19 @@ async function exportCurrent() {
     >
       <NRadioButton value="system">
         <span class="theme-option">
-          <NIcon :size="15"><DesktopOutline /></NIcon>
+          <NIcon :size="15"><RiComputerLine /></NIcon>
           {{ t("settings.theme.followSystem") }}
         </span>
       </NRadioButton>
       <NRadioButton value="dark">
         <span class="theme-option">
-          <NIcon :size="15"><MoonOutline /></NIcon>
+          <NIcon :size="15"><RiMoonLine /></NIcon>
           {{ t("settings.theme.dark") }}
         </span>
       </NRadioButton>
       <NRadioButton value="light">
         <span class="theme-option">
-          <NIcon :size="15"><SunnyOutline /></NIcon>
+          <NIcon :size="15"><RiSunLine /></NIcon>
           {{ t("settings.theme.light") }}
         </span>
       </NRadioButton>
@@ -230,13 +231,13 @@ async function exportCurrent() {
         <NSpace :size="8">
           <NButton size="small" @click="openImport">
             <template #icon>
-              <NIcon :size="14"><DownloadOutline /></NIcon>
+              <NIcon :size="14"><RiDownloadLine /></NIcon>
             </template>
             {{ t("settings.theme.importTheme") }}
           </NButton>
           <NButton size="small" @click="exportCurrent">
             <template #icon>
-              <NIcon :size="14"><ShareOutline /></NIcon>
+              <NIcon :size="14"><RiShareLine /></NIcon>
             </template>
             {{ t("settings.theme.exportTheme") }}
           </NButton>
@@ -321,7 +322,7 @@ async function exportCurrent() {
                   :title="t('settings.theme.deleteTheme')"
                 >
                   <template #icon>
-                    <NIcon :size="12"><CloseOutline /></NIcon>
+                    <NIcon :size="12"><RiCloseLine /></NIcon>
                   </template>
                 </NButton>
               </template>
@@ -394,7 +395,7 @@ async function exportCurrent() {
         <template #header-extra>
           <NButton quaternary circle size="small" @click="importShow = false">
             <template #icon>
-              <NIcon><CloseOutline /></NIcon>
+              <NIcon><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </template>
@@ -420,7 +421,7 @@ async function exportCurrent() {
         <NSpace justify="end" style="margin-top: 12px">
           <NButton size="small" @click="fileInput?.click()">
             <template #icon>
-              <NIcon :size="14"><DownloadOutline /></NIcon>
+              <NIcon :size="14"><RiDownloadLine /></NIcon>
             </template>
             {{ t("settings.theme.importPickFile") }}
           </NButton>

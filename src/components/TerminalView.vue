@@ -1,4 +1,14 @@
 <script setup lang="ts">
+import {
+  RiArrowDownLine as ArrowDownIcon,
+  RiArrowUpLine as ArrowUpIcon,
+  RiBookOpenLine as DictIcon,
+  RiCloseLine as CloseIcon,
+  RiRefreshLine,
+  RiSendPlaneLine as SendIcon,
+  RiSparklingLine as SparklesIcon,
+  RiTimeLine as HistoryIcon,
+} from "@remixicon/vue"
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
@@ -8,16 +18,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11"
 import { LigaturesAddon } from "@xterm/addon-ligatures"
 import { SerializeAddon } from "@xterm/addon-serialize"
 import { NCheckbox, NIcon, NInput, NModal, NTooltip, NButton } from "naive-ui"
-import {
-  ArrowDownOutline as ArrowDownIcon,
-  ArrowUpOutline as ArrowUpIcon,
-  CloseOutline as CloseIcon,
-  RefreshOutline,
-  SparklesOutline as SparklesIcon,
-  SendOutline as SendIcon,
-  TimeOutline as HistoryIcon,
-  BookOutline as DictIcon,
-} from "@vicons/ionicons5"
+
 import { pasteText, copyText, sanitizePastedText } from "@/utils/clipboard"
 import { openExternal } from "@/utils/platform"
 import { useI18n } from "vue-i18n"
@@ -1863,7 +1864,7 @@ onBeforeUnmount(() => {
         @click="reconnect"
       >
         <NIcon :size="14">
-          <RefreshOutline />
+          <RiRefreshLine />
         </NIcon>
         {{ t('terminal.tabBar.reconnect') }}
       </button>

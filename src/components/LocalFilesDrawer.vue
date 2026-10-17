@@ -1,8 +1,14 @@
 <script setup lang="ts">
+import {
+  RiCloseLine,
+  RiFolderOpenLine,
+  RiPushpinFill,
+  RiPushpinLine,
+} from "@remixicon/vue"
 import { ref, watch, watchEffect, onBeforeUnmount } from "vue"
 import { NButton, NIcon, NTooltip } from "naive-ui"
-import { CloseOutline, FolderOpenOutline } from "@vicons/ionicons5"
-import { PushpinFilled, PushpinOutlined } from "@vicons/antd"
+
+
 import { useI18n } from "vue-i18n"
 import LocalPane from "@/components/sftp/LocalPane.vue"
 import { useLocalFilesPin } from "@/composables/useLocalFilesPin"
@@ -208,7 +214,7 @@ async function onDrop(e: DragEvent) {
       />
       <header class="panel-header">
         <div class="header-title">
-          <NIcon :size="16"><FolderOpenOutline /></NIcon>
+          <NIcon :size="16"><RiFolderOpenLine /></NIcon>
           <span class="drawer-title">{{ t("terminal.activityBar.localFiles") }}</span>
           <span v-if="tabTitle" class="drawer-subtitle" :title="tabTitle">{{ tabTitle }}</span>
         </div>
@@ -224,7 +230,7 @@ async function onDrop(e: DragEvent) {
               >
                 <template #icon>
                   <NIcon>
-                    <component :is="pinned ? PushpinFilled : PushpinOutlined" />
+                    <component :is="pinned ? RiPushpinFill : RiPushpinLine" />
                   </NIcon>
                 </template>
               </NButton>
@@ -239,7 +245,7 @@ async function onDrop(e: DragEvent) {
             @click="onClose"
           >
             <template #icon>
-              <NIcon><CloseOutline /></NIcon>
+              <NIcon><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </div>
@@ -259,7 +265,7 @@ async function onDrop(e: DragEvent) {
 
       <!-- OS 拖入高亮遮罩 -->
       <div v-if="dropHover" class="drop-overlay">
-        <NIcon :size="28"><FolderOpenOutline /></NIcon>
+        <NIcon :size="28"><RiFolderOpenLine /></NIcon>
         <p>{{ t("sftp.localPane.dropToImport") }}</p>
       </div>
     </aside>

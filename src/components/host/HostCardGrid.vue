@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import {
+  RiPushpinFill,
+  RiTerminalBoxLine,
+} from "@remixicon/vue"
 import { NCheckbox, NIcon } from "naive-ui"
-import { TerminalOutline } from "@vicons/ionicons5"
-import { PushpinFilled } from "@vicons/antd"
+
+
 import { computed } from "vue"
 import { useI18n } from "vue-i18n"
 import type { HostNode } from "@/types"
@@ -121,7 +125,7 @@ function onMousedown(e: MouseEvent) {
           :style="{ background: `color-mix(in srgb, ${colorOf(node)} 14%, transparent)` }"
         >
           <img v-if="iconUrlOf(node)" :src="iconUrlOf(node)!" alt="" draggable="false" />
-          <NIcon v-else :size="20" :color="colorOf(node)"><TerminalOutline /></NIcon>
+          <NIcon v-else :size="20" :color="colorOf(node)"><RiTerminalBoxLine /></NIcon>
         </span>
         <i
           v-if="sessionStatusOf(node)"
@@ -148,7 +152,7 @@ function onMousedown(e: MouseEvent) {
           {{ node.protocol }}
         </span>
         <NIcon v-if="isPinned(node) && !batchMode" :size="12" color="#7c5cff">
-          <PushpinFilled />
+          <RiPushpinFill />
         </NIcon>
         <NCheckbox
           v-else-if="batchMode"

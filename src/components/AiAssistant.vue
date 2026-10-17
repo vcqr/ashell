@@ -1,4 +1,23 @@
 <script setup lang="ts">
+import {
+  RiArrowDownSLine,
+  RiBookmarkLine,
+  RiCloseLine,
+  RiDeleteBinLine,
+  RiExternalLinkLine,
+  RiFileCopyLine,
+  RiPushpinFill,
+  RiPushpinLine,
+  RiRefreshLine,
+  RiSendPlaneLine,
+  RiSettingsLine,
+  RiSparklingLine,
+  RiStarFill,
+  RiStarLine,
+  RiStopCircleLine,
+  RiToolsLine,
+  RiUserLine,
+} from "@remixicon/vue";
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, watchEffect } from "vue";
 import { storeToRefs } from "pinia";
 import type { UnlistenFn } from "@/utils/eventBus";
@@ -22,24 +41,8 @@ import {
   NSelect,
   useMessage,
 } from "naive-ui";
-import {
-  SendOutline,
-  SparklesOutline,
-  PersonOutline,
-  RefreshOutline,
-  CloseOutline,
-  StopCircleOutline,
-  BuildOutline,
-  ChevronDownOutline,
-  StarOutline,
-  Star,
-  BookmarkOutline,
-  TrashOutline,
-  OpenOutline,
-  CopyOutline,
-  SettingsOutline,
-} from "@vicons/ionicons5";
-import { PushpinFilled, PushpinOutlined } from "@vicons/antd";
+
+
 import { copyText as copyToClipboard } from "@/utils/clipboard";
 import { useI18n } from "vue-i18n";
 import type { ChatMessage, ProcessStep } from "@/types";
@@ -1005,7 +1008,7 @@ defineExpose({
       <header v-if="!props.standalone" class="panel-header">
         <NSpace align="center" :size="10">
           <div class="ai-avatar">
-            <NIcon :size="16"><SparklesOutline /></NIcon>
+            <NIcon :size="16"><RiSparklingLine /></NIcon>
           </div>
           <div>
             <div class="title">{{ t("ai.title") }}</div>
@@ -1023,7 +1026,7 @@ defineExpose({
           >
             <template #icon>
               <NIcon>
-                <component :is="aiPinned ? PushpinFilled : PushpinOutlined" />
+                <component :is="aiPinned ? RiPushpinFill : RiPushpinLine" />
               </NIcon>
             </template>
           </NButton>
@@ -1035,7 +1038,7 @@ defineExpose({
             @click="handleNewChat"
           >
             <template #icon>
-              <NIcon><RefreshOutline /></NIcon>
+              <NIcon><RiRefreshLine /></NIcon>
             </template>
           </NButton>
           <NButton
@@ -1048,12 +1051,12 @@ defineExpose({
             @click="openInStandaloneWindow"
           >
             <template #icon>
-              <NIcon><OpenOutline /></NIcon>
+              <NIcon><RiExternalLinkLine /></NIcon>
             </template>
           </NButton>
           <NButton quaternary circle size="small" :title="t('ai.close')" @click="close">
             <template #icon>
-              <NIcon><CloseOutline /></NIcon>
+              <NIcon><RiCloseLine /></NIcon>
             </template>
           </NButton>
         </NSpace>
@@ -1074,7 +1077,7 @@ defineExpose({
               :class="{ pulse: setupPulse }"
             >
               <div class="setup-head">
-                <NIcon :size="14"><SettingsOutline /></NIcon>
+                <NIcon :size="14"><RiSettingsLine /></NIcon>
                 <span>{{ t("ai.setup.title") }}</span>
               </div>
               <p class="setup-desc">{{ t("ai.setup.desc") }}</p>
@@ -1131,13 +1134,13 @@ defineExpose({
                 size="small"
                 class="bubble-avatar assistant-avatar"
               >
-                <NIcon><SparklesOutline /></NIcon>
+                <NIcon><RiSparklingLine /></NIcon>
               </NAvatar>
               <div class="bubble" :class="{ streaming: m.isStreaming }">
                 <template v-if="m.isProcess && m.processSteps">
                   <details class="process-block">
                     <summary class="process-summary">
-                      <NIcon :size="12" class="process-icon"><BuildOutline /></NIcon>
+                      <NIcon :size="12" class="process-icon"><RiToolsLine /></NIcon>
                       <span class="process-summary-text">{{ processSummary(m.processSteps) }}</span>
                       <span class="process-count">{{ m.processSteps.length }}</span>
                     </summary>
@@ -1183,8 +1186,8 @@ defineExpose({
                     @click="toggleFavorite(m.content)"
                   >
                     <NIcon :size="11">
-                      <Star v-if="phraseStore.isFavorited(m.content)" />
-                      <StarOutline v-else />
+                      <RiStarFill v-if="phraseStore.isFavorited(m.content)" />
+                      <RiStarLine v-else />
                     </NIcon>
                   </button>
                   <button
@@ -1193,7 +1196,7 @@ defineExpose({
                     :title="t('common.copy')"
                     @click="copyText(m.content)"
                   >
-                    <NIcon :size="11"><CopyOutline /></NIcon>
+                    <NIcon :size="11"><RiFileCopyLine /></NIcon>
                   </button>
                 </div>
               </div>
@@ -1203,7 +1206,7 @@ defineExpose({
                 size="small"
                 class="bubble-avatar user-avatar"
               >
-                <NIcon><PersonOutline /></NIcon>
+                <NIcon><RiUserLine /></NIcon>
               </NAvatar>
             </div>
 
@@ -1212,7 +1215,7 @@ defineExpose({
               class="msg assistant"
             >
               <NAvatar round size="small" class="bubble-avatar assistant-avatar">
-                <NIcon><SparklesOutline /></NIcon>
+                <NIcon><RiSparklingLine /></NIcon>
               </NAvatar>
               <div class="bubble typing">
                 <span class="dot" /><span class="dot" /><span class="dot" />
@@ -1241,7 +1244,7 @@ defineExpose({
             :title="t('ai.regenerate')"
             @click="handleRegenerate"
           >
-            <NIcon :size="13"><RefreshOutline /></NIcon>
+            <NIcon :size="13"><RiRefreshLine /></NIcon>
           </NButton>
           <NDropdown
             trigger="click"
@@ -1263,7 +1266,7 @@ defineExpose({
                 </template>
                 <template v-else>{{ t("ai.providerSwitch.noProvider") }}</template>
               </span>
-              <NIcon :size="12" style="margin-left: 2px"><ChevronDownOutline /></NIcon>
+              <NIcon :size="12" style="margin-left: 2px"><RiArrowDownSLine /></NIcon>
             </NButton>
           </NDropdown>
 
@@ -1275,7 +1278,7 @@ defineExpose({
                 :title="t('ai.quickPhrases.title')"
                 style="margin-left: auto"
               >
-                <NIcon :size="14"><BookmarkOutline /></NIcon>
+                <NIcon :size="14"><RiBookmarkLine /></NIcon>
               </NButton>
             </template>
             <div class="phrases-panel">
@@ -1309,7 +1312,7 @@ defineExpose({
                       :title="t('ai.quickPhrases.delete')"
                       @click="phraseStore.remove(p.id)"
                     >
-                      <NIcon :size="12"><TrashOutline /></NIcon>
+                      <NIcon :size="12"><RiDeleteBinLine /></NIcon>
                     </button>
                   </div>
                 </div>
@@ -1335,7 +1338,7 @@ defineExpose({
             @click="sendMessage"
           >
             <template #icon>
-              <NIcon><SendOutline /></NIcon>
+              <NIcon><RiSendPlaneLine /></NIcon>
             </template>
           </NButton>
           <NButton
@@ -1345,7 +1348,7 @@ defineExpose({
             @click="handleStopSession"
           >
             <template #icon>
-              <NIcon><StopCircleOutline /></NIcon>
+              <NIcon><RiStopCircleLine /></NIcon>
             </template>
           </NButton>
         </div>

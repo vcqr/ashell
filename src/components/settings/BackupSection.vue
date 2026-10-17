@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import {
+  RiCloudLine,
+  RiDownloadLine,
+  RiFolderOpenLine,
+  RiRefreshLine,
+  RiSaveLine,
+  RiUploadCloudLine,
+} from "@remixicon/vue";
 import { ref, reactive, onMounted } from "vue";
 import {
   NForm,
@@ -14,14 +22,7 @@ import {
   NCard,
   useMessage,
 } from "naive-ui";
-import {
-  CloudUploadOutline,
-  DownloadOutline,
-  FolderOpenOutline,
-  SaveOutline,
-  CloudOutline,
-  RefreshOutline,
-} from "@vicons/ionicons5";
+
 import { useI18n } from "vue-i18n";
 import { openTextFile, saveTextFile } from "@/utils/fileInterop";
 import {
@@ -341,11 +342,11 @@ function formatTime(timestamp: string): string {
       <p class="settings-hint">{{ t("settings.backup.pathPrefixHint") }}</p>
       <div class="form-row" style="margin-top: 12px">
         <NButton size="small" :loading="saving" @click="handleSave">
-          <template #icon><NIcon><SaveOutline /></NIcon></template>
+          <template #icon><NIcon><RiSaveLine /></NIcon></template>
           {{ t("settings.backup.saveConfig") }}
         </NButton>
         <NButton size="small" :loading="testing" @click="handleTest">
-          <template #icon><NIcon><CloudOutline /></NIcon></template>
+          <template #icon><NIcon><RiCloudLine /></NIcon></template>
           {{ t("settings.backup.testConnection") }}
         </NButton>
       </div>
@@ -355,15 +356,15 @@ function formatTime(timestamp: string): string {
       <p class="settings-hint">{{ t("settings.backup.credentialHint") }}</p>
       <div class="form-row" style="margin-top: 12px">
         <NButton type="primary" size="small" :loading="backing" @click="handleBackup">
-          <template #icon><NIcon><CloudUploadOutline /></NIcon></template>
+          <template #icon><NIcon><RiUploadCloudLine /></NIcon></template>
           {{ t("settings.backup.createBackup") }}
         </NButton>
         <NButton size="small" :loading="exporting" @click="handleExport">
-          <template #icon><NIcon><DownloadOutline /></NIcon></template>
+          <template #icon><NIcon><RiDownloadLine /></NIcon></template>
           {{ t("settings.backup.exportLocal") }}
         </NButton>
         <NButton size="small" :loading="importing" @click="handleImport">
-          <template #icon><NIcon><FolderOpenOutline /></NIcon></template>
+          <template #icon><NIcon><RiFolderOpenLine /></NIcon></template>
           {{ t("settings.backup.importLocal") }}
         </NButton>
       </div>
@@ -371,7 +372,7 @@ function formatTime(timestamp: string): string {
       <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.backup.historyTitle") }}</div>
       <div class="history-header" style="margin-top: 12px">
         <NButton quaternary size="tiny" :loading="loading" @click="loadBackups">
-          <template #icon><NIcon><RefreshOutline /></NIcon></template>
+          <template #icon><NIcon><RiRefreshLine /></NIcon></template>
           {{ t("settings.backup.refresh") }}
         </NButton>
       </div>

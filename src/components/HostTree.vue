@@ -1,4 +1,31 @@
 <script setup lang="ts">
+import {
+  RiAddCircleLine,
+  RiAddLine,
+  RiArrowUpDownLine,
+  RiCheckboxLine,
+  RiCheckLine,
+  RiCloseLine,
+  RiCollapseDiagonalLine,
+  RiDeleteBinLine,
+  RiDownloadLine,
+  RiEditLine,
+  RiExpandDiagonalLine,
+  RiFileCopyLine,
+  RiFolderAddLine,
+  RiFolderFill,
+  RiFolderOpenFill,
+  RiGridLine,
+  RiLink,
+  RiListUnordered,
+  RiNodeTree,
+  RiPushpinFill,
+  RiPushpinLine,
+  RiRefreshLine,
+  RiSearchLine,
+  RiServerLine,
+  RiTerminalBoxLine,
+} from "@remixicon/vue"
 import { computed, h, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NTree,
@@ -20,30 +47,9 @@ import {
   type TreeSelectOption,
   type DropdownOption,
 } from "naive-ui"
-import {
-  TerminalOutline,
-  AddOutline,
-  RefreshOutline,
-  CreateOutline,
-  TrashOutline,
-  SearchOutline,
-  CloseOutline,
-  CopyOutline,
-  ServerOutline,
-  DownloadOutline,
-  AddCircleOutline,
-  ListOutline,
-  ExpandOutline,
-  ContractOutline,
-  LinkOutline,
-  SwapVerticalOutline,
-  CheckmarkOutline,
-  CheckboxOutline,
-  GridOutline,
-  GitNetworkOutline,
-} from "@vicons/ionicons5"
-import { Folder, FolderOpen } from "@vicons/fa"
-import { FolderAddOutlined, PushpinFilled, PushpinOutlined } from "@vicons/antd"
+
+
+
 import { useI18n } from "vue-i18n"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
@@ -280,7 +286,7 @@ function renderPrefix({ option }: { option: TreeOption }) {
     return h(
       NIcon,
       { color: "#f1c27d", size: 16 },
-      { default: () => h(expanded ? FolderOpen : Folder) },
+      { default: () => h(expanded ? RiFolderOpenFill : RiFolderFill) },
     )
   }
   const iconUrl = node.icon ? iconStore.urlOf(node.icon) : null
@@ -296,7 +302,7 @@ function renderPrefix({ option }: { option: TreeOption }) {
           verticalAlign: "middle",
         },
       })
-    : h(NIcon, { color, size: 16 }, { default: () => h(TerminalOutline) })
+    : h(NIcon, { color, size: 16 }, { default: () => h(RiTerminalBoxLine) })
   // 有会话的主机:图标右下角叠状态点(绿=活连接/琥珀=连接中/红=错误/灰=已断开)
   const status = hostSessionStatus?.value.get(node.id)
   if (!status) return iconEl
@@ -330,7 +336,7 @@ function renderSuffix({ option }: { option: TreeOption }) {
       ? h(
           NIcon,
           { class: "node-pin", size: 12, color: "#7c5cff" },
-          { default: () => h(PushpinFilled) },
+          { default: () => h(RiPushpinFill) },
         )
       : null,
     text
@@ -720,16 +726,16 @@ function renderMenuIcon(comp: unknown) {
 
 /* ---------- 视图切换菜单（与排序子菜单同款式：当前项打勾） ---------- */
 const viewModeMeta = {
-  tree: { label: "hosts.tree.treeView", icon: GitNetworkOutline },
-  flat: { label: "hosts.tree.flatView", icon: ListOutline },
-  card: { label: "hosts.tree.cardView", icon: GridOutline },
+  tree: { label: "hosts.tree.treeView", icon: RiNodeTree },
+  flat: { label: "hosts.tree.flatView", icon: RiListUnordered },
+  card: { label: "hosts.tree.cardView", icon: RiGridLine },
 } as const
 
 const viewModeOptions = computed<DropdownOption[]>(() =>
   (Object.keys(viewModeMeta) as Array<keyof typeof viewModeMeta>).map((m) => ({
     label: t(viewModeMeta[m].label),
     key: m,
-    icon: renderMenuIcon(viewMode.value === m ? CheckmarkOutline : viewModeMeta[m].icon),
+    icon: renderMenuIcon(viewMode.value === m ? RiCheckLine : viewModeMeta[m].icon),
   })),
 )
 
@@ -751,36 +757,36 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       {
         label: t("hosts.ctxMenu.newHost"),
         key: "new-host",
-        icon: renderMenuIcon(ServerOutline),
+        icon: renderMenuIcon(RiServerLine),
       },
       {
         label: t("hosts.tree.newFolder"),
         key: "new-folder",
-        icon: renderMenuIcon(FolderAddOutlined),
+        icon: renderMenuIcon(RiFolderAddLine),
       },
       { type: "divider", key: "d-blank-1" },
       {
         label: t("hosts.tree.importSshConfig"),
         key: "import-ssh",
-        icon: renderMenuIcon(DownloadOutline),
+        icon: renderMenuIcon(RiDownloadLine),
       },
       {
         label: t("hosts.tree.refresh"),
         key: "refresh",
-        icon: renderMenuIcon(RefreshOutline),
+        icon: renderMenuIcon(RiRefreshLine),
       },
       { type: "divider", key: "d-blank-2" },
       {
         label: t("hosts.tree.sort"),
         key: "sort",
-        icon: renderMenuIcon(SwapVerticalOutline),
+        icon: renderMenuIcon(RiArrowUpDownLine),
         children: [
           {
             label: t("hosts.tree.sortByName"),
             key: "sort-name",
             icon:
               store.hostSortMode === "name"
-                ? renderMenuIcon(CheckmarkOutline)
+                ? renderMenuIcon(RiCheckLine)
                 : undefined,
           },
           {
@@ -788,7 +794,7 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
             key: "sort-addr",
             icon:
               store.hostSortMode === "addr"
-                ? renderMenuIcon(CheckmarkOutline)
+                ? renderMenuIcon(RiCheckLine)
                 : undefined,
           },
         ],
@@ -796,14 +802,14 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       {
         label: t("hosts.tree.viewMode"),
         key: "view-mode",
-        icon: renderMenuIcon(GridOutline),
+        icon: renderMenuIcon(RiGridLine),
         children: (Object.keys(viewModeMeta) as Array<keyof typeof viewModeMeta>).map(
           (m) => ({
             label: t(viewModeMeta[m].label),
             key: `view-${m}`,
             icon:
               viewMode.value === m
-                ? renderMenuIcon(CheckmarkOutline)
+                ? renderMenuIcon(RiCheckLine)
                 : renderMenuIcon(viewModeMeta[m].icon),
           }),
         ),
@@ -816,23 +822,23 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       {
         label: t("hosts.ctxMenu.newSubFolder"),
         key: "new-folder",
-        icon: renderMenuIcon(FolderAddOutlined),
+        icon: renderMenuIcon(RiFolderAddLine),
       },
       {
         label: t("hosts.ctxMenu.newHost"),
         key: "new-host",
-        icon: renderMenuIcon(ServerOutline),
+        icon: renderMenuIcon(RiServerLine),
       },
       { type: "divider", key: "d1" },
       {
         label: t("hosts.ctxMenu.rename"),
         key: "rename",
-        icon: renderMenuIcon(CreateOutline),
+        icon: renderMenuIcon(RiEditLine),
       },
       {
         label: t("hosts.ctxMenu.delete"),
         key: "delete",
-        icon: renderMenuIcon(TrashOutline),
+        icon: renderMenuIcon(RiDeleteBinLine),
       },
     )
   } else {
@@ -840,34 +846,34 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
       {
         label: t("hosts.ctxMenu.openTerminal"),
         key: "open",
-        icon: renderMenuIcon(TerminalOutline),
+        icon: renderMenuIcon(RiTerminalBoxLine),
       },
       {
         label: t("hosts.ctxMenu.newSession"),
         key: "open-new",
-        icon: renderMenuIcon(AddOutline),
+        icon: renderMenuIcon(RiAddLine),
       },
       { type: "divider", key: "d0" },
-      { label: t("hosts.ctxMenu.edit"), key: "edit", icon: renderMenuIcon(CreateOutline) },
+      { label: t("hosts.ctxMenu.edit"), key: "edit", icon: renderMenuIcon(RiEditLine) },
       {
         label: t("hosts.ctxMenu.copyConn"),
         key: "copy-conn",
-        icon: renderMenuIcon(LinkOutline),
+        icon: renderMenuIcon(RiLink),
       },
-      { label: t("hosts.ctxMenu.copy"), key: "copy", icon: renderMenuIcon(CopyOutline) },
+      { label: t("hosts.ctxMenu.copy"), key: "copy", icon: renderMenuIcon(RiFileCopyLine) },
       {
         label: store.isHostPinned(node.id)
           ? t("hosts.ctxMenu.unpinTop")
           : t("hosts.ctxMenu.pinTop"),
         key: "pin-top",
         icon: renderMenuIcon(
-          store.isHostPinned(node.id) ? PushpinFilled : PushpinOutlined,
+          store.isHostPinned(node.id) ? RiPushpinFill : RiPushpinLine,
         ),
       },
       {
         label: t("hosts.ctxMenu.delete"),
         key: "delete",
-        icon: renderMenuIcon(TrashOutline),
+        icon: renderMenuIcon(RiDeleteBinLine),
       },
     )
   }
@@ -1236,7 +1242,7 @@ async function onRefresh() {
               @click="newHostAtSelection"
             >
               <template #icon>
-                <NIcon :size="20"><AddCircleOutline /></NIcon>
+                <NIcon :size="20"><RiAddCircleLine /></NIcon>
               </template>
             </NButton>
           </template>
@@ -1251,7 +1257,7 @@ async function onRefresh() {
               @click="newFolderAtSelection"
             >
               <template #icon>
-                <NIcon :size="20"><FolderAddOutlined /></NIcon>
+                <NIcon :size="20"><RiFolderAddLine /></NIcon>
               </template>
             </NButton>
           </template>
@@ -1267,7 +1273,7 @@ async function onRefresh() {
               @click="batchMode = !batchMode"
             >
               <template #icon>
-                <NIcon :size="20"><CheckboxOutline /></NIcon>
+                <NIcon :size="20"><RiCheckboxLine /></NIcon>
               </template>
             </NButton>
           </template>
@@ -1284,7 +1290,7 @@ async function onRefresh() {
             >
               <template #icon>
                 <NIcon :size="18">
-                  <component :is="hostsPinned ? PushpinFilled : PushpinOutlined" />
+                  <component :is="hostsPinned ? RiPushpinFill : RiPushpinLine" />
                 </NIcon>
               </template>
             </NButton>
@@ -1300,7 +1306,7 @@ async function onRefresh() {
               @click="emit('close')"
             >
               <template #icon>
-                <NIcon :size="20"><CloseOutline /></NIcon>
+                <NIcon :size="20"><RiCloseLine /></NIcon>
               </template>
             </NButton>
           </template>
@@ -1319,7 +1325,7 @@ async function onRefresh() {
         @keydown.esc="onSearchEsc"
       >
         <template #prefix>
-          <NIcon><SearchOutline /></NIcon>
+          <NIcon><RiSearchLine /></NIcon>
         </template>
         <template #suffix>
           <NDropdown trigger="click" :options="viewModeOptions" @select="onViewModeSelect">
@@ -1352,7 +1358,7 @@ async function onRefresh() {
               >
                 <template #icon>
                   <NIcon :size="14">
-                    <component :is="allExpanded ? ContractOutline : ExpandOutline" />
+                    <component :is="allExpanded ? RiCollapseDiagonalLine : RiExpandDiagonalLine" />
                   </NIcon>
                 </template>
               </NButton>
@@ -1418,13 +1424,13 @@ async function onRefresh() {
           <div class="empty-actions">
             <NButton type="primary" size="small" @click="newHostAtSelection">
               <template #icon>
-                <NIcon><ServerOutline /></NIcon>
+                <NIcon><RiServerLine /></NIcon>
               </template>
               {{ t("hosts.ctxMenu.newHost") }}
             </NButton>
             <NButton size="small" @click="importModalShow = true">
               <template #icon>
-                <NIcon><DownloadOutline /></NIcon>
+                <NIcon><RiDownloadLine /></NIcon>
               </template>
               {{ t("hosts.tree.importSshConfig") }}
             </NButton>
@@ -1497,7 +1503,7 @@ async function onRefresh() {
         class="drag-ghost"
         :style="{ left: dragGhost.x + 12 + 'px', top: dragGhost.y + 12 + 'px' }"
       >
-        <NIcon :size="14" color="#7c5cff"><TerminalOutline /></NIcon>
+        <NIcon :size="14" color="#7c5cff"><RiTerminalBoxLine /></NIcon>
         <span>{{ dragGhost.label }}</span>
       </div>
     </Teleport>

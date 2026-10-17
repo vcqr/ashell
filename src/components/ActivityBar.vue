@@ -1,4 +1,13 @@
 <script setup lang="ts">
+import {
+  RiArrowLeftRightLine,
+  RiComputerLine,
+  RiCpuLine,
+  RiFolderOpenLine,
+  RiMegaphoneLine,
+  RiSparklingLine,
+  RiTerminalBoxLine,
+} from "@remixicon/vue"
 import { h } from "vue"
 import {
   NBadge,
@@ -7,15 +16,7 @@ import {
   NTooltip,
   useThemeVars,
 } from "naive-ui"
-import {
-  MegaphoneOutline,
-  DesktopOutline,
-  FolderOpenOutline,
-  HardwareChipOutline,
-  SwapHorizontalOutline,
-  SparklesOutline,
-  TerminalOutline,
-} from "@vicons/ionicons5"
+
 import { useI18n } from "vue-i18n"
 import { useBroadcastStore } from "@/stores/broadcast"
 import BroadcastPopover from "@/components/BroadcastPopover.vue"
@@ -97,7 +98,7 @@ function renderIcon(comp: unknown) {
                 color="#f59e0b"
                 processing
               >
-                <component :is="renderIcon(MegaphoneOutline)" />
+                <component :is="renderIcon(RiMegaphoneLine)" />
               </NBadge>
             </button>
           </template>
@@ -123,7 +124,7 @@ function renderIcon(comp: unknown) {
           :disabled="!hasTerminalSession"
           @click="emit('toggle-template')"
         >
-          <component :is="renderIcon(TerminalOutline)" />
+          <component :is="renderIcon(RiTerminalBoxLine)" />
         </button>
       </template>
       {{ hasTerminalSession ? t("terminal.activityBar.templates") : t("terminal.activityBar.templatesDisabled") }}
@@ -139,7 +140,7 @@ function renderIcon(comp: unknown) {
           type="button"
           @click="emit('toggle-local-files')"
         >
-          <component :is="renderIcon(DesktopOutline)" />
+          <component :is="renderIcon(RiComputerLine)" />
         </button>
       </template>
       {{ t("terminal.activityBar.localFiles") }}
@@ -154,7 +155,7 @@ function renderIcon(comp: unknown) {
           :disabled="!hasActiveSession"
           @click="emit('toggle-sftp')"
         >
-          <component :is="renderIcon(FolderOpenOutline)" />
+          <component :is="renderIcon(RiFolderOpenLine)" />
         </button>
       </template>
       {{ hasActiveSession ? t("terminal.activityBar.sftp") : t("terminal.activityBar.sftpDisabled") }}
@@ -170,7 +171,7 @@ function renderIcon(comp: unknown) {
           :disabled="!hasActiveSession"
           @click="emit('toggle-host-info')"
         >
-          <component :is="renderIcon(HardwareChipOutline)" />
+          <component :is="renderIcon(RiCpuLine)" />
         </button>
       </template>
       {{ hasActiveSession ? t("terminal.activityBar.hostInfo") : t("terminal.activityBar.hostInfoDisabled") }}
@@ -186,7 +187,7 @@ function renderIcon(comp: unknown) {
           :disabled="!hasActiveSession"
           @click="emit('toggle-forward')"
         >
-          <component :is="renderIcon(SwapHorizontalOutline)" />
+          <component :is="renderIcon(RiArrowLeftRightLine)" />
         </button>
       </template>
       {{ hasActiveSession ? t("terminal.activityBar.forward") : t("terminal.activityBar.forwardDisabled") }}
@@ -202,7 +203,7 @@ function renderIcon(comp: unknown) {
           :disabled="!hasAiSession"
           @click="emit('toggle-ai')"
         >
-          <component :is="renderIcon(SparklesOutline)" />
+          <component :is="renderIcon(RiSparklingLine)" />
         </button>
       </template>
       {{ hasAiSession ? t("terminal.activityBar.ai") : t("terminal.activityBar.aiDisabled") }}
