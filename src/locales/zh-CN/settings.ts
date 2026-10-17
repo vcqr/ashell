@@ -275,7 +275,7 @@ export default {
       active: "当前引擎",
       provider: "关联模型供应商",
       providerPlaceholder: "选择模型供应商（可在「模型供应商」分区新增）",
-      thinkingLevel: "Thinking Level",
+      thinkingLevel: "思考等级",
       hint: "引擎、模型供应商与模型配置即时写入，下一个新会话生效；进行中的会话不受影响。",
     },
     claudePath: "Claude Code 路径",

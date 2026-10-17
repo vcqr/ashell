@@ -14,7 +14,7 @@ export default {
   new: "新建",
   edit: "编辑",
   loading: "加载中…",
-  unknown: "unknown",
+  unknown: "未知",
   operationSuccess: "操作成功",
   operationFailed: "操作失败",
   loadFailed: "加载失败",
