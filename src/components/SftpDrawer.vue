@@ -14,9 +14,11 @@ import {
   RiExternalLinkLine,
   RiEyeLine,
   RiEyeOffLine,
+  RiFileAddLine,
   RiFileCopyLine,
   RiFileTextLine,
   RiFocus3Line,
+  RiFolderAddLine,
   RiFolderOpenLine,
   RiMacbookLine,
   RiRefreshLine,
@@ -2300,12 +2302,12 @@ const ctxMenuOptions = computed(() => {
       {
         label: t("sftp.ctxMenu.newFolder"),
         key: "new-mkdir",
-        icon: () => h(NIcon, null, { default: () => h(RiFolderOpenLine) }),
+        icon: () => h(NIcon, null, { default: () => h(RiFolderAddLine) }),
       },
       {
         label: t("sftp.ctxMenu.newFile"),
         key: "new-touch",
-        icon: () => h(NIcon, null, { default: () => h(RiFileTextLine) }),
+        icon: () => h(NIcon, null, { default: () => h(RiFileAddLine) }),
       },
     ]
     if (remoteClipboard.value) {
@@ -2579,7 +2581,7 @@ const newMenuOptions = computed(() => [
   {
     label: t("sftp.newMenu.newFile"),
     key: "touch",
-    icon: () => h(NIcon, null, { default: () => h(RiFileTextLine) }),
+    icon: () => h(NIcon, null, { default: () => h(RiFileAddLine) }),
   },
 ])
 

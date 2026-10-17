@@ -9,10 +9,10 @@ import {
   RiExternalLinkLine,
   RiEyeLine,
   RiEyeOffLine,
+  RiFileAddLine,
   RiFileCopyLine,
-  RiFileLine,
   RiFocus3Line,
-  RiFolderLine,
+  RiFolderAddLine,
   RiFolderOpenLine,
   RiHardDrive2Line,
   RiHomeLine,
@@ -551,12 +551,12 @@ const ctxMenuOptions = computed<DropdownOption[]>(() => {
         {
           key: "local-mkdir",
           label: t("sftp.ctxMenu.newFolder"),
-          icon: () => h(NIcon, null, () => h(RiFolderLine)),
+          icon: () => h(NIcon, null, () => h(RiFolderAddLine)),
         },
         {
           key: "local-touch",
           label: t("sftp.ctxMenu.newFile"),
-          icon: () => h(NIcon, null, () => h(RiFileLine)),
+          icon: () => h(NIcon, null, () => h(RiFileAddLine)),
         },
       )
       if (localClipboard.value) {
@@ -1282,7 +1282,7 @@ onMounted(() => {
         @click="openLocalMkdir"
       >
         <template #icon>
-          <NIcon><RiFolderLine /></NIcon>
+          <NIcon><RiFolderAddLine /></NIcon>
         </template>
       </NButton>
       <NButton
@@ -1294,7 +1294,7 @@ onMounted(() => {
         @click="openLocalTouch"
       >
         <template #icon>
-          <NIcon><RiFileLine /></NIcon>
+          <NIcon><RiFileAddLine /></NIcon>
         </template>
       </NButton>
       <NButton
