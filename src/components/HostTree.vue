@@ -1242,7 +1242,7 @@ async function onRefresh() {
               @click="newHostAtSelection"
             >
               <template #icon>
-                <NIcon :size="20"><RiAddCircleLine /></NIcon>
+                <NIcon :size="16"><RiAddCircleLine /></NIcon>
               </template>
             </NButton>
           </template>
@@ -1257,7 +1257,7 @@ async function onRefresh() {
               @click="newFolderAtSelection"
             >
               <template #icon>
-                <NIcon :size="20"><RiFolderAddLine /></NIcon>
+                <NIcon :size="16"><RiFolderAddLine /></NIcon>
               </template>
             </NButton>
           </template>
@@ -1273,7 +1273,7 @@ async function onRefresh() {
               @click="batchMode = !batchMode"
             >
               <template #icon>
-                <NIcon :size="20"><RiCheckboxLine /></NIcon>
+                <NIcon :size="16"><RiCheckboxLine /></NIcon>
               </template>
             </NButton>
           </template>
@@ -1289,7 +1289,7 @@ async function onRefresh() {
               @click="hostsPinned = !hostsPinned"
             >
               <template #icon>
-                <NIcon :size="18">
+                <NIcon :size="16">
                   <component :is="hostsPinned ? RiPushpinFill : RiPushpinLine" />
                 </NIcon>
               </template>
@@ -1306,7 +1306,7 @@ async function onRefresh() {
               @click="emit('close')"
             >
               <template #icon>
-                <NIcon :size="20"><RiCloseLine /></NIcon>
+                <NIcon :size="16"><RiCloseLine /></NIcon>
               </template>
             </NButton>
           </template>

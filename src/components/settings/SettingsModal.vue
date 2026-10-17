@@ -170,7 +170,7 @@ function close() {
               type="button"
               @click="activeTab = item.key"
             >
-              <NIcon :size="15" class="settings-tab-icon">
+              <NIcon :size="18" class="settings-tab-icon">
                 <component :is="item.icon" />
               </NIcon>
               {{ t(`settings.tabs.${item.key}`) }}
