@@ -409,11 +409,69 @@ fn telemetry_line_zsh(cwd_report: bool) -> String {
 const SHELL_PROBE: &str = "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null";
 
 /// sh 家族（dash/ash/ksh 等无 per-prompt 钩子机制的 POSIX shell）的完成
-/// 上报行：send_handler 在命令后独立成行注入，`$?` 即上一条命令的退出码。
-/// 独立成行而非拼接命令尾部：多行脚本、heredoc 均不受影响。该行的回显由
-/// 中继层无上限剥离器从终端视图与 AI 副本同时剥掉（用户看不见，与钩子行
-/// 同等待遇）。POSIX printf 保证 dash/ash/ksh 可用。
+/// 上报后缀：并入 AI 命令最后一个非空行执行，`$?` 即该命令的退出码。
+/// 不独立成行——独立行会多消耗一次提示符周期，用户终端每条 AI 命令后
+/// 多出一个空提示符行。回显中的该后缀由中继层无上限剥离器剥掉，终端
+/// 只显示命令本身。POSIX printf 保证 dash/ash/ksh 可用。
+const MARKER_SUFFIX: &str = "; printf '\\033]9;10;%s\\007' \"$?\"";
+
+/// 后缀无法并入时的退路（末行疑似 heredoc 终止符等）：独立成行注入，
+/// 代价是多一次提示符周期（终端多一个空提示符行）。
 const SH_MARKER_LINE: &str = " printf '\\033]9;10;%s\\007' \"$?\"\n";
+
+/// 将上报后缀并入 body 最后一个非空命令行。返回 None 表示不可并入：
+/// body 无可依附的命令行，或末行疑似 heredoc 终止符（body 含 `<<` 且
+/// 末行为裸词——并入会破坏终止符匹配导致 shell 挂起）。其余边角
+/// （末行以续行符/悬空操作符收尾等）会产生语法错误 → 无完成事件 →
+/// deadline 兜底，可接受。
+fn merge_marker(body: &str) -> Option<String> {
+    let trimmed = body.trim_end_matches('\n');
+    let mut last_idx = None;
+    for (i, line) in trimmed.lines().enumerate() {
+        if !line.trim().is_empty() {
+            last_idx = Some(i);
+        }
+    }
+    let idx = last_idx?;
+    let last = trimmed.lines().nth(idx)?;
+    let bare_word = !last.trim().is_empty()
+        && last.trim().len() <= 32
+        && last
+            .trim()
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-');
+    if body.contains("<<") && bare_word {
+        return None;
+    }
+    // 行尾分号是惰性的，剥掉避免出现 `;;` 语法错误
+    let clean = last.trim_end();
+    let clean = clean.strip_suffix(';').unwrap_or(clean);
+    let mut out = String::with_capacity(trimmed.len() + MARKER_SUFFIX.len());
+    for (i, line) in trimmed.lines().enumerate() {
+        if i == idx {
+            out.push_str(clean);
+            out.push_str(MARKER_SUFFIX);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    Some(out)
+}
+
+/// marker 会话单次注入的回显剥离目标：后缀并入式取后缀本身（保留命令
+/// 文本可见），独立上报行退路取整行；其余注入（悬空半行等）返回 None，
+/// 保持现有剥离器不动。
+fn marker_strip_target(data: &str) -> Option<&str> {
+    let last = data.trim_end_matches('\n').lines().last()?;
+    if last.ends_with(MARKER_SUFFIX) {
+        Some(MARKER_SUFFIX)
+    } else if last.trim() == SH_MARKER_LINE.trim() {
+        Some(SH_MARKER_LINE.trim())
+    } else {
+        None
+    }
+}
 
 /// 依据登录 shell 与 `/bin/sh` 软链目标决定完成信号方案：
 /// zsh/bash（含 /bin/sh→bash 的 bash-as-sh，POSIX 模式下 PROMPT_COMMAND
@@ -502,6 +560,11 @@ impl CwdEchoStripper {
             done: false,
             unbounded: true,
         }
+    }
+
+    /// 取走跨块扣留的尾巴（重置剥离器时冲刷，避免扣留字节丢失）
+    fn take_pending(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pending)
     }
 
     fn with_timeout(target: &str, timeout: Duration) -> Self {
@@ -994,12 +1057,14 @@ async fn run_terminal(
     // 经 cmd_tx 写入：中继循环启动后它是写进交互 channel 的第一笔数据，
     // 此时用户尚未来得及输入，不会与用户命令行交错。
     let mut cwd_echo_strip: Option<CwdEchoStripper> = None;
+    let mut marker_mode = false;
     match session_arc.execute(SHELL_PROBE).await {
         Ok(res) => {
             let mut lines = res.stdout.trim().lines();
             let shell = lines.next().unwrap_or("").trim();
             let binsh = lines.next().unwrap_or("").trim();
             let (line, mode) = resolve_completion(shell, binsh, q.cwd_report);
+            marker_mode = mode == ssh_svc::CompletionMode::Marker;
             if mode != ssh_svc::CompletionMode::None {
                 ssh_svc::set_terminal_completion(sid, mode).await;
             }
@@ -1012,12 +1077,9 @@ async fn run_terminal(
                     }
                     Err(e) => log::debug!("terminal sender missing for telemetry hook: {e}"),
                 }
-            } else if mode == ssh_svc::CompletionMode::Marker {
-                // marker 行每次 AI 注入都会回显一次：中继层用无上限剥离器把
-                // 它从终端视图与 AI 副本同时剥掉（send_handler 侧另有双保险）
-                cwd_echo_strip =
-                    Some(CwdEchoStripper::unbounded(SH_MARKER_LINE.trim_end_matches('\n')));
             }
+            // marker 会话不在此处武装：剥离目标随每次注入形态不同（后缀
+            // 并入式/独立上报行退路），由 cmd_rx 写入时按需重置
         }
         Err(e) => log::debug!("detect remote shell for telemetry hook failed: {e}"),
     }
@@ -1046,6 +1108,21 @@ async fn run_terminal(
             // 外部命令注入（POST /api/ssh/send/{sid}）
             Some(data) = cmd_rx.recv() => {
                 if channel.data(data.as_bytes()).await.is_err() { break; }
+                // marker 会话：按本次注入形态重置回显剥离目标——后缀并入式
+                // 只剥 `; printf …` 后缀（命令文本保留可见），独立上报行退路
+                // 剥整行
+                if marker_mode {
+                    if let Some(target) = marker_strip_target(&data) {
+                        if let Some(old) = cwd_echo_strip.as_mut() {
+                            let pending = old.take_pending();
+                            if !pending.is_empty() {
+                                let _ = output_tx.send(String::from_utf8_lossy(&pending).to_string());
+                                if ws_tx.send(Message::Binary(pending.into())).await.is_err() { break; }
+                            }
+                        }
+                        cwd_echo_strip = Some(CwdEchoStripper::unbounded(target));
+                    }
+                }
                 reset_idle(&mut idle_timer, idle_dur);
             }
             msg = ws_rx.next() => {
@@ -1580,26 +1657,40 @@ pub async fn send_handler(
     let output_tx = ssh_svc::get_terminal_output(&sid).await?;
     let mut rx = output_tx.subscribe();
     let tx = ssh_svc::get_terminal_sender(&sid).await?;
-    tx.send(body.clone())
-        .map_err(|_| crate::errors::AppError::Internal("terminal channel closed".into()))?;
 
     let mode = ssh_svc::get_terminal_completion(&sid).await;
     let hooked = mode == ssh_svc::CompletionMode::Hooked;
-    // 标记模式的上报行必须独立成行注入：body 以 \n 结尾（完整命令行）才安全，
-    // 悬空半行无法追加（会拼进续行），退化为静默兜底
-    let send_marker = mode == ssh_svc::CompletionMode::Marker
+    // marker 模式：上报后缀并入最后一个非空命令行（独立成行会多消耗一次
+    // 提示符周期，用户终端每条命令后多出空提示符行）。body 须以 \n 结尾
+    // （完整命令行才可依附）；末行疑似 heredoc 终止符等不可依附时退回
+    // 独立上报行；悬空半行 / 全空白 body 退化为静默兜底。
+    let mut send_marker = false;
+    let send_body: Vec<String> = if mode == ssh_svc::CompletionMode::Marker
         && body.ends_with('\n')
-        && !body.trim().is_empty();
+        && !body.trim().is_empty()
+    {
+        match merge_marker(&body) {
+            Some(merged) => {
+                send_marker = true;
+                vec![merged]
+            }
+            None => {
+                send_marker = true;
+                vec![body.clone(), SH_MARKER_LINE.to_string()]
+            }
+        }
+    } else {
+        vec![body.clone()]
+    };
     // 完成事件数预期：钩子模式 = 注入行数（每行执行完各出一次提示符/钩子）；
-    // 标记模式 = 1（仅追加的上报行发一次事件）
+    // 标记模式 = 1（上报后缀/上报行只发一次事件）
     let expected = if hooked { body.matches('\n').count().max(1) } else { 1 };
-    // 注入的命令与标记行都会被终端回显：武装剥离器在收集副本中移除
-    // （终端显示不受影响）
+    // 注入的命令会被终端回显：武装剥离器在收集副本中移除（终端显示不受
+    // 影响；marker 后缀已由中继层剥离，此处目标为原始命令行）
     let mut echo_stripper = CwdEchoStripper::new(body.trim_end_matches('\n'));
-    let mut marker_stripper = CwdEchoStripper::new(SH_MARKER_LINE.trim_end_matches('\n'));
     let mut scanner = CompletionScanner::new();
-    if send_marker {
-        tx.send(SH_MARKER_LINE.to_string())
+    for payload in &send_body {
+        tx.send(payload.clone())
             .map_err(|_| crate::errors::AppError::Internal("terminal channel closed".into()))?;
     }
     let mut raw = String::new();
@@ -1621,11 +1712,6 @@ pub async fn send_handler(
                 match msg {
                     Ok(chunk) => {
                         let cleaned = echo_stripper.feed(chunk.as_bytes());
-                        let cleaned = if send_marker {
-                            marker_stripper.feed(&cleaned)
-                        } else {
-                            cleaned
-                        };
                         if cleaned.is_empty() {
                             continue;
                         }
@@ -1830,5 +1916,53 @@ mod send_tests {
         assert!(s.feed(&[b'x'; 64]).starts_with(b"x"));
         assert!(s.feed(t).is_empty());
         assert!(s.feed(t).is_empty());
+    }
+
+    #[test]
+    fn merge_marker_appends_to_last_command_line() {
+        let merged = merge_marker("echo hello\n").unwrap();
+        assert_eq!(merged, format!("echo hello{MARKER_SUFFIX}\n"));
+        // 多行 body：后缀只依附最后一个非空行
+        assert_eq!(
+            merge_marker("echo a\necho hello\n").unwrap(),
+            format!("echo a\necho hello{MARKER_SUFFIX}\n")
+        );
+    }
+
+    #[test]
+    fn merge_marker_strips_trailing_semicolon_and_blank_lines() {
+        assert_eq!(
+            merge_marker("echo a;\n").unwrap(),
+            format!("echo a{MARKER_SUFFIX}\n")
+        );
+        assert_eq!(
+            merge_marker("echo a\n\n").unwrap(),
+            format!("echo a{MARKER_SUFFIX}\n")
+        );
+    }
+
+    #[test]
+    fn merge_marker_rejects_blank_body_and_heredoc_terminator() {
+        assert!(merge_marker("  \n\n").is_none());
+        // body 含 << 且末行为裸词：疑似 heredoc 终止符，不并入
+        assert!(merge_marker("cat <<EOF\nhi\nEOF\n").is_none());
+        // 无 << 时裸词末行正常并入
+        assert!(merge_marker("EOF\n").unwrap().contains(MARKER_SUFFIX));
+    }
+
+    #[test]
+    fn marker_strip_target_selects_by_payload_shape() {
+        // 后缀并入式：目标为后缀本身（命令文本保留可见）
+        assert_eq!(
+            marker_strip_target(&format!("echo hello{MARKER_SUFFIX}\n")),
+            Some(MARKER_SUFFIX)
+        );
+        // 独立上报行退路：目标为整行
+        assert_eq!(
+            marker_strip_target(SH_MARKER_LINE),
+            Some(SH_MARKER_LINE.trim())
+        );
+        // 非 marker 注入（悬空半行等）：不重置
+        assert_eq!(marker_strip_target("ls /tmp"), None);
     }
 }
