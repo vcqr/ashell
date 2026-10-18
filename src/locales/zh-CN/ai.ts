@@ -21,6 +21,7 @@ export default {
   welcome: "嗨！我是{name}，有什么需要我帮助的吗？",
   stopped: "已中断本次回复",
   startFailed: "AI 会话启动失败，请稍后重试",
+  scrollToBottom: "回到底部",
   toolRetDetail: "查看详情",
   cacheRatio: "缓存 {percent}%",
   ctxRatio: "上下文 {percent}%",

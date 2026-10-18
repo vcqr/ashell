@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  RiArrowDownLine,
   RiArrowDownSLine,
   RiBookmarkLine,
   RiCloseLine,
@@ -57,6 +58,7 @@ import { parseModelIds } from "@/composables/useAiConfig";
 import { useAiPin } from "@/composables/useAiPin";
 import { usePanelSwitchClosed } from "@/composables/usePanels";
 import { useDrawerWidth } from "@/composables/useDrawerWidth";
+import { useStickToBottom } from "@/composables/useStickToBottom";
 
 const props = defineProps<{
   open: boolean;
@@ -200,7 +202,7 @@ const setupPulse = ref(false);
 let setupPulseTimer: ReturnType<typeof setTimeout> | null = null;
 
 function attentionSetup() {
-  void nextTick(() => scrollbar.value?.scrollTo({ top: 0, behavior: "smooth" }));
+  void nextTick(() => scrollEl()?.scrollTo({ top: 0, behavior: "auto" }));
   setupPulse.value = true;
   if (setupPulseTimer) clearTimeout(setupPulseTimer);
   setupPulseTimer = setTimeout(() => (setupPulse.value = false), 1500);
@@ -332,7 +334,8 @@ const ASSISTANT_NAME = computed(() => t("ai.name"));
 const input = ref("");
 const showConfirmDialog = ref(false);
 const showPopupConfirmDialog = ref(false);
-const scrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
+/** 滚动区包装元素：贴底 composable 经它取 NScrollbar 内部滚动容器 */
+const scrollAreaEl = ref<HTMLElement | null>(null);
 
 /** 当前激活的 ssid（空字符串表示无终端） */
 const currentSsid = computed(() => props.sid ?? "");
@@ -447,9 +450,32 @@ function processSummary(steps: ProcessStep[] | undefined): string {
   return t("ai.process.count", { count });
 }
 
-function scrollBottom() {
-  nextTick(() => scrollbar.value?.scrollTo({ top: 1e9, behavior: "smooth" }));
-}
+// 贴底跟随：stick 状态机、瞬时滚动与内容增长 watcher 在 useStickToBottom
+const { stickBottom, onScroll: onChatScroll, scrollToBottom, scrollEl } =
+  useStickToBottom({
+    getEl: () =>
+      scrollAreaEl.value?.querySelector<HTMLElement>(".n-scrollbar-container") ??
+      null,
+    sources: () => [messages.value, isTyping.value],
+  });
+
+// 切换终端 tab / 重新打开面板：定位到新会话的最新消息并恢复跟随
+watch(
+  currentSsid,
+  () => {
+    scrollToBottom();
+  },
+  { flush: "post" },
+);
+
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) return;
+    scrollToBottom();
+  },
+  { flush: "post" },
+);
 
 function close() {
   // 独立窗口模式下"关闭"语义是关掉整个窗口
@@ -571,7 +597,7 @@ async function ensureSidecarFor(ssid: string) {
       content: t("ai.welcome", { name: ASSISTANT_NAME.value }),
       time: nowStr(),
     });
-    scrollBottom();
+    scrollToBottom();
   }
 }
 
@@ -594,7 +620,7 @@ function restoreHandoverHistory() {
     const parsed = JSON.parse(raw) as { messages?: ChatMessage[] };
     if (Array.isArray(parsed.messages) && parsed.messages.length > 0) {
       aiStore.hydrate(currentSsid.value, parsed.messages);
-      scrollBottom();
+      scrollToBottom();
     }
   } catch {
     // 历史损坏时降级为空白会话
@@ -722,7 +748,6 @@ function handleSidecarOutput(ssid: string, line: string) {
       time: nowStr(),
     };
     aiStore.appendProcessStep(ssid, step);
-    if (ssid === currentSsid.value) scrollBottom();
     return;
   }
 
@@ -740,7 +765,6 @@ function handleSidecarOutput(ssid: string, line: string) {
       time: nowStr(),
     };
     aiStore.appendProcessStep(ssid, step);
-    if (ssid === currentSsid.value) scrollBottom();
     return;
   }
 
@@ -789,7 +813,6 @@ function pushAssistantMessage(ssid: string, content: string, thinking = false) {
     time: nowStr(),
     thinking,
   });
-  if (ssid === currentSsid.value) scrollBottom();
 }
 
 /** 兼容旧的 defineExpose 接口：向当前 ssid 推送一条 assistant 消息 */
@@ -821,7 +844,7 @@ async function sendText(text: string) {
 
   const formattedContent = JSON.stringify(text).trim().slice(1, -1);
   await aiStore.writeTo(ssid, formattedContent + "\n");
-  scrollBottom();
+  scrollToBottom();
 }
 
 async function sendMessage() {
@@ -840,7 +863,7 @@ async function sendMessage() {
     time: nowStr(),
   });
   aiStore.patch(ssid, { isTyping: true });
-  scrollBottom();
+  scrollToBottom();
 
   // 懒兜底：面板打开时已预建会话（见下方 watch），这里通常直接命中；
   // 未预建（如外部路径首发）才真正等待创建
@@ -855,7 +878,7 @@ async function sendMessage() {
   input.value = "";
   const formattedContent = JSON.stringify(content).trim().slice(1, -1);
   await aiStore.writeTo(ssid, formattedContent + "\n");
-  scrollBottom();
+  scrollToBottom();
 }
 
 function handleKeyPress(event: KeyboardEvent) {
@@ -900,7 +923,7 @@ async function sendApproval(content: "y" | "n") {
   });
   await aiStore.writeTo(ssid, content + "\n");
   aiStore.patch(ssid, { isTyping: true, isApprovalActive: false });
-  scrollBottom();
+  scrollToBottom();
 }
 
 function handleNewChat() {
@@ -948,7 +971,7 @@ async function handleRegenerate() {
   aiStore.patch(ssid, { isTyping: true });
   const formattedContent = JSON.stringify(lastUser.content).trim().slice(1, -1);
   await aiStore.writeTo(ssid, formattedContent + "\n");
-  scrollBottom();
+  scrollToBottom();
 }
 
 async function confirmNewChat() {
@@ -1168,177 +1191,190 @@ defineExpose({
       </header>
 
       <div class="chat-wrap">
-        <NScrollbar ref="scrollbar" class="chat-scroll">
-          <div class="chat-list" @click="onLinkClick">
-            <div
-              v-if="!currentSsid"
-              class="empty"
-            >
-              {{ t("ai.needSession") }}
-            </div>
-            <div
-              v-else-if="configIssues.length > 0"
-              class="setup-card"
-              :class="{ pulse: setupPulse }"
-            >
-              <div class="setup-head">
-                <NIcon :size="14"><RiSettingsLine /></NIcon>
-                <span>{{ t("ai.setup.title") }}</span>
-              </div>
-              <p class="setup-desc">{{ t("ai.setup.desc") }}</p>
-              <div v-if="configIssues.includes('provider')" class="setup-item">
-                <div class="setup-item-label">{{ t("ai.setup.providerMissing") }}</div>
-                <NSelect
-                  v-if="providers.length > 0"
-                  size="small"
-                  :value="null"
-                  :options="providerOptions"
-                  :placeholder="t('ai.setup.selectProvider')"
-                  @update:value="(v: string | null) => v && onSetupPickProvider(v)"
-                />
-                <template v-else>
-                  <div class="setup-item-hint">{{ t("ai.setup.noProviders") }}</div>
-                  <NButton size="small" type="primary" secondary @click="emit('openProviders')">
-                    {{ t("ai.setup.addProvider") }}
-                  </NButton>
-                </template>
-              </div>
-              <div v-if="configIssues.includes('model')" class="setup-item">
-                <div class="setup-item-label">{{ t("ai.setup.modelMissing") }}</div>
-                <NSelect
-                  v-if="setupModelOptions.length > 0"
-                  size="small"
-                  :value="null"
-                  :options="setupModelOptions"
-                  :placeholder="t('ai.setup.selectModel')"
-                  @update:value="(v: string | null) => v && onSetupPickModel(v)"
-                />
-                <template v-else>
-                  <div class="setup-item-hint">{{ t("ai.setup.noModels") }}</div>
-                  <NButton size="small" secondary @click="emit('openProviders')">
-                    {{ t("ai.setup.manageProvider") }}
-                  </NButton>
-                </template>
-              </div>
-            </div>
-            <div
-              v-else-if="messages.length === 0"
-              class="empty"
-            >
-              {{ t("ai.placeholder") }}
-            </div>
-            <div
-              v-for="m in messages"
-              :key="m.id"
-              class="msg"
-              :class="m.role"
-            >
-              <NAvatar
-                v-if="m.role === 'assistant'"
-                round
-                size="small"
-                class="bubble-avatar assistant-avatar"
+        <div ref="scrollAreaEl" class="chat-scroll-area">
+          <NScrollbar class="chat-scroll" @scroll="onChatScroll">
+            <div class="chat-list" @click="onLinkClick">
+              <div
+                v-if="!currentSsid"
+                class="empty"
               >
-                <NIcon><RiSparklingLine /></NIcon>
-              </NAvatar>
-              <div class="bubble" :class="{ streaming: m.isStreaming }">
-                <template v-if="m.isProcess && m.processSteps">
-                  <details class="process-block">
-                    <summary class="process-summary">
-                      <NIcon :size="12" class="process-icon"><RiToolsLine /></NIcon>
-                      <span class="process-summary-text">{{ processSummary(m.processSteps) }}</span>
-                      <span class="process-count">{{ m.processSteps.length }}</span>
-                    </summary>
-                    <div class="process-steps">
-                      <div
-                        v-for="(step, i) in m.processSteps"
-                        :key="i"
-                        class="process-step"
-                        :class="step.type === 'tool_call' ? 'step-call' : 'step-ret'"
-                        v-html="parseMarkdown(step.content)"
-                      />
-                    </div>
-                  </details>
-                </template>
-                <template v-else-if="m.thinking">
-                  <details class="thinking-block">
-                    <summary class="thinking-summary">
-                      <span>{{ t("ai.thinking") }}</span>
-                    </summary>
-                    <div
-                      class="thinking-content markdown-body"
-                      v-html="parseMarkdown(m.content)"
-                    />
-                  </details>
-                </template>
-                <template v-else-if="m.role === 'assistant' && m.content">
-                  <div
-                    class="markdown-body"
-                    v-html="parseMarkdown(m.content)"
+                {{ t("ai.needSession") }}
+              </div>
+              <div
+                v-else-if="configIssues.length > 0"
+                class="setup-card"
+                :class="{ pulse: setupPulse }"
+              >
+                <div class="setup-head">
+                  <NIcon :size="14"><RiSettingsLine /></NIcon>
+                  <span>{{ t("ai.setup.title") }}</span>
+                </div>
+                <p class="setup-desc">{{ t("ai.setup.desc") }}</p>
+                <div v-if="configIssues.includes('provider')" class="setup-item">
+                  <div class="setup-item-label">{{ t("ai.setup.providerMissing") }}</div>
+                  <NSelect
+                    v-if="providers.length > 0"
+                    size="small"
+                    :value="null"
+                    :options="providerOptions"
+                    :placeholder="t('ai.setup.selectProvider')"
+                    @update:value="(v: string | null) => v && onSetupPickProvider(v)"
                   />
-                </template>
-                <template v-else-if="m.content">
-                  <div class="bubble-content">{{ m.content }}</div>
-                </template>
-                <span v-else class="dot">…</span>
-                <div v-if="!m.isProcess" class="bubble-footer">
-                  <span class="bubble-time">{{ m.time }}</span>
-                  <NPopover
-                    v-if="m.role === 'assistant' && m.usage"
-                    trigger="hover"
-                    :show-arrow="false"
-                    :delay="200"
-                  >
-                    <template #trigger>
-                      <span class="bubble-usage">{{ formatUsage(m.usage) }}</span>
-                    </template>
-                    <span class="usage-tooltip">{{ usageTooltip(m.usage) }}</span>
-                  </NPopover>
-                  <button
-                    v-if="m.role === 'user' && m.content"
-                    class="fav-btn"
-                    :class="{ active: phraseStore.isFavorited(m.content) }"
-                    :title="phraseStore.isFavorited(m.content) ? t('ai.quickPhrases.remove') : t('ai.quickPhrases.add')"
-                    @click="toggleFavorite(m.content)"
-                  >
-                    <NIcon :size="11">
-                      <RiStarFill v-if="phraseStore.isFavorited(m.content)" />
-                      <RiStarLine v-else />
-                    </NIcon>
-                  </button>
-                  <button
-                    v-else-if="m.role === 'assistant' && m.content"
-                    class="fav-btn"
-                    :title="t('common.copy')"
-                    @click="copyText(m.content)"
-                  >
-                    <NIcon :size="11"><RiFileCopyLine /></NIcon>
-                  </button>
+                  <template v-else>
+                    <div class="setup-item-hint">{{ t("ai.setup.noProviders") }}</div>
+                    <NButton size="small" type="primary" secondary @click="emit('openProviders')">
+                      {{ t("ai.setup.addProvider") }}
+                    </NButton>
+                  </template>
+                </div>
+                <div v-if="configIssues.includes('model')" class="setup-item">
+                  <div class="setup-item-label">{{ t("ai.setup.modelMissing") }}</div>
+                  <NSelect
+                    v-if="setupModelOptions.length > 0"
+                    size="small"
+                    :value="null"
+                    :options="setupModelOptions"
+                    :placeholder="t('ai.setup.selectModel')"
+                    @update:value="(v: string | null) => v && onSetupPickModel(v)"
+                  />
+                  <template v-else>
+                    <div class="setup-item-hint">{{ t("ai.setup.noModels") }}</div>
+                    <NButton size="small" secondary @click="emit('openProviders')">
+                      {{ t("ai.setup.manageProvider") }}
+                    </NButton>
+                  </template>
                 </div>
               </div>
-              <NAvatar
-                v-if="m.role === 'user'"
-                round
-                size="small"
-                class="bubble-avatar user-avatar"
+              <div
+                v-else-if="messages.length === 0"
+                class="empty"
               >
-                <NIcon><RiUserLine /></NIcon>
-              </NAvatar>
-            </div>
+                {{ t("ai.placeholder") }}
+              </div>
+              <div
+                v-for="m in messages"
+                :key="m.id"
+                class="msg"
+                :class="m.role"
+              >
+                <NAvatar
+                  v-if="m.role === 'assistant'"
+                  round
+                  size="small"
+                  class="bubble-avatar assistant-avatar"
+                >
+                  <NIcon><RiSparklingLine /></NIcon>
+                </NAvatar>
+                <div class="bubble" :class="{ streaming: m.isStreaming }">
+                  <template v-if="m.isProcess && m.processSteps">
+                    <details class="process-block">
+                      <summary class="process-summary">
+                        <NIcon :size="12" class="process-icon"><RiToolsLine /></NIcon>
+                        <span class="process-summary-text">{{ processSummary(m.processSteps) }}</span>
+                        <span class="process-count">{{ m.processSteps.length }}</span>
+                      </summary>
+                      <div class="process-steps">
+                        <div
+                          v-for="(step, i) in m.processSteps"
+                          :key="i"
+                          class="process-step"
+                          :class="step.type === 'tool_call' ? 'step-call' : 'step-ret'"
+                          v-html="parseMarkdown(step.content)"
+                        />
+                      </div>
+                    </details>
+                  </template>
+                  <template v-else-if="m.thinking">
+                    <details class="thinking-block">
+                      <summary class="thinking-summary">
+                        <span>{{ t("ai.thinking") }}</span>
+                      </summary>
+                      <div
+                        class="thinking-content markdown-body"
+                        v-html="parseMarkdown(m.content)"
+                      />
+                    </details>
+                  </template>
+                  <template v-else-if="m.role === 'assistant' && m.content">
+                    <div
+                      class="markdown-body"
+                      v-html="parseMarkdown(m.content)"
+                    />
+                  </template>
+                  <template v-else-if="m.content">
+                    <div class="bubble-content">{{ m.content }}</div>
+                  </template>
+                  <span v-else class="dot">…</span>
+                  <div v-if="!m.isProcess" class="bubble-footer">
+                    <span class="bubble-time">{{ m.time }}</span>
+                    <NPopover
+                      v-if="m.role === 'assistant' && m.usage"
+                      trigger="hover"
+                      :show-arrow="false"
+                      :delay="200"
+                    >
+                      <template #trigger>
+                        <span class="bubble-usage">{{ formatUsage(m.usage) }}</span>
+                      </template>
+                      <span class="usage-tooltip">{{ usageTooltip(m.usage) }}</span>
+                    </NPopover>
+                    <button
+                      v-if="m.role === 'user' && m.content"
+                      class="fav-btn"
+                      :class="{ active: phraseStore.isFavorited(m.content) }"
+                      :title="phraseStore.isFavorited(m.content) ? t('ai.quickPhrases.remove') : t('ai.quickPhrases.add')"
+                      @click="toggleFavorite(m.content)"
+                    >
+                      <NIcon :size="11">
+                        <RiStarFill v-if="phraseStore.isFavorited(m.content)" />
+                        <RiStarLine v-else />
+                      </NIcon>
+                    </button>
+                    <button
+                      v-else-if="m.role === 'assistant' && m.content"
+                      class="fav-btn"
+                      :title="t('common.copy')"
+                      @click="copyText(m.content)"
+                    >
+                      <NIcon :size="11"><RiFileCopyLine /></NIcon>
+                    </button>
+                  </div>
+                </div>
+                <NAvatar
+                  v-if="m.role === 'user'"
+                  round
+                  size="small"
+                  class="bubble-avatar user-avatar"
+                >
+                  <NIcon><RiUserLine /></NIcon>
+                </NAvatar>
+              </div>
 
-            <div
-              v-if="isTyping && !messages.some((m) => m.isStreaming)"
-              class="msg assistant"
-            >
-              <NAvatar round size="small" class="bubble-avatar assistant-avatar">
-                <NIcon><RiSparklingLine /></NIcon>
-              </NAvatar>
-              <div class="bubble typing">
-                <span class="dot" /><span class="dot" /><span class="dot" />
+              <div
+                v-if="isTyping && !messages.some((m) => m.isStreaming)"
+                class="msg assistant"
+              >
+                <NAvatar round size="small" class="bubble-avatar assistant-avatar">
+                  <NIcon><RiSparklingLine /></NIcon>
+                </NAvatar>
+                <div class="bubble typing">
+                  <span class="dot" /><span class="dot" /><span class="dot" />
+                </div>
               </div>
             </div>
-          </div>
-        </NScrollbar>
+          </NScrollbar>
+
+          <transition name="jump-fade">
+            <button
+              v-if="!stickBottom && messages.length > 0"
+              class="jump-bottom"
+              :title="t('ai.scrollToBottom')"
+              @click="scrollToBottom"
+            >
+              <NIcon :size="14"><RiArrowDownLine /></NIcon>
+            </button>
+          </transition>
+        </div>
 
         <div v-if="isApprovalActive" class="approval-bar">
           <NButton size="small" type="success" @click="handleApprovalYes">
@@ -1650,9 +1686,53 @@ defineExpose({
   min-height: 0;
 }
 
+.chat-scroll-area {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .chat-scroll {
   flex: 1;
   min-height: 0;
+}
+
+/* 回到底部：上滚阅读时浮现在滚动区右下角，点击恢复贴底跟随 */
+.jump-bottom {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ashell-border);
+  border-radius: 50%;
+  background: var(--ashell-panel-bg-soft);
+  color: var(--ashell-text-muted);
+  cursor: pointer;
+  box-shadow: 0 2px 10px var(--ashell-shadow);
+  z-index: 2;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.jump-bottom:hover {
+  color: var(--ashell-text-strong);
+  border-color: var(--ashell-primary);
+}
+
+.jump-fade-enter-active,
+.jump-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.jump-fade-enter-from,
+.jump-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .chat-list {
@@ -1801,19 +1881,19 @@ defineExpose({
 .ctx-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin-left: 8px;
-  font-size: 10px;
-  color: var(--ashell-text-subtle);
+  font-size: 11px;
+  color: var(--ashell-text-muted);
   white-space: nowrap;
   cursor: default;
 }
 
 .ctx-bar {
   display: inline-block;
-  width: 44px;
-  height: 3px;
-  border-radius: 2px;
+  width: 56px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--ashell-border, rgba(128, 128, 128, 0.35));
   overflow: hidden;
 }
@@ -2307,6 +2387,12 @@ defineExpose({
 
 .composer-bar.no-border {
   border-top: none;
+}
+
+/* composer 工具栏 tiny 按钮（再生成/模型/常用语）：全局 8px 圆角
+   落在近方形小按钮上呈椭圆感，统一收窄为 4px 的方正观感 */
+.composer-bar :deep(.n-button--tiny-type) {
+  border-radius: 4px;
 }
 
 .model-pill-text {
