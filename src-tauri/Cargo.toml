@@ -142,8 +142,10 @@ sysproxy = "0.3"
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
 
 # Password-based key derivation for encrypted backups
-pbkdf2 = "0"
-sha2 = "0"
+# 显式钉住生态代际：pbkdf2 0.13 走 digest 0.11，必须配 sha2 0.11；
+# 裸 "0" 约束曾让锁文件半新半旧（pbkdf2 0.13 + sha2 0.10）而编译失败
+pbkdf2 = "0.13"
+sha2 = "0.11"
 
 # Local PTY (Windows ConPTY / Unix forkpty)
 portable-pty = "0.9"

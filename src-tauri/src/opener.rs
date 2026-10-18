@@ -25,6 +25,8 @@ pub fn open_path(path: &Path) -> Result<(), String> {
 
 /// 在系统文件管理器中定位显示该路径
 pub fn reveal_item(path: &Path) -> Result<(), String> {
+    // 仅 mac/win 分支使用；Linux 走打开父目录，不引入该绑定（避免 unused 告警）
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let displayed = path.display().to_string();
 
     #[cfg(target_os = "macos")]
