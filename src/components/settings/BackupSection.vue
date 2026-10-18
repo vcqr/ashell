@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   RiCloudLine,
+  RiDeleteBinLine,
   RiDownloadLine,
   RiFolderOpenLine,
   RiRefreshLine,
@@ -73,7 +74,7 @@ const webdavConfig = ref<WebDavConfig>({
 });
 
 const sftpConfig = ref<SftpConfig>({
-  host_id: 0,
+  host_id: null,
   path_prefix: "ashell/",
 });
 
@@ -186,6 +187,8 @@ async function loadConfig() {
     }
     if (config.value.sftp) {
       sftpConfig.value = { ...sftpConfig.value, ...config.value.sftp };
+      // 后端以 0 表示未选择，归一为 null 才能显示占位提示
+      if (!sftpConfig.value.host_id) sftpConfig.value.host_id = null;
     }
   } catch {
     // use defaults
@@ -221,7 +224,7 @@ async function handleSave() {
     message.warning(t("settings.backup.webdavUrlRequired"));
     return;
   }
-  if (activeBackend.value === "sftp" && !(sftpConfig.value.host_id > 0)) {
+  if (activeBackend.value === "sftp" && !sftpConfig.value.host_id) {
     message.warning(t("settings.backup.sftpHostRequired"));
     return;
   }
@@ -248,6 +251,38 @@ async function handleTest() {
     message.error(t("settings.backup.testFailed", { error: String(e) }));
   } finally {
     testing.value = false;
+  }
+}
+
+/** 清空当前后端的配置并立即保存（回到未配置状态，跳过保存校验） */
+async function handleClear() {
+  if (activeBackend.value === "s3") {
+    config.value = {
+      endpoint: "",
+      bucket: "",
+      region: "",
+      access_key: "",
+      secret_key: "",
+      path_prefix: "ashell/",
+    };
+  } else if (activeBackend.value === "webdav") {
+    webdavConfig.value = {
+      url: "",
+      username: "",
+      password: "",
+      path_prefix: "ashell/",
+    };
+  } else {
+    sftpConfig.value = { host_id: null, path_prefix: "ashell/" };
+  }
+  saving.value = true;
+  try {
+    await saveBackupConfig(buildPayload());
+    message.success(t("settings.backup.clearSuccess"));
+  } catch (e) {
+    message.error(t("settings.backup.saveFailed", { error: String(e) }));
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -438,6 +473,15 @@ function formatTime(timestamp: string): string {
               <template #icon><NIcon><RiCloudLine /></NIcon></template>
               {{ t("settings.backup.testConnection") }}
             </NButton>
+            <NPopconfirm @positive-click="handleClear">
+              <template #trigger>
+                <NButton size="small" type="error" ghost :loading="saving">
+                  <template #icon><NIcon><RiDeleteBinLine /></NIcon></template>
+                  {{ t("settings.backup.clearConfig") }}
+                </NButton>
+              </template>
+              {{ t("settings.backup.clearConfirm") }}
+            </NPopconfirm>
           </div>
         </NTabPane>
 
@@ -473,6 +517,15 @@ function formatTime(timestamp: string): string {
               <template #icon><NIcon><RiCloudLine /></NIcon></template>
               {{ t("settings.backup.testConnection") }}
             </NButton>
+            <NPopconfirm @positive-click="handleClear">
+              <template #trigger>
+                <NButton size="small" type="error" ghost :loading="saving">
+                  <template #icon><NIcon><RiDeleteBinLine /></NIcon></template>
+                  {{ t("settings.backup.clearConfig") }}
+                </NButton>
+              </template>
+              {{ t("settings.backup.clearConfirm") }}
+            </NPopconfirm>
           </div>
         </NTabPane>
 
@@ -500,6 +553,15 @@ function formatTime(timestamp: string): string {
               <template #icon><NIcon><RiCloudLine /></NIcon></template>
               {{ t("settings.backup.testConnection") }}
             </NButton>
+            <NPopconfirm @positive-click="handleClear">
+              <template #trigger>
+                <NButton size="small" type="error" ghost :loading="saving">
+                  <template #icon><NIcon><RiDeleteBinLine /></NIcon></template>
+                  {{ t("settings.backup.clearConfig") }}
+                </NButton>
+              </template>
+              {{ t("settings.backup.clearConfirm") }}
+            </NPopconfirm>
           </div>
         </NTabPane>
       </NTabs>

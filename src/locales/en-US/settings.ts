@@ -412,6 +412,10 @@ export default {
       "Connects with the selected host's credentials and host key verification; jump host settings apply automatically. Connect to the host once in the host list first to trust it.",
     sftpHostRequired: "Please select a backup host first",
     saveConfig: "Save Config",
+    clearConfig: "Clear Config",
+    clearConfirm:
+      "Clear and save the current backend's config? It will return to the unconfigured state (existing backups on the remote are unaffected).",
+    clearSuccess: "Config cleared",
     testConnection: "Test Connection",
     testSuccess: "Connection successful",
     testFailed: "Connection failed: {error}",

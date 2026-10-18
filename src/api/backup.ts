@@ -13,7 +13,8 @@ export interface WebDavConfig {
 
 /** SFTP 备份配置：引用已保存的 SSH 主机（凭证/主机密钥/跳板机复用主机配置） */
 export interface SftpConfig {
-  host_id: number
+  /** null/0 = 未选择；null 仅用于表单状态，提交前归一为 0 */
+  host_id: number | null
   path_prefix: string
 }
 
