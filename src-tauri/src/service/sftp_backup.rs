@@ -13,6 +13,7 @@ use crate::models::DbPool;
 use crate::service::host as host_svc;
 use crate::service::sftp as sftp_svc;
 use crate::service::ssh::Session;
+use tokio::io::AsyncWriteExt;
 
 /// SFTP 备份配置：引用已保存的 SSH 主机（凭证/主机密钥/跳板机均复用主机配置）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,10 +89,21 @@ impl SftpStorage {
 
     pub async fn put(&self, key: &str, data: &[u8]) -> AppResult<()> {
         self.ensure_parent_dirs(key).await?;
-        self.sftp
-            .write(key, data)
+        // 注意不能用 SftpSession::write：它只带 WRITE flags、不创建文件
+        // （russh-sftp 3.x 行为与文档名不符），新文件会报 No such file。
+        // 这里 create（CREATE|TRUNCATE|WRITE）后手动写入并关闭。
+        let mut file = self
+            .sftp
+            .create(key)
             .await
-            .map_err(|e| sftp_svc::sftp_err("write", e))
+            .map_err(|e| sftp_svc::sftp_err("create", e))?;
+        if let Err(e) = file.write_all(data).await {
+            let _ = file.close().await;
+            return Err(sftp_svc::sftp_err("write", e));
+        }
+        file.close()
+            .await
+            .map_err(|e| sftp_svc::sftp_err("close", e))
     }
 
     /// NoSuchFile → None（文件不存在），2xx 语义由 SFTP 协议保证
@@ -201,5 +213,88 @@ mod tests {
         let cfg: SftpConfig = serde_json::from_str(r#"{"host_id": 3}"#).unwrap();
         assert_eq!(cfg.host_id, 3);
         assert_eq!(cfg.path_prefix, "ashell/");
+    }
+
+    /// 真实链路往返：连接（含 TOFU 主机密钥信任）、逐级建目录、put/get/delete。
+    /// 需要本地 SFTP 服务器（任意密码认证），端口可用环境变量覆盖：
+    ///   ASHELL_SFTP_TEST_PORT=9900
+    /// 运行：cargo test --lib sftp -- --ignored
+    #[tokio::test]
+    #[ignore = "requires a local SFTP server (any-password auth) on 127.0.0.1"]
+    async fn roundtrip_against_live_server() {
+        use crate::config;
+        use crate::service::known_host;
+
+        let port: u16 = std::env::var("ASHELL_SFTP_TEST_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9900);
+
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::models::init_pool(&dir.path().join("t.db"))
+            .await
+            .expect("init pool");
+        let crypto_key = [5u8; 32];
+
+        // 插入备份主机：密码按本地加密存储，Session::authenticate 走密码认证
+        let enc = config::crypto::encrypt(&crypto_key, "test-pass").unwrap();
+        sqlx::query(
+            "INSERT INTO hosts (name, addr, port, username, password, protocol) \
+             VALUES ('sftp-test', '127.0.0.1', ?, 'test', ?, 'ssh')",
+        )
+        .bind(port.to_string())
+        .bind(&enc)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let host_id: i64 =
+            sqlx::query_scalar("SELECT id FROM hosts").fetch_one(&pool).await.unwrap();
+
+        let cfg = SftpConfig {
+            host_id,
+            path_prefix: "ashell/".into(),
+        };
+
+        // 首连触发 TOFU：捕获服务器指纹并 trust 后重连
+        match SftpStorage::connect(&pool, &crypto_key, &cfg).await {
+            Ok(storage) => storage.disconnect().await,
+            Err(AppError::HostKeyVerify {
+                addr,
+                port: verify_port,
+                key_type,
+                fingerprint,
+                ..
+            }) => {
+                assert_eq!(addr, "127.0.0.1");
+                assert_eq!(verify_port, port);
+                known_host::trust(&pool, &addr, verify_port, &key_type, &fingerprint)
+                    .await
+                    .unwrap();
+            }
+            Err(e) => panic!("unexpected connect error: {e}"),
+        }
+
+        let storage = SftpStorage::connect(&pool, &crypto_key, &cfg)
+            .await
+            .expect("second connect after trusting host key");
+
+        // put 前逐级 MKCOL（ashell/、ashell/sub/ 均不存在）
+        storage
+            .put("ashell/sub/backup.json", b"hello-backup")
+            .await
+            .expect("put");
+
+        let got = storage.get("ashell/sub/backup.json").await.unwrap();
+        assert_eq!(got.as_deref(), Some(&b"hello-backup"[..]));
+
+        let missing = storage.get("ashell/missing.json").await.unwrap();
+        assert!(missing.is_none());
+
+        storage.delete("ashell/sub/backup.json").await.unwrap();
+        let deleted = storage.get("ashell/sub/backup.json").await.unwrap();
+        assert!(deleted.is_none());
+
+        storage.disconnect().await;
+        pool.close().await;
     }
 }
