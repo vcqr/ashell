@@ -410,9 +410,9 @@ const SHELL_PROBE: &str = "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null";
 
 /// sh 家族（dash/ash/ksh 等无 per-prompt 钩子机制的 POSIX shell）的完成
 /// 上报行：send_handler 在命令后独立成行注入，`$?` 即上一条命令的退出码。
-/// 独立成行而非拼接命令尾部：多行脚本、heredoc 均不受影响。该行会像
-/// 普通命令一样回显在用户终端（标记模式的有意取舍），收集副本中由
-/// 专用剥离器移除。POSIX printf 保证 dash/ash/ksh 可用。
+/// 独立成行而非拼接命令尾部：多行脚本、heredoc 均不受影响。该行的回显由
+/// 中继层无上限剥离器从终端视图与 AI 副本同时剥掉（用户看不见，与钩子行
+/// 同等待遇）。POSIX printf 保证 dash/ash/ksh 可用。
 const SH_MARKER_LINE: &str = " printf '\\033]9;10;%s\\007' \"$?\"\n";
 
 /// 依据登录 shell 与 `/bin/sh` 软链目标决定完成信号方案：
@@ -473,6 +473,9 @@ struct CwdEchoStripper {
     /// 最近一次转发给前端的字节：跨块判断命中是否起于行首用
     last_forwarded: Option<u8>,
     done: bool,
+    /// 无时限、无次数上限（marker 行会话内每次注入都回显一次，剥离器
+    /// 需持续生效；钩子行只在建连时注入一次，才有 20s/10 次预算可言）
+    unbounded: bool,
 }
 
 enum FindEcho {
@@ -488,6 +491,19 @@ impl CwdEchoStripper {
         Self::with_timeout(target, CWD_ECHO_STRIP_TIMEOUT)
     }
 
+    /// 无时限、无次数上限的剥离器：供 marker 行回显使用
+    fn unbounded(target: &str) -> Self {
+        Self {
+            target: target.as_bytes().to_vec(),
+            pending: Vec::new(),
+            deadline: Instant::now(),
+            stripped: 0,
+            last_forwarded: None,
+            done: false,
+            unbounded: true,
+        }
+    }
+
     fn with_timeout(target: &str, timeout: Duration) -> Self {
         Self {
             target: target.as_bytes().to_vec(),
@@ -496,6 +512,7 @@ impl CwdEchoStripper {
             stripped: 0,
             last_forwarded: None,
             done: false,
+            unbounded: false,
         }
     }
 
@@ -512,7 +529,7 @@ impl CwdEchoStripper {
         if self.done {
             return data.to_vec();
         }
-        if Instant::now() >= self.deadline {
+        if !self.unbounded && Instant::now() >= self.deadline {
             self.done = true;
             let mut out = std::mem::take(&mut self.pending);
             out.extend_from_slice(data);
@@ -525,7 +542,7 @@ impl CwdEchoStripper {
             match Self::find(&buf, &self.target, self.last_forwarded) {
                 FindEcho::Complete { start, end } => {
                     self.stripped += 1;
-                    if self.stripped >= MAX_ECHO_OCCURRENCES {
+                    if !self.unbounded && self.stripped >= MAX_ECHO_OCCURRENCES {
                         self.done = true;
                     }
                     out.extend_from_slice(&buf[..start]);
@@ -995,6 +1012,11 @@ async fn run_terminal(
                     }
                     Err(e) => log::debug!("terminal sender missing for telemetry hook: {e}"),
                 }
+            } else if mode == ssh_svc::CompletionMode::Marker {
+                // marker 行每次 AI 注入都会回显一次：中继层用无上限剥离器把
+                // 它从终端视图与 AI 副本同时剥掉（send_handler 侧另有双保险）
+                cwd_echo_strip =
+                    Some(CwdEchoStripper::unbounded(SH_MARKER_LINE.trim_end_matches('\n')));
             }
         }
         Err(e) => log::debug!("detect remote shell for telemetry hook failed: {e}"),
@@ -1783,5 +1805,30 @@ mod send_tests {
             assert_eq!(mode, ssh_svc::CompletionMode::None, "shell={sh}");
             assert!(line.is_none());
         }
+    }
+
+    #[test]
+    fn marker_echo_strip_unbounded_survives_many_occurrences() {
+        // marker 行每次 AI 注入都回显一次：剥离器无 20s/10 次上限，
+        // 会话生命周期内持续生效
+        let target = SH_MARKER_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::unbounded(target);
+        let t = target.as_bytes();
+        for _ in 0..(MAX_ECHO_OCCURRENCES + 5) {
+            assert!(s.feed(t).is_empty(), "unbounded 剥离器不应停止剥离");
+        }
+    }
+
+    #[test]
+    fn marker_echo_strip_survives_past_deadline_window() {
+        // 与 new() 的 20s 时限对照：unbounded 靠字段豁免时限判断，
+        // 构造后立即喂入即可验证（时限路径无法在单测中等待真实时间，
+        // 这里验证的是「不因 done 提前放行」这一行为面）
+        let target = SH_MARKER_LINE.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::unbounded(target);
+        let t = target.as_bytes();
+        assert!(s.feed(&[b'x'; 64]).starts_with(b"x"));
+        assert!(s.feed(t).is_empty());
+        assert!(s.feed(t).is_empty());
     }
 }
