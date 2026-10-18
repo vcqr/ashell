@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::service::ssh as ssh_svc;
+use crate::util;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -155,11 +156,13 @@ pub async fn handle(socket: WebSocket, sid: String, config: SerialConfig) {
     });
 
     // 5) 主事件循环
+    // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续
+    let mut utf8_tail: Vec<u8> = Vec::new();
     loop {
         tokio::select! {
             // 串口输出 → WS Binary
             Some(data) = out_rx.recv() => {
-                let _ = output_tx.send(String::from_utf8_lossy(&data).to_string());
+                let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &data));
                 if ws_tx.send(Message::Binary(data.into())).await.is_err() {
                     break;
                 }
@@ -215,6 +218,10 @@ pub async fn handle(socket: WebSocket, sid: String, config: SerialConfig) {
 
     log::info!("serial cleanup sid={sid}");
     read_task.abort();
+    let tail_text = util::utf8_flush(&mut utf8_tail);
+    if !tail_text.is_empty() {
+        let _ = output_tx.send(tail_text);
+    }
     ssh_svc::remove_terminal_channels(&sid).await;
     let _ = ws_tx.close().await;
     drop(port_writer);

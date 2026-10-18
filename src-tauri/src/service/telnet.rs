@@ -21,6 +21,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::service::ssh as ssh_svc;
+use crate::util;
 
 // Telnet 协议常量
 const IAC: u8 = 255;
@@ -244,11 +245,13 @@ pub async fn handle(
     let writer_cmd = writer.clone();
     let writer_iac = writer.clone();
 
+    // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续
+    let mut utf8_tail: Vec<u8> = Vec::new();
     loop {
         tokio::select! {
             // TCP 输出 → WS Binary
             Some(data) = out_rx.recv() => {
-                let _ = output_tx.send(String::from_utf8_lossy(&data).to_string());
+                let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &data));
                 if ws_tx.send(Message::Binary(data.into())).await.is_err() {
                     break;
                 }
@@ -320,6 +323,10 @@ pub async fn handle(
 
     log::info!("telnet cleanup sid={sid}");
     read_task.abort();
+    let tail_text = util::utf8_flush(&mut utf8_tail);
+    if !tail_text.is_empty() {
+        let _ = output_tx.send(tail_text);
+    }
     ssh_svc::remove_terminal_channels(&sid).await;
     let _ = ws_tx.close().await;
 }

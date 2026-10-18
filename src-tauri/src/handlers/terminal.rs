@@ -16,6 +16,7 @@ use crate::handlers;
 use crate::models::Host;
 use crate::service::ssh::{self as ssh_svc, Session};
 use crate::service::{self, AppState};
+use crate::util;
 
 #[derive(Debug, Deserialize)]
 pub struct TerminalQuery {
@@ -351,14 +352,79 @@ const INPUT_BUF_LIMIT: usize = 512;
  */
 
 /// 行首的 printf 是提示符行擦除：注入命令被 accept 执行时光标已到新行，
-/// 先上移擦掉注入所在的旧提示符行，让下一个提示符原地补位——否则剥掉
-/// 回显后该行只剩一条空提示符，会话开头多出一行。
-/// bash：前插上报钩子并保留 rc 链里已有的 PROMPT_COMMAND（含后续用户改动）
-const SSH_BASH_CWD_LINE: &str = " printf '\\033[1A\\033[2K\\r'; __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; PROMPT_COMMAND=\"__ashell_rc${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n";
+/// 每提示符遥测钩子函数体。首句必须先取 `$?`（钩子链前置函数会改写它）；
+/// `__ashell_cwd` 非空时上报 OSC 9;9;<cwd>（cwd 跟随，受前端目录跟随开关
+/// 门控）；随后恒定上报 OSC 9;10;<exit>——上一条命令的退出码，供
+/// `POST /api/ssh/send/{sid}` 判定命令完成。末尾 return 恢复 $?，对钩子链
+/// 后续命令与读取 $? 的提示符主题透明。
+const ASHELL_RC_FN: &str = concat!(
+    "__ashell_rc(){ local __s=\"$?\"; ",
+    "[ -n \"$__ashell_cwd\" ] && printf '\\033]9;9;%s\\007' \"$PWD\"; ",
+    "printf '\\033]9;10;%s\\007' \"$__s\"; ",
+    "return \"$__s\"; }",
+);
 
-/// zsh：挂 precmd 钩子（运行时追加，兼容 oh-my-zsh 等框架）；行首 printf
-/// 同 bash 变体，见其注释
-const SSH_ZSH_CWD_LINE: &str = " printf '\\033[1A\\033[2K\\r'; __ashell_rc(){ printf '\\033]9;9;%s\\007' \"$PWD\"; }; precmd_functions+=(__ashell_rc)\n";
+/// 先上移擦掉注入所在的旧提示符行，让下一个提示符原地补位——否则剥掉
+/// 回显后该行只剩一条空提示符，会话开头多出一行。行首空格使注入行
+/// 不进 history（HISTCONTROL=ignorespace）。
+/// bash：钩子前插 PROMPT_COMMAND 链并保留 rc 里已有项（含后续用户改动）
+fn telemetry_line_bash(cwd_report: bool) -> String {
+    format!(
+        " printf '\\033[1A\\033[2K\\r'; __ashell_cwd={gate}; export __ashell_cwd; {rc}; PROMPT_COMMAND=\"__ashell_rc${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}\"\n",
+        gate = if cwd_report { "1" } else { "" },
+        rc = ASHELL_RC_FN,
+    )
+}
+
+/// zsh：钩子必须前插 precmd_functions 队首——框架（oh-my-zsh 等）的钩子
+/// 会改写 $?，只有队首能取到用户命令的真实退出码；行首 printf 同 bash 变体
+fn telemetry_line_zsh(cwd_report: bool) -> String {
+    format!(
+        " printf '\\033[1A\\033[2K\\r'; __ashell_cwd={gate}; export __ashell_cwd; {rc}; precmd_functions=(__ashell_rc $precmd_functions)\n",
+        gate = if cwd_report { "1" } else { "" },
+        rc = ASHELL_RC_FN,
+    )
+}
+
+/// 远端登录 shell 探测命令：第二行取 /bin/sh 软链目标（bash-as-sh 识别；
+/// 无 readlink 或非软链时该行为空/原样路径）
+const SHELL_PROBE: &str = "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null";
+
+/// sh 家族（dash/ash/ksh 等无 per-prompt 钩子机制的 POSIX shell）的完成
+/// 上报行：send_handler 在命令后独立成行注入，`$?` 即上一条命令的退出码。
+/// 独立成行而非拼接命令尾部：多行脚本、heredoc 均不受影响。该行会像
+/// 普通命令一样回显在用户终端（标记模式的有意取舍），收集副本中由
+/// 专用剥离器移除。POSIX printf 保证 dash/ash/ksh 可用。
+const SH_MARKER_LINE: &str = " printf '\\033]9;10;%s\\007' \"$?\"\n";
+
+/// 依据登录 shell 与 `/bin/sh` 软链目标决定完成信号方案：
+/// zsh/bash（含 /bin/sh→bash 的 bash-as-sh，POSIX 模式下 PROMPT_COMMAND
+/// 仍生效）装每提示符遥测钩子；dash/ash/ksh 家族走标记模式（无钩子
+/// 机制，但 POSIX `$?` 与 printf 可靠）；csh/fish 等其余 shell 不装。
+/// 返回 (钩子注入行, 完成模式)，无钩子时首项为 None。
+fn resolve_completion(
+    shell: &str,
+    binsh: &str,
+    cwd_report: bool,
+) -> (Option<String>, ssh_svc::CompletionMode) {
+    let base = shell.rsplit('/').next().unwrap_or(shell);
+    let binsh_base = binsh.rsplit('/').next().unwrap_or(binsh);
+    if base.contains("zsh") {
+        (
+            Some(telemetry_line_zsh(cwd_report)),
+            ssh_svc::CompletionMode::Hooked,
+        )
+    } else if base.contains("bash") || (base == "sh" && binsh_base == "bash") {
+        (
+            Some(telemetry_line_bash(cwd_report)),
+            ssh_svc::CompletionMode::Hooked,
+        )
+    } else if matches!(base, "sh" | "dash" | "ash" | "ksh" | "mksh" | "lksh" | "yash") {
+        (None, ssh_svc::CompletionMode::Marker)
+    } else {
+        (None, ssh_svc::CompletionMode::None)
+    }
+}
 
 /// 注入行回显剥离的放弃时限：正常情况下回显在建连后一两秒内出现，
 /// 慢 rc 的 shell（macOS zsh）重显也只是再晚几秒
@@ -888,41 +954,39 @@ async fn run_terminal(
         }
     }
 
-    // cwd 上报注入：探测远端登录 shell（exec 无 pty，不影响欢迎信息），
-    // bash/zsh 写入提示符钩子，其余 shell 优雅跳过（降级为不跟随）。
+    // 每提示符遥测钩子 / 完成标记：探测远端登录 shell（exec 无 pty，不影响
+    // 欢迎信息），按 shell 家族决定完成信号方案（见 resolve_completion）。
     // 经 cmd_tx 写入：中继循环启动后它是写进交互 channel 的第一笔数据，
     // 此时用户尚未来得及输入，不会与用户命令行交错。
     let mut cwd_echo_strip: Option<CwdEchoStripper> = None;
-    if q.cwd_report {
-        match session_arc.execute("echo \"$SHELL\"").await {
-            Ok(res) => {
-                let sh = res.stdout.trim();
-                let base = sh.rsplit('/').next().unwrap_or(sh);
-                let line = if base.contains("zsh") {
-                    SSH_ZSH_CWD_LINE
-                } else if base.contains("bash") {
-                    SSH_BASH_CWD_LINE
-                } else {
-                    ""
-                };
-                if !line.is_empty() {
-                    match ssh_svc::get_terminal_sender(sid).await {
-                        Ok(sender) => {
-                            let _ = sender.send(line.to_string());
-                            // 注入行会被回显进输出流：武装剥离器，转发前移除其首次出现
-                            cwd_echo_strip =
-                                Some(CwdEchoStripper::new(line.trim_end_matches('\n')));
-                        }
-                        Err(e) => log::debug!("terminal sender missing for cwd report: {e}"),
+    match session_arc.execute(SHELL_PROBE).await {
+        Ok(res) => {
+            let mut lines = res.stdout.trim().lines();
+            let shell = lines.next().unwrap_or("").trim();
+            let binsh = lines.next().unwrap_or("").trim();
+            let (line, mode) = resolve_completion(shell, binsh, q.cwd_report);
+            if mode != ssh_svc::CompletionMode::None {
+                ssh_svc::set_terminal_completion(sid, mode).await;
+            }
+            if let Some(line) = line {
+                match ssh_svc::get_terminal_sender(sid).await {
+                    Ok(sender) => {
+                        let _ = sender.send(line.clone());
+                        // 注入行会被回显进输出流：武装剥离器，转发前移除其首次出现
+                        cwd_echo_strip = Some(CwdEchoStripper::new(line.trim_end_matches('\n')));
                     }
+                    Err(e) => log::debug!("terminal sender missing for telemetry hook: {e}"),
                 }
             }
-            Err(e) => log::debug!("detect remote shell for cwd report failed: {e}"),
         }
+        Err(e) => log::debug!("detect remote shell for telemetry hook failed: {e}"),
     }
 
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
+    // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续，
+    // 终端 WS 路径仍走原始字节，不受影响
+    let mut utf8_tail: Vec<u8> = Vec::new();
 
     // idle 定时发送空字符保活：配置了 idle_send_interval > 0 时启用，
     // 每隔该秒数向 PTY 发送 \x00（对终端无害，可防止 NAT/防火墙超时断连）。
@@ -1010,7 +1074,7 @@ async fn run_terminal(
                             Some(s) => s.feed(data),
                             None => data.to_vec(),
                         };
-                        let _ = output_tx.send(String::from_utf8_lossy(&bytes).to_string());
+                        let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
                         if !bytes.is_empty()
                             && ws_tx
                                 .send(Message::Binary(bytes.clone().into()))
@@ -1038,7 +1102,7 @@ async fn run_terminal(
                     }
                     Some(ChannelMsg::ExtendedData { ref data, ext: _ }) => {
                         let bytes = data.to_vec();
-                        let _ = output_tx.send(String::from_utf8_lossy(&bytes).to_string());
+                        let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
                         if ws_tx.send(Message::Binary(bytes.clone().into())).await.is_err() { break; }
 
                         // 部分服务端/程序会把密码提示写到 stderr；这里同样参与识别。
@@ -1075,6 +1139,12 @@ async fn run_terminal(
                 reset_idle(&mut idle_timer, idle_dur);
             }
         }
+    }
+
+    // 冲刷 UTF-8 尾缓冲：最后一块可能停在多字节字符中间
+    let tail_text = util::utf8_flush(&mut utf8_tail);
+    if !tail_text.is_empty() {
+        let _ = output_tx.send(tail_text);
     }
 
     Ok(())
@@ -1173,7 +1243,8 @@ mod tests {
 
     #[test]
     fn cwd_echo_stripped_in_single_chunk() {
-        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let out = s.feed(&echo_stream(target, None));
         // 提示符后开始的回显：剥掉文字但保留 accept 换行（上移擦除依赖它）
@@ -1185,7 +1256,8 @@ mod tests {
 
     #[test]
     fn cwd_echo_stripped_across_chunks() {
-        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let stream = echo_stream(target, None);
         let mid = 20;
@@ -1203,7 +1275,8 @@ mod tests {
 
     #[test]
     fn cwd_echo_stripped_with_line_wrap() {
-        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let out = s.feed(&echo_stream(target, Some(30)));
         assert_eq!(
@@ -1214,7 +1287,8 @@ mod tests {
 
     #[test]
     fn cwd_echo_strip_gives_up_after_timeout() {
-        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::with_timeout(target, Duration::ZERO);
         let data = b"plain output without echo";
         assert_eq!(s.feed(data), data.to_vec());
@@ -1224,7 +1298,8 @@ mod tests {
 
     #[test]
     fn cwd_echo_strip_forwards_unrelated_output() {
-        let target = SSH_BASH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         // 无关输出立即转发：只有尾部像半截回显开头时才扣留
         assert_eq!(s.feed(b"abc"), b"abc".to_vec());
@@ -1236,7 +1311,8 @@ mod tests {
         // macOS zsh 场景：注入行先被 pty 内核按规范模式回显（首个提示符
         // 之前，独占一行，自带换行一并吃掉），ZLE 就绪后又把缓冲行重显
         // 在提示符处（accept 换行保留），两次文字都要剥掉
-        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let t = target.as_bytes();
         let mut stream = b"Last login: ...\r\n".to_vec();
@@ -1255,7 +1331,8 @@ mod tests {
     fn cwd_echo_strips_newline_after_line_start_echo() {
         // 内核规范模式回显独占一行（前面是 MOTD 的换行）：回显自带的回车
         // 换行一并吃掉，不留空行
-        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let t = target.as_bytes();
         let mut stream = b"Last login: ...\r\n".to_vec();
@@ -1268,7 +1345,8 @@ mod tests {
     #[test]
     fn cwd_echo_strips_newline_when_echo_spans_chunk_start() {
         // 内核回显恰好从块边界开始：依据上一块最后转发的字节判断行首
-        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let t = target.as_bytes();
         assert_eq!(
@@ -1283,7 +1361,8 @@ mod tests {
     #[test]
     fn cwd_echo_strip_stops_after_max_occurrences() {
         // 超出剥离上限的第 11 次出现原样放行（退化为多显示一行）
-        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         let t = target.as_bytes();
         let mut stream = b"host:~% ".to_vec();
@@ -1303,7 +1382,8 @@ mod tests {
     #[test]
     fn cwd_echo_strip_holds_partial_prefix_across_chunks() {
         // 尾部 ≥2 字节像半截回显开头时扣留，跨块补齐后整行剥掉
-        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         assert_eq!(s.feed(b"hello prin"), b"hello".to_vec());
         assert!(s.feed(&target.as_bytes()[5..]).is_empty());
@@ -1312,7 +1392,8 @@ mod tests {
     #[test]
     fn cwd_echo_strip_does_not_hold_lone_trailing_space() {
         // 提示符结尾的单个空格不算半截回显开头，立即转发不扣留
-        let target = SSH_ZSH_CWD_LINE.trim_end_matches('\n');
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         assert_eq!(s.feed(b"host:~% "), b"host:~% ".to_vec());
     }
@@ -1320,49 +1401,347 @@ mod tests {
 
 #[derive(Debug, Deserialize)]
 pub struct SendQuery {
-    /// 等待输出收集的毫秒数，默认 500
+    /// 等待输出的硬上限毫秒数（默认 10s）。bash/zsh 会话在命令完成时
+    /// 提前返回；无钩子会话在输出静默后提前返回；本值只兜底挂死场景。
     #[serde(default = "default_wait_ms")]
     pub wait_ms: u64,
 }
 
 fn default_wait_ms() -> u64 {
-    500
+    10_000
+}
+
+/// wait_ms 硬上限：防止异常大值长时间占住请求与收集锁
+const SEND_MAX_WAIT_MS: u64 = 120_000;
+/// 无钩子会话的输出静默判定窗口：连续静默该时长视为命令结束（拿不到退出码）
+const SEND_QUIESCE_MS: u64 = 400;
+/// 返回给调用方的输出字节上限，超出丢弃并置 truncated
+const SEND_OUTPUT_CAP: usize = 200_000;
+
+/// `POST /api/ssh/send/{sid}?wait_ms=` 的结构化结果
+#[derive(Debug, Serialize)]
+pub struct SendResult {
+    /// 终端输出（已剥命令回显与 ANSI 转义序列）
+    pub output: String,
+    /// 退出码：bash/zsh 会话由遥测钩子上报；其余会话为 null
+    pub exit_code: Option<u32>,
+    /// 是否确认完成（钩子上报的完成事件数达到预期）
+    pub completed: bool,
+    /// 是否因到达 wait_ms 上限而返回（输出可能不完整）
+    pub timed_out: bool,
+    /// 收集期间输出流是否关闭（会话已结束）
+    pub session_closed: bool,
+    /// 输出是否超上限被截断
+    pub truncated: bool,
+}
+
+/// OSC 完成事件扫描器：流式统计遥测钩子上报的
+/// `ESC]9;10;<exit>BEL`（兼容 ST 结尾）。事件可能跨块：解析失败时从最后一个
+/// ESC 扣留尾部，与下一块拼接后重扫；扣留上限防病态输出无限增长。
+struct CompletionScanner {
+    tail: String,
+    count: usize,
+    last_exit: Option<u32>,
+}
+
+impl CompletionScanner {
+    fn new() -> Self {
+        Self {
+            tail: String::new(),
+            count: 0,
+            last_exit: None,
+        }
+    }
+
+    fn feed(&mut self, chunk: &str) {
+        let mut buf = std::mem::take(&mut self.tail);
+        buf.push_str(chunk);
+        let b = buf.as_bytes();
+        let mut i = 0;
+        let mut last_esc: Option<usize> = None;
+        while i < b.len() {
+            if b[i] == 0x1b {
+                if let Some((code, end)) = parse_completion_at(b, i) {
+                    self.count += 1;
+                    self.last_exit = Some(code);
+                    i = end;
+                    last_esc = None;
+                    continue;
+                }
+                last_esc = Some(i);
+            }
+            i += 1;
+        }
+        self.tail = match last_esc {
+            Some(p) => {
+                let mut tail = buf.split_off(p);
+                // 病态守护：尾部长期解析不出且持续增长时截断保留末尾
+                if tail.len() > 8192 {
+                    tail.split_off(tail.len() - 32)
+                } else {
+                    tail
+                }
+            }
+            None => String::new(),
+        };
+    }
+}
+
+/// `b[pos]` 为 ESC 时尝试解析 `ESC]9;10;<1-3位数字>(BEL|ESC \)`
+fn parse_completion_at(b: &[u8], pos: usize) -> Option<(u32, usize)> {
+    const HEAD: &[u8] = b"\x1b]9;10;";
+    let rest = b.get(pos..)?;
+    if !rest.starts_with(HEAD) {
+        return None;
+    }
+    let mut i = HEAD.len();
+    let mut code: u32 = 0;
+    let mut digits = 0;
+    while i < rest.len() && rest[i].is_ascii_digit() {
+        code = code.saturating_mul(10).saturating_add((rest[i] - b'0') as u32);
+        digits += 1;
+        i += 1;
+        if digits > 3 {
+            return None; // 退出码 0-255，超长按非事件处理
+        }
+    }
+    if digits == 0 {
+        return None;
+    }
+    match rest.get(i) {
+        Some(0x07) => Some((code, pos + i + 1)),
+        Some(0x1b) if rest.get(i + 1) == Some(&b'\\') => Some((code, pos + i + 2)),
+        // 终止符未到（跨块）或非终止字节：按非事件处理，跨块场景靠尾部扣留重扫
+        _ => None,
+    }
 }
 
 /// `POST /api/ssh/send/{sid}?wait_ms=`
 ///
 /// 向已有终端会话注入命令并收集输出。
-/// body 即为要发送到 SSH stdin 的文本（通常以 `\n` 结尾）。
+/// body 即为要发送到 SSH stdin 的文本，以 `\n` 结尾执行命令；多行文本
+/// 按行数等待相应次数的完成事件。
+///
+/// 收集策略：bash/zsh 会话（含 bash-as-sh）由每提示符遥测钩子上报完成
+/// 事件与退出码；dash/ash/ksh 等 POSIX sh 家族在命令后追加独立上报行
+/// （标记模式，该行在用户终端可见）；其余 shell 与无尾 `\n` 的悬空命令
+/// 退化为输出静默判定。`wait_ms` 为所有场景的硬上限。同一会话的并发
+/// 收集按 sid 串行化。
 pub async fn send_handler(
     Path(sid): Path<String>,
     Query(query): Query<SendQuery>,
     body: String,
 ) -> Result<impl IntoResponse, crate::errors::AppError> {
+    // 同一会话串行化：并发注入的输出在广播流中无法区分归属
+    let collect_lock = ssh_svc::acquire_collect_lock(&sid).await;
+    let _guard = collect_lock.lock().await;
+
     // 先订阅输出，再发送命令，避免竞态丢失
     let output_tx = ssh_svc::get_terminal_output(&sid).await?;
     let mut rx = output_tx.subscribe();
     let tx = ssh_svc::get_terminal_sender(&sid).await?;
-    tx.send(body)
+    tx.send(body.clone())
         .map_err(|_| crate::errors::AppError::Internal("terminal channel closed".into()))?;
 
-    let mut result = String::new();
-    let deadline = tokio::time::sleep(Duration::from_millis(query.wait_ms));
+    let mode = ssh_svc::get_terminal_completion(&sid).await;
+    let hooked = mode == ssh_svc::CompletionMode::Hooked;
+    // 标记模式的上报行必须独立成行注入：body 以 \n 结尾（完整命令行）才安全，
+    // 悬空半行无法追加（会拼进续行），退化为静默兜底
+    let send_marker = mode == ssh_svc::CompletionMode::Marker
+        && body.ends_with('\n')
+        && !body.trim().is_empty();
+    // 完成事件数预期：钩子模式 = 注入行数（每行执行完各出一次提示符/钩子）；
+    // 标记模式 = 1（仅追加的上报行发一次事件）
+    let expected = if hooked { body.matches('\n').count().max(1) } else { 1 };
+    // 注入的命令与标记行都会被终端回显：武装剥离器在收集副本中移除
+    // （终端显示不受影响）
+    let mut echo_stripper = CwdEchoStripper::new(body.trim_end_matches('\n'));
+    let mut marker_stripper = CwdEchoStripper::new(SH_MARKER_LINE.trim_end_matches('\n'));
+    let mut scanner = CompletionScanner::new();
+    if send_marker {
+        tx.send(SH_MARKER_LINE.to_string())
+            .map_err(|_| crate::errors::AppError::Internal("terminal channel closed".into()))?;
+    }
+    let mut raw = String::new();
+    let mut truncated = false;
+    let mut session_closed = false;
+    let mut got_output = false;
+    let mut timed_out = false;
+
+    let wait = query.wait_ms.clamp(1, SEND_MAX_WAIT_MS);
+    let deadline = tokio::time::sleep(Duration::from_millis(wait));
     tokio::pin!(deadline);
+    let quiesce_dur = Duration::from_millis(SEND_QUIESCE_MS);
+    let quiesce = tokio::time::sleep(quiesce_dur);
+    tokio::pin!(quiesce);
 
     loop {
         tokio::select! {
             msg = rx.recv() => {
                 match msg {
-                    Ok(data) => result.push_str(&data),
+                    Ok(chunk) => {
+                        let cleaned = echo_stripper.feed(chunk.as_bytes());
+                        let cleaned = if send_marker {
+                            marker_stripper.feed(&cleaned)
+                        } else {
+                            cleaned
+                        };
+                        if cleaned.is_empty() {
+                            continue;
+                        }
+                        got_output = true;
+                        quiesce.as_mut().reset(tokio::time::Instant::now() + quiesce_dur);
+                        let text = String::from_utf8_lossy(&cleaned);
+                        scanner.feed(&text);
+                        if raw.len() < SEND_OUTPUT_CAP {
+                            raw.push_str(&text);
+                        } else {
+                            truncated = true;
+                        }
+                        if hooked && scanner.count >= expected {
+                            break;
+                        }
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        session_closed = true;
+                        break;
+                    }
                 }
             }
             _ = &mut deadline => {
+                timed_out = true;
+                break;
+            }
+            // 无钩子会话：输出静默后视为命令结束（退出码不可得）
+            _ = &mut quiesce, if !hooked && got_output => {
                 break;
             }
         }
     }
 
-    Ok(handlers::ApiResponse::ok(result))
+    let output = util::strip_ansi(&raw);
+    let completed = match mode {
+        ssh_svc::CompletionMode::Hooked => scanner.count >= expected,
+        ssh_svc::CompletionMode::Marker => send_marker && scanner.count >= 1,
+        ssh_svc::CompletionMode::None => false,
+    };
+    Ok(handlers::ApiResponse::ok(SendResult {
+        output,
+        exit_code: if mode == ssh_svc::CompletionMode::None {
+            None
+        } else {
+            scanner.last_exit
+        },
+        completed,
+        timed_out,
+        session_closed,
+        truncated,
+    }))
+}
+
+#[cfg(test)]
+mod send_tests {
+    use super::*;
+
+    #[test]
+    fn scanner_parses_bel_terminated_events() {
+        let mut s = CompletionScanner::new();
+        s.feed("out\x1b]9;10;0\x07more");
+        assert_eq!(s.count, 1);
+        assert_eq!(s.last_exit, Some(0));
+    }
+
+    #[test]
+    fn scanner_parses_st_terminated_events() {
+        let mut s = CompletionScanner::new();
+        s.feed("out\x1b]9;10;127\x1b\\tail");
+        assert_eq!(s.count, 1);
+        assert_eq!(s.last_exit, Some(127));
+    }
+
+    #[test]
+    fn scanner_joins_event_across_chunks() {
+        let mut s = CompletionScanner::new();
+        s.feed("out\x1b]9;10;2");
+        assert_eq!(s.count, 0);
+        s.feed("\x07done");
+        assert_eq!(s.count, 1);
+        assert_eq!(s.last_exit, Some(2));
+    }
+
+    #[test]
+    fn scanner_ignores_cwd_reports_and_colors() {
+        let mut s = CompletionScanner::new();
+        s.feed("\x1b]9;9;/home\x07\x1b[31mred\x1b[0m\x1b]9;10;1\x07");
+        assert_eq!(s.count, 1);
+        assert_eq!(s.last_exit, Some(1));
+    }
+
+    #[test]
+    fn scanner_counts_multiple_events_and_keeps_last_code() {
+        let mut s = CompletionScanner::new();
+        s.feed("\x1b]9;10;0\x07\x1b]9;10;3\x07");
+        assert_eq!(s.count, 2);
+        assert_eq!(s.last_exit, Some(3));
+    }
+
+    #[test]
+    fn scanner_rejects_overlong_and_empty_codes() {
+        let mut s = CompletionScanner::new();
+        s.feed("\x1b]9;10;1234\x07\x1b]9;10;\x07");
+        assert_eq!(s.count, 0);
+        assert_eq!(s.last_exit, None);
+    }
+
+    #[test]
+    fn parse_completion_at_matches_exact_boundaries() {
+        let b = b"\x1b]9;10;0\x07".as_slice();
+        assert_eq!(parse_completion_at(b, 0), Some((0, b.len())));
+        // 中间字节不是数字也不是终止符：非事件
+        assert_eq!(parse_completion_at(b"\x1b]9;10x0\x07", 0), None);
+        // 事件前有杂讯：只认精确头部（含杂讯下标与 BEL 后的结束下标）
+        assert_eq!(parse_completion_at(b"x\x1b]9;10;9\x07", 1), Some((9, 10)));
+    }
+
+    #[test]
+    fn resolve_completion_bash_as_sh_via_readlink() {
+        let (line, mode) = resolve_completion("/bin/sh", "/bin/bash", false);
+        assert_eq!(mode, ssh_svc::CompletionMode::Hooked);
+        assert!(line.unwrap().contains("__ashell_rc"));
+    }
+
+    #[test]
+    fn resolve_completion_zsh_hooked_with_cwd_gate() {
+        let (on, mode) = resolve_completion("/bin/zsh", "", true);
+        assert_eq!(mode, ssh_svc::CompletionMode::Hooked);
+        assert!(on.unwrap().contains("__ashell_cwd=1;"));
+        let (off, _) = resolve_completion("/bin/zsh", "", false);
+        assert!(off.unwrap().contains("__ashell_cwd=;"));
+    }
+
+    #[test]
+    fn resolve_completion_posix_sh_family_marker() {
+        for sh in ["/bin/sh", "/usr/bin/dash", "/bin/ash", "/bin/ksh", "/bin/mksh"] {
+            let (line, mode) = resolve_completion(sh, "", false);
+            assert_eq!(mode, ssh_svc::CompletionMode::Marker, "shell={sh}");
+            assert!(line.is_none());
+        }
+    }
+
+    #[test]
+    fn resolve_completion_plain_sh_symlink_stays_marker() {
+        // macOS /bin/sh 是实体文件：readlink 原样返回，仍走标记模式
+        let (_, mode) = resolve_completion("/bin/sh", "/bin/sh", false);
+        assert_eq!(mode, ssh_svc::CompletionMode::Marker);
+    }
+
+    #[test]
+    fn resolve_completion_other_shells_silent() {
+        for sh in ["/bin/csh", "/usr/bin/fish", "/usr/bin/pwsh", ""] {
+            let (line, mode) = resolve_completion(sh, "", false);
+            assert_eq!(mode, ssh_svc::CompletionMode::None, "shell={sh}");
+            assert!(line.is_none());
+        }
+    }
 }

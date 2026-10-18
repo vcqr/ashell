@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
@@ -69,6 +70,27 @@ static TERMINAL_SENDER_MAP: Lazy<RwLock<HashMap<String, mpsc::UnboundedSender<St
 /// 终端会话的 SSH 输出广播通道（SSH stdout/stderr → send_handler 收集）
 static TERMINAL_OUTPUT_MAP: Lazy<RwLock<HashMap<String, broadcast::Sender<String>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// 终端会话的完成信号模式（send_handler 收集策略选择）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionMode {
+    /// 每提示符遥测钩子（bash/zsh，含 bash-as-sh）：完成事件自动上报
+    Hooked,
+    /// 标记模式（dash/ash/ksh 等无钩子机制的 POSIX sh 家族）：
+    /// send_handler 在命令后追加独立上报行
+    Marker,
+    /// 无完成信号：输出静默兜底（csh/fish/未知 shell、本地/telnet/串口）
+    None,
+}
+
+/// 终端会话的完成信号模式（未登记视为 [`CompletionMode::None`]）
+static TERMINAL_COMPLETION_MAP: Lazy<RwLock<HashMap<String, CompletionMode>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// send 收集互斥：同一会话同时只允许一个收集循环，
+/// 避免并发注入时两个调用交叉读走对方的输出
+static TERMINAL_COLLECT_LOCKS: Lazy<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// 命令执行结果
 #[allow(dead_code)]
@@ -913,10 +935,36 @@ pub async fn get_terminal_output(sid: &str) -> AppResult<broadcast::Sender<Strin
         .ok_or_else(|| AppError::NotFound(format!("terminal output {sid}")))
 }
 
+/// 登记会话的完成信号模式
+pub async fn set_terminal_completion(sid: &str, mode: CompletionMode) {
+    TERMINAL_COMPLETION_MAP.write().await.insert(sid.to_string(), mode);
+}
+
+/// 查询会话的完成信号模式；未登记视为 [`CompletionMode::None`]
+pub async fn get_terminal_completion(sid: &str) -> CompletionMode {
+    TERMINAL_COMPLETION_MAP
+        .read()
+        .await
+        .get(sid)
+        .copied()
+        .unwrap_or(CompletionMode::None)
+}
+
+/// 取会话的收集互斥锁（同一 sid 恒定返回同一把锁）
+pub async fn acquire_collect_lock(sid: &str) -> Arc<AsyncMutex<()>> {
+    let mut map = TERMINAL_COLLECT_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    map.entry(sid.to_string()).or_default().clone()
+}
+
 /// 移除终端会话的命令注入与输出广播通道
 pub async fn remove_terminal_channels(sid: &str) {
     TERMINAL_SENDER_MAP.write().await.remove(sid);
     TERMINAL_OUTPUT_MAP.write().await.remove(sid);
+    TERMINAL_COMPLETION_MAP.write().await.remove(sid);
+    TERMINAL_COLLECT_LOCKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(sid);
 }
 
 /// 释放 sid 关联的会话（终端 WS 关闭或显式 close 时调用）

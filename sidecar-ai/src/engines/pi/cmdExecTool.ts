@@ -16,15 +16,18 @@ export function createCmdExecTool(
     name: "cmd_exec",
     label: "Remote Command Execution",
     description:
-      "Execute a command on the remote SSH server. Use this to run commands on the connected server. " +
+      "Execute a command on the remote shell and wait for it to finish. " +
+      "Returns the command output and its exit code when available. " +
+      "wait_ms is only a hard cap for hanging commands (default 10000); normal commands return as soon as they complete. " +
+      "Do not run interactive full-screen programs (top, vim, etc.) or commands that never exit (tail -f, servers): they always run until the cap. " +
       "For destructive operations (rm, kill, shutdown, reboot, chmod, etc.), set needs_approval=true to request user confirmation before execution.",
-    promptSnippet: "cmd_exec: execute a command on the remote SSH server",
+    promptSnippet: "cmd_exec: execute a command on the remote shell and get its output and exit code",
     parameters: Type.Object({
-      cmd: Type.String({ description: "The command to execute on the remote server" }),
+      cmd: Type.String({ description: "The command to execute on the remote shell" }),
       wait_ms: Type.Optional(
         Type.Number({
           description:
-            "Output collection window after sending the command, in milliseconds (default 500)",
+            "Hard cap in milliseconds for waiting on the command (default 10000). Most commands return earlier, when the shell reports completion. Raise it for commands that legitimately run long (builds, large transfers).",
         }),
       ),
       needs_approval: Type.Optional(
@@ -47,14 +50,39 @@ export function createCmdExecTool(
         }
       }
 
-      const { status, text } = await execRemoteCommand(target, params.cmd, params.wait_ms);
+      const r = await execRemoteCommand(target, params.cmd, params.wait_ms);
+
+      // 状态行 + 输出：退出码优先；缺失时给出可信度提示，避免模型把
+      // 不完整输出当成命令失败
+      let statusLine: string;
+      if (r.exitCode !== null) {
+        statusLine = `exit_code: ${r.exitCode}`;
+      } else if (r.sessionClosed) {
+        statusLine = "session_closed: the terminal session ended during execution";
+      } else if (r.timedOut) {
+        statusLine =
+          "timed_out: the command did not finish within the cap; output below may be partial";
+      } else {
+        statusLine = "completed: unknown (exit code unavailable for this shell type)";
+      }
+      if (r.truncated) {
+        statusLine += "\ntruncated: output exceeded the size cap and was cut";
+      }
+      if (r.status !== 200) {
+        statusLine = `http_status: ${r.status}`;
+      }
 
       return {
-        content: [{ type: "text" as const, text: `result: ${text}` }],
+        content: [{ type: "text" as const, text: `${statusLine}\n\n${r.output}` }],
         details: {
           command: params.cmd,
           wait_ms: params.wait_ms,
-          status,
+          status: r.status,
+          exit_code: r.exitCode,
+          completed: r.completed,
+          timed_out: r.timedOut,
+          session_closed: r.sessionClosed,
+          truncated: r.truncated,
         },
       };
     },

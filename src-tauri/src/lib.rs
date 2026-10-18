@@ -23,6 +23,7 @@ mod sidecar;
 mod sidecar_factory;
 #[cfg(feature = "desktop")]
 mod tray;
+mod util;
 
 #[cfg(feature = "desktop")]
 use std::net::SocketAddr;

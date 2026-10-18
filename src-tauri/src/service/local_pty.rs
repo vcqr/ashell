@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::service::ssh as ssh_svc;
+use crate::util;
 
 /// 识别出的 shell 类别，决定 cwd 上报（OSC 9;9）的注入方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -609,6 +610,8 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
         // 本就是 shell 正常退出的信号，不能这么处理（标记恒为 false）。
         #[allow(unused_mut)]
         let mut console_torndown = false;
+        // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续
+        let mut utf8_tail: Vec<u8> = Vec::new();
         loop {
             tokio::select! {
                 // Windows: 子进程退出信号（shell 自己退出 → 会话结束）
@@ -627,8 +630,8 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                                 log::info!("[break] ws 发送输出失败（前端已断开） sid={sid}");
                                 break;
                             }
-                            // 同步广播给 AI sidecar 等外部订阅者（lossy：订阅者 lag 时丢老数据）
-                            let _ = output_tx.send(String::from_utf8_lossy(&chunk).to_string());
+                            // 同步广播给 AI sidecar 等外部订阅者（订阅者 lag 时丢老数据）
+                            let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &chunk));
                         }
                         None => {
                             #[cfg(windows)]
@@ -741,6 +744,11 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
         // 代际收尾：回收当前 shell（正常退出路径下它已死，kill 是无害空操作）
         read_task.abort();
         let _ = child.kill();
+        // 冲刷 UTF-8 尾缓冲：最后一块可能停在多字节字符中间
+        let tail_text = util::utf8_flush(&mut utf8_tail);
+        if !tail_text.is_empty() {
+            let _ = output_tx.send(tail_text);
+        }
         match child.wait() {
             Ok(st) => log::info!("local_pty: shell 退出状态 gen={gen} sid={sid} status={st:?}"),
             Err(e) => log::warn!("local_pty: shell wait 失败 sid={sid}: {e}"),
