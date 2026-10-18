@@ -353,15 +353,35 @@ const INPUT_BUF_LIMIT: usize = 512;
 
 /// 行首的 printf 是提示符行擦除：注入命令被 accept 执行时光标已到新行，
 /// 每提示符遥测钩子函数体。首句必须先取 `$?`（钩子链前置函数会改写它）；
-/// `__ashell_cwd` 非空时上报 OSC 9;9;<cwd>（cwd 跟随，受前端目录跟随开关
-/// 门控）；随后恒定上报 OSC 9;10;<exit>——上一条命令的退出码，供
-/// `POST /api/ssh/send/{sid}` 判定命令完成。末尾 return 恢复 $?，对钩子链
-/// 后续命令与读取 $? 的提示符主题透明。
-const ASHELL_RC_FN: &str = concat!(
-    "__ashell_rc(){ local __s=\"$?\"; ",
-    "[ -n \"$__ashell_cwd\" ] && printf '\\033]9;9;%s\\007' \"$PWD\"; ",
-    "printf '\\033]9;10;%s\\007' \"$__s\"; ",
+/// 上报 OSC 9;10;<exit>——上一条命令的退出码，供 `POST /api/ssh/send/{sid}`
+/// 判定命令完成；cwd 变体额外上报 OSC 9;9;<PWD>（目录跟随）。末尾恢复 $?，
+/// 对钩子链后续命令与读取 $? 的提示符主题透明。
+///
+/// 线体必须保持短小：注入行超过终端列宽会折行，行首的「上移一行擦除」
+/// 只能清掉最后一行，前面的回显残影会留在用户终端（曾因 255 字符线体
+/// 在 ~250 列终端折成两行而露馅）。cwd 上报不用运行时门控变量，直接按
+/// 开关生成两个变体，就是为了把线体压回旧版 ~110 字符量级。
+const ASHELL_RC_BASH_CWD: &str = concat!(
+    "__arc(){ local __s=\"$?\"; ",
+    "printf '\\e]9;9;%s\\a\\e]9;10;%s\\a' \"$PWD\" \"$__s\"; ",
     "return \"$__s\"; }",
+);
+const ASHELL_RC_BASH: &str = concat!(
+    "__arc(){ local __s=\"$?\"; ",
+    "printf '\\e]9;10;%s\\a' \"$__s\"; ",
+    "return \"$__s\"; }",
+);
+/// zsh 用 print 转义（\e/\a）比 printf 八进制短得多；`$?` 在函数体首条
+/// 命令的参数展开时取值，仍是用户命令的退出码
+const ASHELL_RC_ZSH_CWD: &str = concat!(
+    "__arc(){ local s=$?; ",
+    "print -n \"\\e]9;9;$PWD\\e]9;10;$s\\a\"; ",
+    "return $s; }",
+);
+const ASHELL_RC_ZSH: &str = concat!(
+    "__arc(){ local s=$?; ",
+    "print -n \"\\e]9;10;$s\\a\"; ",
+    "return $s; }",
 );
 
 /// 先上移擦掉注入所在的旧提示符行，让下一个提示符原地补位——否则剥掉
@@ -370,19 +390,17 @@ const ASHELL_RC_FN: &str = concat!(
 /// bash：钩子前插 PROMPT_COMMAND 链并保留 rc 里已有项（含后续用户改动）
 fn telemetry_line_bash(cwd_report: bool) -> String {
     format!(
-        " printf '\\033[1A\\033[2K\\r'; __ashell_cwd={gate}; export __ashell_cwd; {rc}; PROMPT_COMMAND=\"__ashell_rc${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}\"\n",
-        gate = if cwd_report { "1" } else { "" },
-        rc = ASHELL_RC_FN,
+        " printf '\\033[1A\\033[2K\\r'; {rc}; PROMPT_COMMAND=\"__arc;$PROMPT_COMMAND\"\n",
+        rc = if cwd_report { ASHELL_RC_BASH_CWD } else { ASHELL_RC_BASH },
     )
 }
 
 /// zsh：钩子必须前插 precmd_functions 队首——框架（oh-my-zsh 等）的钩子
-/// 会改写 $?，只有队首能取到用户命令的真实退出码；行首 printf 同 bash 变体
+/// 会改写 $?，只有队首能取到用户命令的真实退出码
 fn telemetry_line_zsh(cwd_report: bool) -> String {
     format!(
-        " printf '\\033[1A\\033[2K\\r'; __ashell_cwd={gate}; export __ashell_cwd; {rc}; precmd_functions=(__ashell_rc $precmd_functions)\n",
-        gate = if cwd_report { "1" } else { "" },
-        rc = ASHELL_RC_FN,
+        " printf '\\033[1A\\033[2K\\r'; {rc}; precmd_functions=(__arc $precmd_functions)\n",
+        rc = if cwd_report { ASHELL_RC_ZSH_CWD } else { ASHELL_RC_ZSH },
     )
 }
 
@@ -1708,16 +1726,38 @@ mod send_tests {
     fn resolve_completion_bash_as_sh_via_readlink() {
         let (line, mode) = resolve_completion("/bin/sh", "/bin/bash", false);
         assert_eq!(mode, ssh_svc::CompletionMode::Hooked);
-        assert!(line.unwrap().contains("__ashell_rc"));
+        assert!(line.unwrap().contains("__arc"));
     }
 
     #[test]
     fn resolve_completion_zsh_hooked_with_cwd_gate() {
         let (on, mode) = resolve_completion("/bin/zsh", "", true);
         assert_eq!(mode, ssh_svc::CompletionMode::Hooked);
-        assert!(on.unwrap().contains("__ashell_cwd=1;"));
+        let on = on.unwrap();
+        assert!(on.contains("9;9;"), "cwd 变体应上报 9;9");
+        assert!(on.contains("9;10;"), "cwd 变体仍应上报 9;10");
         let (off, _) = resolve_completion("/bin/zsh", "", false);
-        assert!(off.unwrap().contains("__ashell_cwd=;"));
+        let off = off.unwrap();
+        assert!(!off.contains("9;9;"), "非 cwd 变体不应上报 9;9");
+        assert!(off.contains("9;10;"));
+    }
+
+    #[test]
+    fn telemetry_lines_stay_short_to_avoid_wrap_residue() {
+        // 注入行超过终端列宽会折行，上移擦除只清一行，前面的回显残影
+        // 会留在用户终端（255 字符线体在 ~250 列终端露馅的教训）
+        for cwd in [true, false] {
+            assert!(
+                telemetry_line_bash(cwd).len() <= 160,
+                "bash 线体过长: {}",
+                telemetry_line_bash(cwd)
+            );
+            assert!(
+                telemetry_line_zsh(cwd).len() <= 160,
+                "zsh 线体过长: {}",
+                telemetry_line_zsh(cwd)
+            );
+        }
     }
 
     #[test]
