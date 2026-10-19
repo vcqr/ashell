@@ -14,6 +14,9 @@
 //!   ~/.zprofile + ~/.zshrc 才能重建出和 iTerm2 / Terminal.app 一致的环境。同时不把
 //!   残缺的 PATH 显式 setenv 给子进程，避免覆盖 shell 启动脚本重建的 PATH。
 //! - 用户传 `\r\n` 或 `\n` 时统一规一化为 `\r`，匹配 ConPTY / 大多数 \*nix shell 的行尾期望。
+//! - Windows 下输入侧启用 win32-input-mode（`CSI ?9001h`）：非 ASCII 字符以
+//!   `CSI Vk;Sc;Uc;Kd;Cs;Rc_` 键事件序列上报，绕开 conhost 对输入字节流的 UTF-8
+//!   解析（多字节字符跨解析块会被换成 U+FFFD 并丢续字节，表现为中文输入变乱码）。
 //! - Windows 下若 ConPTY 控制台被子进程整体拆除（典型：opencode `/exit` 时会关闭整个
 //!   控制台，连坐宿主 shell），本服务不结束会话，而是在同一 WebSocket 内重启一个新
 //!   shell（恢复最近 cwd），前端 tab 保持打开；shell 自身正常退出（exit 信号）仍按关闭处理。
@@ -403,6 +406,54 @@ fn write_input(writer: &mut dyn std::io::Write, data: &[u8], ctx: &str) -> bool 
     false
 }
 
+/// Windows ConPTY 的 win32-input-mode（GH#4999）：向输入管道发送 `CSI ?9001h`
+/// 后，客户端可用 `CSI Vk;Sc;Uc;Kd;Cs;Rc_` 序列上报按键事件，conhost 将其
+/// 无损还原为 KEY_EVENT（UnicodeChar 精确），绕开它对输入字节流的 UTF-8
+/// 解析——多字节字符跨解析块边界时，conhost 会把前几个字节替换成 U+FFFD、
+/// 续字节落单透传，表现为中文输入变方块加 \NNN 转义（Git Bash 报错
+/// `$'□□\213□□\225'` 即此形态）。格式与 conhost 解析端
+/// InputStateMachineEngine::_GenerateWin32Key / WT 编码端逐参数核对过。
+#[cfg(windows)]
+const WIN32_INPUT_MODE_ENABLE: &[u8] = b"\x1b[?9001h";
+
+/// 纯 ASCII（含 xterm 发出的方向键/控制序列）原样透传以维持既有行为；
+/// 仅 Windows 本地 PTY 且包含非 ASCII 字符时才需要键事件编码。
+fn needs_win32_input_encoding(s: &str) -> bool {
+    cfg!(windows) && !s.is_ascii()
+}
+
+/// 将输入文本按 win32-input-mode 编码：ASCII 字节原样保留；非 ASCII 字符
+/// 逐个编码为按下键事件 `CSI 0;0;Uc;1;0;1_`——Vk/Sc 置 0（IME 提交的文本
+/// 无真实按键，解析端 value_or 默认即 0）、Kd=1 按下、Cs=0 无修饰键、
+/// Rc=1。Uc 为 UTF-16 码元十进制值：conhost 侧 UnicodeChar 是 16 位
+/// wchar_t，代理对字符每码元各发一条，BMP 字符（含全部 CJK）单码元直达。
+fn encode_win32_input(data: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 16);
+    for ch in data.chars() {
+        if (ch as u32) < 0x80 {
+            out.push(ch as u8);
+        } else {
+            let mut buf = [0u16; 2];
+            for unit in ch.encode_utf16(&mut buf) {
+                out.extend_from_slice(format!("\x1b[0;0;{unit};1;0;1_").as_bytes());
+            }
+        }
+    }
+    out
+}
+
+/// 规一化行尾、按需 win32-input-mode 编码后写入 PTY；
+/// 返回 true 表示写入失败（调用方应退出主循环）。
+fn write_text_input(writer: &mut dyn std::io::Write, data: &str, ctx: &str) -> bool {
+    let normalized = data.replace("\r\n", "\r").replace('\n', "\r");
+    let bytes = if needs_win32_input_encoding(&normalized) {
+        encode_win32_input(&normalized)
+    } else {
+        normalized.into_bytes()
+    };
+    write_input(writer, &bytes, ctx)
+}
+
 pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
     log::info!("local_pty: connected sid={sid} shell={shell:?}");
 
@@ -509,6 +560,15 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                 break 'session;
             }
         };
+        // Windows：启用 win32-input-mode。每次重启代都是新的 ConPTY 实例
+        // （新 conhost 进程），须逐代启用。旧版 conhost（约 2020 年前）不
+        // 支持该模式时会把键事件序列静默丢弃，效果仅是非 ASCII 输入从
+        // "乱码"退化为"不上屏"，不会更糟。
+        #[cfg(windows)]
+        if write_input(&mut writer, WIN32_INPUT_MODE_ENABLE, "win32-input-mode enable") {
+            log::info!("local_pty: [break] win32-input-mode 启用写入失败 sid={sid}");
+            break 'session;
+        }
 
         let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(64);
         let (dsr_tx, mut dsr_rx) = mpsc::channel::<Vec<u8>>(8);
@@ -657,8 +717,7 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                 }
                 // 外部命令注入（POST /api/ssh/send/{sid}）：与 ws 输入同样规一化行尾
                 Some(data) = cmd_rx.recv() => {
-                    let normalized = data.replace("\r\n", "\r").replace('\n', "\r");
-                    if write_input(&mut writer, normalized.as_bytes(), "external cmd") {
+                    if write_text_input(&mut writer, &data, "external cmd") {
                         log::info!("local_pty: [break] 外部命令注入写入失败 sid={sid}");
                         break;
                     }
@@ -674,8 +733,7 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                             if s.starts_with('{') && s.ends_with('}') {
                                 match serde_json::from_str::<ClientMsg>(s) {
                                     Ok(ClientMsg::Cmd { data }) => {
-                                        let normalized = data.replace("\r\n", "\r").replace('\n', "\r");
-                                        if write_input(&mut writer, normalized.as_bytes(), "ws cmd") {
+                                        if write_text_input(&mut writer, &data, "ws cmd") {
                                             log::info!("local_pty: [break] ws cmd 写入失败 sid={sid}");
                                             break;
                                         }
@@ -706,16 +764,14 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                                     }
                                     Err(_) => {
                                         // 不是协议帧 → 当作原始输入透传
-                                        let normalized = s.replace("\r\n", "\r").replace('\n', "\r");
-                                        if write_input(&mut writer, normalized.as_bytes(), "ws raw text") {
+                                        if write_text_input(&mut writer, s, "ws raw text") {
                                             log::info!("local_pty: [break] ws raw text 写入失败 sid={sid}");
                                             break;
                                         }
                                     }
                                 }
                             } else {
-                                let normalized = s.replace("\r\n", "\r").replace('\n', "\r");
-                                if write_input(&mut writer, normalized.as_bytes(), "ws text") {
+                                if write_text_input(&mut writer, s, "ws text") {
                                     log::info!("local_pty: [break] ws text 写入失败 sid={sid}");
                                     break;
                                 }
@@ -781,4 +837,52 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
     log::info!("local_pty cleanup sid={sid}");
     ssh_svc::remove_terminal_channels(&sid).await;
     let _ = ws_tx.close().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_keeps_ascii_verbatim() {
+        // 纯 ASCII（含回车）必须逐字节原样透传：xterm 的方向键/控制序列
+        // 语义由 conhost 的 VT 解析维持，不能被键事件编码改写
+        assert_eq!(encode_win32_input("ls -la\r"), b"ls -la\r".to_vec());
+        assert_eq!(
+            encode_win32_input("\x1b[A\x1b[6n"),
+            b"\x1b[A\x1b[6n".to_vec()
+        );
+    }
+
+    #[test]
+    fn encodes_cjk_as_win32_key_sequences() {
+        // 「测」U+6D4B=27979、「试」U+8BD5=35797：Vk/Sc=0、Kd=1、Cs=0、Rc=1，
+        // 正是用户报告里被 conhost 解析边界搅乱的那两个字符
+        assert_eq!(
+            encode_win32_input("测试"),
+            b"\x1b[0;0;27979;1;0;1_\x1b[0;0;35797;1;0;1_".to_vec()
+        );
+        assert_eq!(
+            encode_win32_input("你好"),
+            b"\x1b[0;0;20320;1;0;1_\x1b[0;0;22909;1;0;1_".to_vec()
+        );
+    }
+
+    #[test]
+    fn encodes_mixed_text_keeping_ascii_paths() {
+        assert_eq!(
+            encode_win32_input("echo 中文"),
+            b"echo \x1b[0;0;20013;1;0;1_\x1b[0;0;25991;1;0;1_".to_vec()
+        );
+    }
+
+    #[test]
+    fn encodes_astral_char_per_utf16_unit() {
+        // 「𝄞」U+1D11E：conhost 侧 UnicodeChar 是 16 位 wchar_t，
+        // 代理对按两个码元各发一条（D834=55348、DD1E=56606）
+        assert_eq!(
+            encode_win32_input("\u{1D11E}"),
+            b"\x1b[0;0;55348;1;0;1_\x1b[0;0;56606;1;0;1_".to_vec()
+        );
+    }
 }
