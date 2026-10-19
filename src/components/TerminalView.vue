@@ -952,7 +952,14 @@ function onCompositionEndCapture() {
   const ta = term.textarea
   // value 优先：实测日志显示输入法联想 reflow 时 e.data 会回退（"ce"→"c"），
   // 而 textarea.value 不回退、compositionend 时最完整；data 仅作 value 为空时的回退。
-  const text = (ta ? ta.value : "") || lastCompositionText
+  let text = (ta ? ta.value : "") || lastCompositionText
+  // Windows/WebView2 + 拼音输入法：空格确认候选后 ta.value 会多出一个前导空格
+  // （后端日志实测提交变成 " 你"/" 测试"），最后一次 compositionupdate 的
+  // e.data 则是干净的提交文本。仅当「去前导空格后与 e.data 完全一致」时才采信
+  // e.data：既修掉幽灵空格，又不误伤 macOS 联想回退场景（彼时两者不等，仍取 value）。
+  if (text.startsWith(" ") && lastCompositionText && text.slice(1) === lastCompositionText) {
+    text = lastCompositionText
+  }
   if (ta) ta.value = ""
   lastCompositionText = ""
   if (text) {
@@ -961,19 +968,18 @@ function onCompositionEndCapture() {
 }
 
 /**
- * 英文联想输入法路径：keydown(keyCode 229) + 字符直接写 textarea（不走 composition）。
- * xterm 用 _handleAnyTextareaChanges 的 setTimeout 异步 diff textarea.value 增量发送，
- * 快速输入时与下一次 keydown 竞争，丢字（ceshi → cesi）。
+ * 输入法 keydown 拦截：keyCode 229 一律吞掉，不给 xterm 任何 229 处理机会。
  *
- * 这里拦截 keyCode 229 的可打印字符键（xterm 不再 diff），字符改由 input 事件
- * （insertText 携带 e.data = 本次插入字符）同步发送。普通英文输入 keydown 是
- * 字母键码（非 229），不受影响。
+ * xterm 对「composition 尚未 start 的 229 keydown」（中文输入法首个按键，
+ * e.key="Process"）会走 CompositionHelper.keydown → _handleAnyTextareaChanges
+ * 的 setTimeout 异步 diff，抢在 compositionstart 之前把预编辑片段发给 shell
+ * （实测 "ceshi" 的首字母 "c" 单独落进了 bash 命令行，用户被迫退格删字）。
+ * 文本交付由 input 事件（onTextInputCapture）与 composition 接管
+ * （onCompositionEndCapture）覆盖，无需 xterm 的 diff 路径。
  */
 function onImeKeydown(e: KeyboardEvent) {
   if (e.keyCode !== 229) return
-  if (e.key.length === 1 || e.key === " ") {
-    e.stopPropagation()
-  }
+  e.stopPropagation()
 }
 
 /**
