@@ -953,12 +953,14 @@ function onCompositionEndCapture() {
   // value 优先：实测日志显示输入法联想 reflow 时 e.data 会回退（"ce"→"c"），
   // 而 textarea.value 不回退、compositionend 时最完整；data 仅作 value 为空时的回退。
   let text = (ta ? ta.value : "") || lastCompositionText
-  // Windows/WebView2 + 拼音输入法：空格确认候选后 ta.value 会多出一个前导空格
-  // （后端日志实测提交变成 " 你"/" 测试"），最后一次 compositionupdate 的
-  // e.data 则是干净的提交文本。仅当「去前导空格后与 e.data 完全一致」时才采信
-  // e.data：既修掉幽灵空格，又不误伤 macOS 联想回退场景（彼时两者不等，仍取 value）。
-  if (text.startsWith(" ") && lastCompositionText && text.slice(1) === lastCompositionText) {
-    text = lastCompositionText
+  // Windows/WebView2 + 部分输入法：空格确认候选后 ta.value 会带上前导空格
+  // （后端日志实测提交变成 " 你" 甚至 "  你"，空格数与被透传的按键数相关），
+  // 最后一次 compositionupdate 的 e.data 则是干净的提交文本。仅当「去前导
+  // 空格后与 e.data 完全一致」时才采信 e.data：既修掉幽灵空格，又不误伤
+  // macOS 联想回退场景（彼时两者不等，仍取 value）。
+  const stripped = text.replace(/^ +/, "")
+  if (stripped && lastCompositionText && stripped === lastCompositionText) {
+    text = stripped
   }
   if (ta) ta.value = ""
   lastCompositionText = ""
