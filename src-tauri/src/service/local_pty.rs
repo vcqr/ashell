@@ -14,9 +14,9 @@
 //!   ~/.zprofile + ~/.zshrc 才能重建出和 iTerm2 / Terminal.app 一致的环境。同时不把
 //!   残缺的 PATH 显式 setenv 给子进程，避免覆盖 shell 启动脚本重建的 PATH。
 //! - 用户传 `\r\n` 或 `\n` 时统一规一化为 `\r`，匹配 ConPTY / 大多数 \*nix shell 的行尾期望。
-//! - Windows 下输入侧启用 win32-input-mode（`CSI ?9001h`）：非 ASCII 字符以
-//!   `CSI Vk;Sc;Uc;Kd;Cs;Rc_` 键事件序列上报，绕开 conhost 对输入字节流的 UTF-8
-//!   解析（多字节字符跨解析块会被换成 U+FFFD 并丢续字节，表现为中文输入变乱码）。
+//! - Windows 下非 ASCII 输入以 win32-input-mode 键事件序列
+//!   （`CSI Vk;Sc;Uc;Kd;Cs;Rc_`）上报，绕开 conhost 对输入字节流的 UTF-8 解析
+//!   （多字节字符跨解析块会被换成 U+FFFD 并丢续字节，表现为中文输入变乱码）。
 //! - Windows 下若 ConPTY 控制台被子进程整体拆除（典型：opencode `/exit` 时会关闭整个
 //!   控制台，连坐宿主 shell），本服务不结束会话，而是在同一 WebSocket 内重启一个新
 //!   shell（恢复最近 cwd），前端 tab 保持打开；shell 自身正常退出（exit 信号）仍按关闭处理。
@@ -406,16 +406,19 @@ fn write_input(writer: &mut dyn std::io::Write, data: &[u8], ctx: &str) -> bool 
     false
 }
 
-/// Windows ConPTY 的 win32-input-mode（GH#4999）：向输入管道发送 `CSI ?9001h`
-/// 后，客户端可用 `CSI Vk;Sc;Uc;Kd;Cs;Rc_` 序列上报按键事件，conhost 将其
-/// 无损还原为 KEY_EVENT（UnicodeChar 精确），绕开它对输入字节流的 UTF-8
-/// 解析——多字节字符跨解析块边界时，conhost 会把前几个字节替换成 U+FFFD、
-/// 续字节落单透传，表现为中文输入变方块加 \NNN 转义（Git Bash 报错
-/// `$'□□\213□□\225'` 即此形态）。格式与 conhost 解析端
+/// Windows ConPTY 的 win32-input-mode（GH#4999）：客户端用
+/// `CSI Vk;Sc;Uc;Kd;Cs;Rc_` 序列上报按键事件，conhost 将其无损还原为
+/// KEY_EVENT（UnicodeChar 精确），绕开它对输入字节流的 UTF-8 解析——
+/// 多字节字符跨解析块边界时，conhost 会把前几个字节替换成 U+FFFD、续字节
+/// 落单透传，表现为中文输入变方块加 \NNN 转义（Git Bash 报错
+/// `$'□□\213□□\225'` 即此形态）。序列格式与 conhost 解析端
 /// InputStateMachineEngine::_GenerateWin32Key / WT 编码端逐参数核对过。
-#[cfg(windows)]
-const WIN32_INPUT_MODE_ENABLE: &[u8] = b"\x1b[?9001h";
-
+///
+/// 注意：不发送规范里的启用序列 `CSI ?9001h`。实测 conhost（Win11 24H2）
+/// 的输入引擎没有 DECSET-9001 分支：`?9001h` 会被按普通按键回退下发，
+/// readline 吞掉 `ESC [ ?` 后把 "9001h" 当文本插进命令行；而 `CSI ..._`
+/// 序列的解析不受该模式门控（同机实测 + conhost 主线源码确认），无需启用。
+///
 /// 纯 ASCII（含 xterm 发出的方向键/控制序列）原样透传以维持既有行为；
 /// 仅 Windows 本地 PTY 且包含非 ASCII 字符时才需要键事件编码。
 fn needs_win32_input_encoding(s: &str) -> bool {
@@ -446,6 +449,9 @@ fn encode_win32_input(data: &str) -> Vec<u8> {
 /// 返回 true 表示写入失败（调用方应退出主循环）。
 fn write_text_input(writer: &mut dyn std::io::Write, data: &str, ctx: &str) -> bool {
     let normalized = data.replace("\r\n", "\r").replace('\n', "\r");
+    // debug 记录原始输入（RUST_LOG=debug 可见）：排查输入侧插入/丢失类问题时
+    // 用于区分「前端发了什么」与「shell 收到什么」，{:?} 让空格与转义一目了然
+    log::debug!("local_pty: 文本输入 ctx={ctx} data={normalized:?}");
     let bytes = if needs_win32_input_encoding(&normalized) {
         encode_win32_input(&normalized)
     } else {
@@ -560,15 +566,6 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                 break 'session;
             }
         };
-        // Windows：启用 win32-input-mode。每次重启代都是新的 ConPTY 实例
-        // （新 conhost 进程），须逐代启用。旧版 conhost（约 2020 年前）不
-        // 支持该模式时会把键事件序列静默丢弃，效果仅是非 ASCII 输入从
-        // "乱码"退化为"不上屏"，不会更糟。
-        #[cfg(windows)]
-        if write_input(&mut writer, WIN32_INPUT_MODE_ENABLE, "win32-input-mode enable") {
-            log::info!("local_pty: [break] win32-input-mode 启用写入失败 sid={sid}");
-            break 'session;
-        }
 
         let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(64);
         let (dsr_tx, mut dsr_rx) = mpsc::channel::<Vec<u8>>(8);
