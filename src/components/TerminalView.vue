@@ -925,10 +925,14 @@ function onCompositionKeydown(e: KeyboardEvent) {
  * textarea.value 增量提交，且提交后不清空 textarea，快速连续输入时相邻
  * composition 事件与 setTimeout 竞争，marked text 切割错位、字符丢失。
  *
- * 提交文本来源优先级：
- * 1. 最后一次 compositionupdate 的 e.data —— 输入法通过 DOM 事件报告的完整
- *    marked text，与 textarea.value 相互独立，不受 xterm 对 value 的读写干扰；
- * 2. 回退读 textarea.value（个别输入法不派发 update 时）。
+ * 提交文本来源：textarea.value（compositionend 时最完整），NBSP 还原 + 前导
+ * 空格剥离后发送；value 为空时回退最后一次 compositionupdate 的 e.data
+ * （个别输入法不派发 update、或联想 reflow 时 value 短暂不完整）。
+ *
+ * 注意不能用「剥空格后与 e.data 比对」做守卫：macOS WebKit 提交候选时不派发
+ * 携带提交文本的 compositionupdate，最后一次 update 的 data 仍是拼音 marked
+ * text（"nihao"），比对永远不等，守卫形同虚设（Windows Chromium 会补发带
+ * 提交文本的 update，故彼处可用）。
  *
  * 发送走 term.input()（公开 API，与键盘输入同一 onData 通道），并清空
  * textarea.value：xterm 随后异步提交读到空串、自然不发，无双发；下一次
@@ -938,37 +942,38 @@ function onCompositionKeydown(e: KeyboardEvent) {
  * 由 onImeKeydown / onTextInputCapture 处理。
  */
 let lastCompositionText = ""
+/** compositionstart → compositionend 之间为 true，是本侧维护的会话状态，不依赖事件标志。 */
+let compositionSessionActive = false
 
 function onCompositionStartCapture() {
+  compositionSessionActive = true
   lastCompositionText = ""
 }
 
 function onCompositionUpdateCapture(e: CompositionEvent) {
-  lastCompositionText = e.data ?? ""
+  // e.data 与 value 同样可能含 NBSP（组词空格），先做一致还原，保证末尾比对成立
+  lastCompositionText = (e.data ?? "").replace(/\u{a0}/gu, " ")
 }
 
 function onCompositionEndCapture() {
   if (!term) return
+  compositionSessionActive = false
   const ta = term.textarea
   // value 优先：实测日志显示输入法联想 reflow 时 e.data 会回退（"ce"→"c"），
   // 而 textarea.value 不回退、compositionend 时最完整；data 仅作 value 为空时的回退。
   const raw = ta ? ta.value : ""
-  // Windows/WebView2 + 部分输入法：空格确认候选后 ta.value 会带上前导空格
-  // （后端日志实测提交变成 " 你" 甚至 "  你"，空格数与被透传的按键数相关），
-  // 最后一次 compositionupdate 的 e.data 则是干净的提交文本。仅当「去前导
-  // 空格后与 e.data 完全一致」时才采信 e.data：既修掉幽灵空格，又不误伤
-  // macOS 联想回退场景（彼时两者不等，仍取 value）。只剥 U+0020，不碰 NBSP。
-  const strippedRaw = raw.replace(/^ +/, "")
-  let text =
-    strippedRaw && lastCompositionText && strippedRaw === lastCompositionText
-      ? strippedRaw
-      : raw
-  // macOS 拼音在中文组词里把空格键编码成 NBSP（U+00A0），终端按宽字符渲染成
-  // 两个格，看起来就是"多了一个空格"。用户按的是空格键、意图是普通空格：
-  // 统一还原成 U+0020（全角空格 U+3000 属于刻意输入，不动）。
-  text = text.replace(/\u{a0}/gu, " ")
+  // macOS 拼音把空格键编码成 NBSP（U+00A0）：组词里出现在 marked text 中，
+  // 空格确认候选时还会落在 value 首部。统一先还原成 U+0020（全角空格 U+3000
+  // 属于刻意输入，不动）。
+  const normalized = raw.replace(/\u{a0}/gu, " ")
+  // 前导空格一律剥离，不设比对守卫：composition 提交串（候选词/整句/回退的
+  // 原拼音或原文）不可能以 ASCII 空格开头，value 首部的前导空格只会是确认键
+  // 被透传的默认插入——Windows 实测 " 你"、"  你"，macOS 同样存在（后端日志
+  // data=" 你好"，敲 echo "" 后引号间切中文打 nihao 空格确认）。刻意输入的
+  // 半角空格不走 composition（空组合时输入法不接管，走 keypress 通道），不受影响。
+  let text = normalized.replace(/^ +/, "")
   if (!text) {
-    text = lastCompositionText
+    text = lastCompositionText.replace(/^ +/, "")
   }
   if (ta) ta.value = ""
   lastCompositionText = ""
@@ -1003,6 +1008,12 @@ function onImeKeydown(e: KeyboardEvent) {
 function onTextInputCapture(e: Event) {
   const ie = e as InputEvent
   if (!term) return
+  // composition 会话存续期间（start→end 之间）textarea 的写入全部属于输入法，
+  // 一律交给 onCompositionEndCapture 一次性提交。个别 WebKit 版本会把提交瞬间
+  // 的 input 事件 isComposing 误报为 false，单看事件标志会漏拦，这里用
+  // compositionstart/end 自己维护的会话状态兜底（提交后 value 已清空，end
+  // 兜底读 lastCompositionText，不受影响）。
+  if (compositionSessionActive) return
   if (ie.isComposing) return // composition 由 onCompositionEndCapture 接管
   if (ie.inputType !== "insertText") return
   const data = ie.data
