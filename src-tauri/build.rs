@@ -30,23 +30,18 @@ fn main() {
             .expect("OUT_DIR 结构异常：未找到 profile 目录")
             .to_path_buf();
         for file in ["conpty.dll", "OpenConsole.exe"] {
-            let src = src_dir.join(file);
-            let dst = exe_dir.join(file);
-            if let Err(e) = std::fs::copy(&src, &dst) {
-                panic!("复制 {file} 到 {} 失败: {e}", dst.display());
-            }
+            copy_if_unchanged(&src_dir.join(file), &exe_dir.join(file));
             println!("cargo:rerun-if-changed=resources/conpty/{variant}/{file}");
         }
 
-        // 2) 固定名暂存，供 tauri.windows.conf.json 的 resources 映射进安装包
+        // 2) 固定名暂存，供 tauri.windows.conf.json 的 resources 映射进安装包。
+        //    bin/ 位于 tauri dev 监视的 src-tauri 树内，每轮构建开头就无条件重写
+        //    会让 watcher 误判变更并杀掉尚未完成的构建，形成重建死循环，
+        //    因此内容相同必须跳过。
         let stage = std::path::Path::new(&manifest_dir).join("resources/conpty/bin");
         std::fs::create_dir_all(&stage).expect("创建暂存目录");
         for file in ["conpty.dll", "OpenConsole.exe"] {
-            let src = src_dir.join(file);
-            let dst = stage.join(file);
-            if let Err(e) = std::fs::copy(&src, &dst) {
-                panic!("暂存 {file} 到 {} 失败: {e}", dst.display());
-            }
+            copy_if_unchanged(&src_dir.join(file), &stage.join(file));
         }
     }
 
@@ -54,5 +49,17 @@ fn main() {
     // Web server 目标（--no-default-features）不启用 desktop feature，跳过之
     if std::env::var_os("CARGO_FEATURE_DESKTOP").is_some() {
         tauri_build::build();
+    }
+}
+
+/// 目标缺失或内容不同才复制；内容相同跳过，避免无谓的文件改写
+fn copy_if_unchanged(src: &std::path::Path, dst: &std::path::Path) {
+    if let (Ok(new), Ok(old)) = (std::fs::read(src), std::fs::read(dst)) {
+        if new == old {
+            return;
+        }
+    }
+    if let Err(e) = std::fs::copy(src, dst) {
+        panic!("复制 {} 到 {} 失败: {e}", src.display(), dst.display());
     }
 }
