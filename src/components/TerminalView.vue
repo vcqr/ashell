@@ -952,15 +952,23 @@ function onCompositionEndCapture() {
   const ta = term.textarea
   // value 优先：实测日志显示输入法联想 reflow 时 e.data 会回退（"ce"→"c"），
   // 而 textarea.value 不回退、compositionend 时最完整；data 仅作 value 为空时的回退。
-  let text = (ta ? ta.value : "") || lastCompositionText
+  const raw = ta ? ta.value : ""
   // Windows/WebView2 + 部分输入法：空格确认候选后 ta.value 会带上前导空格
   // （后端日志实测提交变成 " 你" 甚至 "  你"，空格数与被透传的按键数相关），
   // 最后一次 compositionupdate 的 e.data 则是干净的提交文本。仅当「去前导
   // 空格后与 e.data 完全一致」时才采信 e.data：既修掉幽灵空格，又不误伤
-  // macOS 联想回退场景（彼时两者不等，仍取 value）。
-  const stripped = text.replace(/^ +/, "")
-  if (stripped && lastCompositionText && stripped === lastCompositionText) {
-    text = stripped
+  // macOS 联想回退场景（彼时两者不等，仍取 value）。只剥 U+0020，不碰 NBSP。
+  const strippedRaw = raw.replace(/^ +/, "")
+  let text =
+    strippedRaw && lastCompositionText && strippedRaw === lastCompositionText
+      ? strippedRaw
+      : raw
+  // macOS 拼音在中文组词里把空格键编码成 NBSP（U+00A0），终端按宽字符渲染成
+  // 两个格，看起来就是"多了一个空格"。用户按的是空格键、意图是普通空格：
+  // 统一还原成 U+0020（全角空格 U+3000 属于刻意输入，不动）。
+  text = text.replace(/\u{a0}/gu, " ")
+  if (!text) {
+    text = lastCompositionText
   }
   if (ta) ta.value = ""
   lastCompositionText = ""
