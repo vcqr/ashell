@@ -645,6 +645,58 @@ function installCursorBlinkGuard() {
 }
 
 /**
+ * 加粗 WebGL 渲染器的下划线光标。
+ *
+ * addon-webgl 把 underline 光标画成单元格底部一条 dpr 设备像素（即 1 CSS px）
+ * 高的矩形，高度硬编码且没有暴露任何配置项，实际观感过细、几乎看不见；bar
+ * 光标有 cursorWidth 可调，underline 没有对应选项。这里包装
+ * WebglRenderer._updateModel（私有 API，每次光标重绘都会重建光标模型）：
+ * 重建完成后把 underline 光标的 dpr 抬到 2 倍设备像素（= 2 CSS px），
+ * 与 bar 光标（cursorWidth=2）的粗细一致，block/bar/outline 不受影响。
+ *
+ * 渲染器实例在 webgl 重载（连字切换、context loss）后会重建，loadWebgl 是
+ * 唯一挂载点，每次加载后需重新调用；用实例标记防重复包装。内部结构变化时
+ * 静默跳过，仅退回原来的 1px 细线。
+ * 升级 addon-webgl 后需检查 _renderService/_updateModel 内部结构是否变化。
+ */
+function thickenWebglUnderlineCursor() {
+  if (!term) return
+  const core = (term as unknown as {
+    _core?: {
+      _renderService?: {
+        // xterm 6 的 RenderService 以懒引用持有渲染器（_renderer.value）
+        _renderer?: { value?: unknown } | unknown
+      }
+    }
+  })._core
+  const service = core?._renderService as
+    | { _renderer?: { value?: Record<string, unknown> } }
+    | undefined
+  const renderer =
+    service?._renderer?.value ?? (service?._renderer as Record<string, unknown> | undefined)
+  if (
+    !renderer ||
+    typeof renderer._updateModel !== "function" ||
+    renderer.__underlineCursorThickened
+  ) {
+    return
+  }
+  renderer.__underlineCursorThickened = true
+  const originalUpdateModel = (renderer._updateModel as (...args: unknown[]) => void).bind(
+    renderer,
+  )
+  renderer._updateModel = (...args: unknown[]) => {
+    originalUpdateModel(...args)
+    const cursor = (renderer._model as { cursor?: { style?: string; dpr?: number } } | undefined)
+      ?.cursor
+    // _updateModel 每次重绘都会用原始 dpr 重建 cursor 对象，此处改写不会累积放大
+    if (cursor?.style === "underline" && typeof cursor.dpr === "number" && cursor.dpr > 0) {
+      cursor.dpr *= 2
+    }
+  }
+}
+
+/**
  * 解析 shell 的 cwd 上报序列并上抛 cwd-change（驱动本地文件抽屉目录跟随）。
  *
  * - OSC 9;9;<path>（ConEmu 风格）：本地 PTY 后端按 shell 注入（PowerShell 包
@@ -776,6 +828,8 @@ function loadWebgl() {
       if (webglAddon === addon) webglAddon = null
     })
     term.loadAddon(addon)
+    // 下划线光标在 addon-webgl 里硬编码 1px，包一层加粗到 2px（见函数说明）
+    thickenWebglUnderlineCursor()
     webglAddon = addon
   } catch (e) {
     // 老 WebKit / 受限 GPU 环境会抛错，无声回退
@@ -2595,5 +2649,19 @@ onBeforeUnmount(() => {
 .connecting-fade-enter-from,
 .connecting-fade-leave-to {
   opacity: 0;
+}
+</style>
+
+<style>
+/*
+ * DOM 渲染器回退路径（壁纸/窗口透明/WebGL 不可用时）的下划线光标加粗。
+ * xterm DomRenderer 在运行时生成的样式表把 underline 光标硬编码为
+ * border-bottom 1px，同样没有配置项；这里用 !important 覆盖为 2px，
+ * 与 WebGL 路径及 bar 光标（cursorWidth=2）保持一致。颜色与 solid
+ * 样式仍沿用生成规则中的光标色。
+ */
+.xterm .xterm-cursor.xterm-cursor-underline {
+  border-bottom-width: 2px !important;
+  height: calc(100% - 2px) !important;
 }
 </style>
