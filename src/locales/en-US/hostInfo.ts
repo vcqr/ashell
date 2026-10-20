@@ -3,6 +3,7 @@ export default {
   dragToResize: "Drag to resize",
   refresh: "Refresh",
   close: "Close",
+  openInNewWindow: "Open in new window",
   needSession: "Please establish a connection first",
   errorRetry: "Retry",
   errorHint: "Retrying automatically in the background; sampling resumes once the session reconnects.",

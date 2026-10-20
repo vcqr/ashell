@@ -172,3 +172,54 @@ export async function openAiInNewWindow(opts: OpenAiWindowOptions): Promise<void
     console.error("[ashell] failed to create ai window:", e)
   })
 }
+
+export interface OpenHostInfoWindowOptions {
+  sid: string
+  title?: string
+  addr?: string
+}
+
+/**
+ * 把主机信息面板弹出到独立窗口。
+ *
+ * 与 SFTP 窗口同策略：SSH 会话按 sid 存活于后端 axum 进程，新窗口凭相同
+ * token 用同一个 sid 轮询 sysinfo 即可，不重复建连。原终端 tab 关闭/断开
+ * 后采集会失败（面板内显示错误与重试按钮）。
+ */
+export async function openHostInfoInNewWindow(opts: OpenHostInfoWindowOptions): Promise<void> {
+  seq += 1
+  const label = `ashell-hostinfo-${Date.now()}-${seq}`
+
+  const base = window.location.href.split("?")[0]
+  const params = new URLSearchParams()
+  params.set("newwin", "1")
+  params.set("kind", "hostinfo")
+  params.set("sid", opts.sid)
+  if (opts.title) params.set("title", opts.title)
+  if (opts.addr) params.set("addr", opts.addr)
+  const url = `${base}?${params.toString()}`
+  const winTitle = opts.title ?? "Host Info"
+
+  if (!isTauri) {
+    openPopup(url, winTitle, 520, 760)
+    return
+  }
+
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow")
+  const webview = new WebviewWindow(label, {
+    url,
+    title: winTitle,
+    width: 520,
+    height: 760,
+    minWidth: 400,
+    minHeight: 480,
+    decorations: false,
+    center: true,
+    // 统一与主窗口一致，避免 wry 原生拖放拦截干扰 DOM 事件
+    dragDropEnabled: false,
+  })
+
+  webview.once("tauri://error", (e) => {
+    console.error("[ashell] failed to create hostinfo window:", e)
+  })
+}

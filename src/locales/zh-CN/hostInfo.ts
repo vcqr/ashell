@@ -3,6 +3,7 @@ export default {
   dragToResize: "拖动调整宽度",
   refresh: "刷新",
   close: "关闭",
+  openInNewWindow: "在新窗口打开",
   needSession: "请先建立连接",
   errorRetry: "重试",
   errorHint: "将在后台自动重试；若会话已断开，重连后会自动恢复采集。",

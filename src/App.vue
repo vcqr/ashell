@@ -34,6 +34,7 @@ import SftpWindow from "@/components/SftpWindow.vue";
 import LocalFilesDrawer from "@/components/LocalFilesDrawer.vue";
 import WindowControls from "@/components/WindowControls.vue";
 import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
+import HostInfoWindow from "@/components/HostInfoWindow.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
 import TemplateDrawer from "@/components/TemplateDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
@@ -360,13 +361,14 @@ watch(settingsOpen, (open) => {
   if (!open) settingsInitialTab.value = undefined;
 });
 
-// 独立窗口：由 openSftpInNewWindow / openAiInNewWindow 创建，
-// URL 带 newwin=1&kind=sftp|ai。走完整 App 实例（providers/api init/theme），
+// 独立窗口：由 openSftpInNewWindow / openAiInNewWindow / openHostInfoInNewWindow 创建，
+// URL 带 newwin=1&kind=sftp|ai|hostinfo。走完整 App 实例（providers/api init/theme），
 // 但只渲染对应 solo 布局。
 const launchParams = new URLSearchParams(window.location.search);
 const soloKind = launchParams.get("newwin") === "1" ? launchParams.get("kind") : null;
 const soloSftp = soloKind === "sftp";
 const soloAi = soloKind === "ai";
+const soloHostInfo = soloKind === "hostinfo";
 
 // 活动栏宽度挂 documentElement：内容区让位计算与右侧抽屉（SFTP / 本地文件 /
 // 模板等，均 Teleport 到 body）共用同一变量。此前挂在 .app-root 上，Teleport
@@ -374,7 +376,7 @@ const soloAi = soloKind === "ai";
 // 露出一条活动栏宽度的空隙。solo 独立窗口无活动栏，恒为 0。
 watchEffect(() => {
   const w =
-    !soloSftp && !soloAi && tabs.value.length > 0 && activityBarVisible.value
+    !soloSftp && !soloAi && !soloHostInfo && tabs.value.length > 0 && activityBarVisible.value
       ? "44px"
       : "0px";
   document.documentElement.style.setProperty("--ashell-activity-w", w);
@@ -505,9 +507,10 @@ if (!isTauri) {
       <NDialogProvider>
         <NNotificationProvider>
           <LoginGate>
-            <UpdateChecker v-if="isTauri && !soloSftp && !soloAi" />
+            <UpdateChecker v-if="isTauri && !soloSftp && !soloAi && !soloHostInfo" />
             <SftpWindow v-if="soloSftp" />
             <AiWindow v-else-if="soloAi" />
+            <HostInfoWindow v-else-if="soloHostInfo" />
             <div v-else class="app-root">
               <!-- 毛玻璃浓度色罩：亚克力原生效果在 Windows 11 走 DWM 系统背景路径，
                    不接受自定义色罩（window-vibrancy 忽略 color），浓度改由这层 DOM

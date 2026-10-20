@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   RiCloseLine,
+  RiExternalLinkLine,
   RiRefreshLine,
 } from "@remixicon/vue"
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
@@ -33,6 +34,8 @@ import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import { usePanelSwitchClosed } from "@/composables/usePanels"
 import { useIconStore } from "@/stores/icons"
 import NetSparkline from "@/components/host/NetSparkline.vue"
+import { isTauri } from "@/utils/platform"
+import { openHostInfoInNewWindow } from "@/utils/newWindow"
 
 interface Props {
   open: boolean
@@ -45,6 +48,8 @@ interface Props {
     port: string
     username: string
   }
+  /** 独立窗口模式：铺满窗口、无宽度拖拽，面板头由窗口标题栏接管 */
+  standalone?: boolean
 }
 
 const props = defineProps<Props>()
@@ -385,13 +390,39 @@ function resetSeries() {
   selectedNic.value = ALL_KEY
 }
 
+function onClose() {
+  // 独立窗口模式下"关闭"语义是关掉整个窗口
+  if (props.standalone) {
+    if (isTauri) {
+      void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+        getCurrentWindow().close(),
+      )
+    } else {
+      window.close()
+    }
+    return
+  }
+  emit("update:open", false)
+}
+
+/** 弹出到独立窗口（复用当前 SSH 会话）。
+ *  "移动"语义：与 SFTP 面板一致，弹出后收起本抽屉，避免挡住终端 */
+function openInStandaloneWindow() {
+  if (!props.sid) return
+  void openHostInfoInNewWindow({
+    sid: props.sid,
+    title: props.hostName,
+    addr: props.hostInfo?.addr,
+  })
+  emit("update:open", false)
+}
+
+/** 供独立窗口标题栏的刷新按钮调用（HostInfoWindow 经 ref 使用） */
 function manualRefresh() {
   void refresh()
 }
 
-function onClose() {
-  emit("update:open", false)
-}
+defineExpose({ manualRefresh })
 
 watch(
   () => [props.open, props.sid] as const,
@@ -421,34 +452,42 @@ const { width, resizing, onResizeStart } = useDrawerWidth({
 // 被互斥切换关闭：跳过离场滑动动画，避免旧面板滑出与新面板滑入交叠出重影
 const switchClosed = usePanelSwitchClosed("hostInfo")
 
-const panelStyle = computed(() => ({
-  width: `${width.value}px`,
-  transition:
-    resizing.value || switchClosed.value
-      ? "none"
-      : "transform 0.25s ease, box-shadow 0.15s ease",
-  // 关闭态平移叠加活动栏宽度，理由同 AiAssistant（锚定 right: 活动栏宽）
-  transform: props.open
-    ? "translateX(0)"
-    : "translateX(calc(100% + var(--ashell-activity-w, 0px)))",
-}))
+const panelStyle = computed(() => {
+  // 独立窗口模式：铺满窗口（顶部让位给窗口标题栏），无滑入动画
+  if (props.standalone) {
+    return { width: "auto", transition: "none" }
+  }
+  return {
+    width: `${width.value}px`,
+    transition:
+      resizing.value || switchClosed.value
+        ? "none"
+        : "transform 0.25s ease, box-shadow 0.15s ease",
+    // 关闭态平移叠加活动栏宽度，理由同 AiAssistant（锚定 right: 活动栏宽）
+    transform: props.open
+      ? "translateX(0)"
+      : "translateX(calc(100% + var(--ashell-activity-w, 0px)))",
+  }
+})
 </script>
 
 <template>
   <Teleport to="body">
     <aside
       class="hostinfo-panel"
-      :class="{ open: props.open, resizing: resizing }"
+      :class="{ open: props.open, resizing: resizing, standalone: props.standalone }"
       :style="panelStyle"
       :aria-hidden="!props.open"
     >
       <div
+        v-if="!props.standalone"
         class="resize-handle"
         :title="t('hostInfo.dragToResize')"
         @pointerdown="onResizeStart"
       />
 
-      <header class="panel-header">
+      <!-- 独立窗口模式下不渲染面板头：标题由 HostInfoWindow 标题栏承担，避免双标题 -->
+      <header v-if="!props.standalone" class="panel-header">
         <div class="drawer-title-wrap">
           <img
             v-if="hostIconUrl"
@@ -459,6 +498,18 @@ const panelStyle = computed(() => ({
           <span class="drawer-title">{{ drawerTitle }}</span>
         </div>
         <NSpace :size="6" align="center" :wrap="false">
+          <NButton
+            size="small"
+            quaternary
+            circle
+            :disabled="!props.sid"
+            :title="t('hostInfo.openInNewWindow')"
+            @click="openInStandaloneWindow"
+          >
+            <template #icon>
+              <NIcon><RiExternalLinkLine /></NIcon>
+            </template>
+          </NButton>
           <NButton
             size="small"
             quaternary
@@ -916,6 +967,18 @@ const panelStyle = computed(() => ({
 
 .hostinfo-panel.resizing {
   user-select: none;
+}
+
+/* 独立窗口模式：面板铺满窗口（顶部让位给窗口标题栏），无侧边阴影 */
+.hostinfo-panel.standalone {
+  left: 0;
+  right: 0;
+  width: auto;
+  border-left: none;
+}
+
+.hostinfo-panel.standalone.open {
+  box-shadow: none;
 }
 
 .resize-handle {
