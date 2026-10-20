@@ -25,7 +25,7 @@ import type { SelectOption } from "naive-ui"
 import { useI18n } from "vue-i18n"
 import { getSysInfo } from "@/api/sysinfo"
 import { ApiError } from "@/api/client"
-import type { ProcStat, SysInfo } from "@/types"
+import type { DiskUsage, ProcStat, SysInfo } from "@/types"
 import { humanSize } from "@/utils/humanSize"
 import { humanRate } from "@/utils/humanRate"
 import { humanUptime } from "@/utils/humanUptime"
@@ -185,6 +185,12 @@ function gaugeColor(v: number, base: string): string {
   if (v >= 80) return "#ef4444"
   if (v >= 60) return "#f59e0b"
   return base
+}
+
+/** 磁盘占用百分比（容量为 0 时按 0 处理） */
+function diskPercentOf(d: DiskUsage): number {
+  if (d.total_bytes <= 0) return 0
+  return clamp((d.used_bytes / d.total_bytes) * 100)
 }
 
 /* ---------- 网卡相关 ---------- */
@@ -565,7 +571,7 @@ const panelStyle = computed(() => ({
                     :show-indicator="false"
                     :height="8"
                     :border-radius="4"
-                    color="#7c5cff"
+                    :color="gaugeColor(cpuPercent, '#7c5cff')"
                     rail-color="var(--ashell-hover)"
                   />
                 </div>
@@ -601,7 +607,7 @@ const panelStyle = computed(() => ({
                     :show-indicator="false"
                     :height="8"
                     :border-radius="4"
-                    color="#4ade80"
+                    :color="gaugeColor(memPercent, '#4ade80')"
                     rail-color="var(--ashell-hover)"
                   />
                 </div>
@@ -628,7 +634,7 @@ const panelStyle = computed(() => ({
                     :show-indicator="false"
                     :height="8"
                     :border-radius="4"
-                    color="#f59e0b"
+                    :color="gaugeColor(swapPercent, '#f59e0b')"
                     rail-color="var(--ashell-hover)"
                   />
                 </div>
@@ -659,7 +665,7 @@ const panelStyle = computed(() => ({
                     :show-indicator="false"
                     :height="8"
                     :border-radius="4"
-                    color="#4a8cff"
+                    :color="gaugeColor(rootDiskPercent, '#4a8cff')"
                     rail-color="var(--ashell-hover)"
                   />
                 </div>
@@ -681,14 +687,10 @@ const panelStyle = computed(() => ({
                     </div>
                     <NProgress
                       type="line"
-                      :percentage="
-                        d.total_bytes > 0
-                          ? clamp((d.used_bytes / d.total_bytes) * 100)
-                          : 0
-                      "
+                      :percentage="diskPercentOf(d)"
                       :show-indicator="false"
                       :height="6"
-                      color="#4a8cff"
+                      :color="gaugeColor(diskPercentOf(d), '#4a8cff')"
                     />
                   </div>
                 </NCollapseItem>
