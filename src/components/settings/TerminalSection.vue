@@ -22,6 +22,8 @@ import {
   FONT_SIZE_MAX,
   SCROLLBACK_MIN,
   SCROLLBACK_MAX,
+  CURSOR_WIDTH_MIN,
+  CURSOR_WIDTH_MAX,
   type CursorStyle,
   type RightClickAction,
   type LeftClickAction,
@@ -141,6 +143,20 @@ const disconnectOptions = computed(() => [
         <NFormItem :label="t('settings.terminal.cursorBlink')">
           <NSwitch v-model:value="terminalStore.cursorBlink" />
         </NFormItem>
+      </div>
+      <div class="form-row" style="margin-top: 4px">
+        <NFormItem :label="t('settings.terminal.cursorWidth')" style="flex: 1">
+          <NInputNumber
+            v-model:value="terminalStore.cursorWidth"
+            :min="CURSOR_WIDTH_MIN"
+            :max="CURSOR_WIDTH_MAX"
+            :step="1"
+            style="width: 100%"
+          />
+        </NFormItem>
+        <p class="settings-hint" style="flex: 1; align-self: flex-end; margin: 0 0 18px">
+          {{ t("settings.terminal.cursorWidthHint") }}
+        </p>
       </div>
 
       <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupMouse") }}</div>

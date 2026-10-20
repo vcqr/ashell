@@ -95,6 +95,8 @@ export default {
     scrollback: "滚动缓冲区",
     cursorStyle: "光标样式",
     cursorBlink: "光标闪烁",
+    cursorWidth: "光标粗细 (px)",
+    cursorWidthHint: "下划线与竖线光标的粗细，方块光标不适用。",
     rightClick: "鼠标右键行为",
     leftClick: "鼠标左键 / 中键行为",
     cursorStyles: {

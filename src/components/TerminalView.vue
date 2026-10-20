@@ -23,7 +23,10 @@ import { pasteText, copyText, sanitizePastedText } from "@/utils/clipboard"
 import { openExternal } from "@/utils/platform"
 import { useI18n } from "vue-i18n"
 import { useApiStore } from "@/stores/api"
-import { useTerminalStore } from "@/stores/terminal"
+import {
+  CURSOR_WIDTH_MIN,
+  useTerminalStore,
+} from "@/stores/terminal"
 import { useBroadcastStore } from "@/stores/broadcast"
 import { useStartupStore } from "@/stores/startup"
 import { useHostStore } from "@/stores/hosts"
@@ -574,7 +577,13 @@ function applyTermOptions() {
   term.options.fontFamily = termStore.fontFamily
   term.options.cursorStyle = termStore.cursorStyle
   term.options.cursorBlink = termStore.cursorBlink
-  term.options.cursorWidth = 2
+  term.options.cursorWidth = termStore.cursorWidth
+  // 下划线光标粗细经 CSS 变量传给 DOM 渲染器回退路径的覆盖规则（见文件末尾
+  // 全局样式）；WebGL 路径由 updateCursor 包装实时读 store，不经过此变量
+  containerRef.value?.style.setProperty(
+    "--ashell-cursor-underline-width",
+    `${termStore.cursorWidth}px`,
+  )
   installCursorBlinkGuard()
   safeFit()
 }
@@ -652,8 +661,9 @@ function installCursorBlinkGuard() {
  * 光标有 cursorWidth 可调，underline 没有对应选项。
  *
  * 这里包装 RectangleRenderer.updateCursor（私有 API，所有光标绘制的必经单一
- * 入口）：绘制前把传入模型的 dpr 抬到 2 倍设备像素（= 2 CSS px），与 bar
- * 光标（cursorWidth=2）的粗细一致，block/bar/outline 不受影响。两点关键：
+ * 入口）：绘制前把传入模型的 dpr 抬到 cursorWidth 倍设备像素（= cursorWidth
+ * CSS px，实时读 store，与竖线光标宽度共用同一设置），block/bar/outline 不
+ * 受影响。两点关键：
  * - 必须挂钩绘制入口本身。渲染帧先 updateCursor 绘制、后 _updateModel 更新
  *   模型，且光标对象跨帧复用；改模型（或包装 _updateModel）赶不上本次绘制。
  * - 必须传浅拷贝、不能原地改模型：光标对象会跨帧复用，原地翻倍会逐帧累积。
@@ -696,9 +706,11 @@ function thickenWebglUnderlineCursor() {
     rect.updateCursor = (model: unknown) => {
       const cursor = (model as { cursor?: { style?: string; dpr?: number } } | undefined)?.cursor
       if (cursor?.style === "underline" && typeof cursor.dpr === "number" && cursor.dpr > 0) {
+        // 实时读 store：粗细设置变化无需重装包装；下限 1 = xterm 原生 1px
+        const thickness = Math.max(CURSOR_WIDTH_MIN, termStore.cursorWidth)
         originalUpdateCursor({
           ...(model as Record<string, unknown>),
-          cursor: { ...cursor, dpr: cursor.dpr * 2 },
+          cursor: { ...cursor, dpr: cursor.dpr * thickness },
         })
         return
       }
@@ -1401,8 +1413,9 @@ onMounted(() => {
     fontSize: termStore.fontSize,
     cursorBlink: termStore.cursorBlink,
     cursorStyle: termStore.cursorStyle,
-    // 竖线光标宽度（CSS px），仅 cursorStyle='bar' 时生效；WebGL/DOM 两条渲染路径都支持
-    cursorWidth: 2,
+    // 光标粗细（CSS px）：竖线光标宽度 / 下划线光标高度（WebGL 经 updateCursor
+    // 包装、DOM 经 CSS 变量生效），两条渲染路径都支持
+    cursorWidth: termStore.cursorWidth,
     scrollback: termStore.scrollback,
     allowProposedApi: true,
     theme: termStore.getActiveTerminalTheme(),
@@ -1621,6 +1634,7 @@ watch(
     termStore.fontFamily,
     termStore.cursorStyle,
     termStore.cursorBlink,
+    termStore.cursorWidth,
   ],
   () => {
     applyTermOptions()
@@ -2668,12 +2682,12 @@ onBeforeUnmount(() => {
 /*
  * DOM 渲染器回退路径（壁纸/窗口透明/WebGL 不可用时）的下划线光标加粗。
  * xterm DomRenderer 在运行时生成的样式表把 underline 光标硬编码为
- * border-bottom 1px，同样没有配置项；这里用 !important 覆盖为 2px，
- * 与 WebGL 路径及 bar 光标（cursorWidth=2）保持一致。颜色与 solid
- * 样式仍沿用生成规则中的光标色。
+ * border-bottom 1px，同样没有配置项；这里用 !important 覆盖，粗细取容器上
+ * 的 --ashell-cursor-underline-width（applyTermOptions 随设置写入），未设置
+ * 时回退 2px（与默认配置一致）。颜色与 solid 样式仍沿用生成规则中的光标色。
  */
 .xterm .xterm-cursor.xterm-cursor-underline {
-  border-bottom-width: 2px !important;
-  height: calc(100% - 2px) !important;
+  border-bottom-width: var(--ashell-cursor-underline-width, 2px) !important;
+  height: calc(100% - var(--ashell-cursor-underline-width, 2px)) !important;
 }
 </style>

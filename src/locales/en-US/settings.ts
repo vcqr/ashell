@@ -96,6 +96,8 @@ export default {
     scrollback: "Scrollback",
     cursorStyle: "Cursor style",
     cursorBlink: "Cursor blink",
+    cursorWidth: "Cursor width (px)",
+    cursorWidthHint: "Thickness of the underline and bar cursor. Does not apply to block.",
     rightClick: "Right-click behavior",
     leftClick: "Left / middle click behavior",
     cursorStyles: {

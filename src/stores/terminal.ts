@@ -22,6 +22,7 @@ export interface TerminalConfig {
   fontFamily: string
   cursorStyle: CursorStyle
   cursorBlink: boolean
+  cursorWidth: number
   rightClickAction: RightClickAction
   leftClickAction: LeftClickAction
   disconnectAction: DisconnectAction
@@ -70,12 +71,16 @@ export const FONT_SIZE_MIN = 10
 export const FONT_SIZE_MAX = 24
 export const SCROLLBACK_MIN = 0
 export const SCROLLBACK_MAX = 100000
+/** 光标粗细（CSS px）：竖线光标的宽度 / 下划线光标的高度，方块光标不适用 */
+export const CURSOR_WIDTH_MIN = 1
+export const CURSOR_WIDTH_MAX = 6
 
 const DEFAULT_CONFIG: TerminalConfig = {
   fontSize: 13,
   fontFamily: FONT_FAMILY_PRESETS[0]!.value,
   cursorStyle: "block",
   cursorBlink: true,
+  cursorWidth: 2,
   rightClickAction: "paste",
   leftClickAction: "copyOnSelect",
   disconnectAction: "keep",
@@ -100,6 +105,11 @@ function clampFontSize(n: unknown): number {
 
 function isCursorStyle(v: unknown): v is CursorStyle {
   return v === "block" || v === "underline" || v === "bar"
+}
+
+function clampCursorWidth(n: unknown): number {
+  const v = typeof n === "number" && Number.isFinite(n) ? n : DEFAULT_CONFIG.cursorWidth
+  return Math.min(CURSOR_WIDTH_MAX, Math.max(CURSOR_WIDTH_MIN, Math.round(v)))
 }
 
 function isRightClickAction(v: unknown): v is RightClickAction {
@@ -138,6 +148,7 @@ function loadConfig(): TerminalConfig {
         typeof parsed.cursorBlink === "boolean"
           ? parsed.cursorBlink
           : DEFAULT_CONFIG.cursorBlink,
+      cursorWidth: clampCursorWidth(parsed.cursorWidth),
       rightClickAction: isRightClickAction(parsed.rightClickAction)
         ? parsed.rightClickAction
         : DEFAULT_CONFIG.rightClickAction,
@@ -203,6 +214,7 @@ export const useTerminalStore = defineStore("terminal", () => {
   const fontFamily = ref<string>(initial.fontFamily)
   const cursorStyle = ref<CursorStyle>(initial.cursorStyle)
   const cursorBlink = ref<boolean>(initial.cursorBlink)
+  const cursorWidth = ref<number>(initial.cursorWidth)
   const rightClickAction = ref<RightClickAction>(initial.rightClickAction)
   const leftClickAction = ref<LeftClickAction>(initial.leftClickAction)
   const disconnectAction = ref<DisconnectAction>(initial.disconnectAction)
@@ -391,6 +403,7 @@ export const useTerminalStore = defineStore("terminal", () => {
         fontFamily: fontFamily.value,
         cursorStyle: cursorStyle.value,
         cursorBlink: cursorBlink.value,
+        cursorWidth: cursorWidth.value,
         rightClickAction: rightClickAction.value,
         leftClickAction: leftClickAction.value,
         disconnectAction: disconnectAction.value,
@@ -419,6 +432,7 @@ export const useTerminalStore = defineStore("terminal", () => {
       fontFamily,
       cursorStyle,
       cursorBlink,
+      cursorWidth,
       rightClickAction,
       leftClickAction,
       disconnectAction,
@@ -443,6 +457,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     fontFamily.value = DEFAULT_CONFIG.fontFamily
     cursorStyle.value = DEFAULT_CONFIG.cursorStyle
     cursorBlink.value = DEFAULT_CONFIG.cursorBlink
+    cursorWidth.value = DEFAULT_CONFIG.cursorWidth
     rightClickAction.value = DEFAULT_CONFIG.rightClickAction
     leftClickAction.value = DEFAULT_CONFIG.leftClickAction
     disconnectAction.value = DEFAULT_CONFIG.disconnectAction
@@ -620,6 +635,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     fontFamily,
     cursorStyle,
     cursorBlink,
+    cursorWidth,
     rightClickAction,
     leftClickAction,
     disconnectAction,
