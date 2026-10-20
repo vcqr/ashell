@@ -336,7 +336,7 @@ echo '===SECTION:gpu==='
 # 失败时退回原始五字段。PCIe 链路单独查询（同样可能不被老驱动支持），
 # 输出 NVPCIE 行由 Rust 侧按行序与 NV 卡配对，行数不齐时整组丢弃。
 if command -v nvidia-smi >/dev/null 2>&1; then
-  NVOUT=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,fan.speed,power.draw,power.limit,performance.state --format=csv,noheader,nounits 2>/dev/null)
+  NVOUT=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,fan.speed,power.draw,power.limit,pstate --format=csv,noheader,nounits 2>/dev/null)
   if [ -z "$NVOUT" ]; then
     NVOUT=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null)
   fi

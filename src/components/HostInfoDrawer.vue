@@ -33,7 +33,6 @@ import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import { usePanelSwitchClosed } from "@/composables/usePanels"
 import { useIconStore } from "@/stores/icons"
 import NetSparkline from "@/components/host/NetSparkline.vue"
-import GpuRing from "@/components/host/GpuRing.vue"
 
 interface Props {
   open: boolean
@@ -167,15 +166,25 @@ function tempClass(c: number): string {
   return "temp-cool"
 }
 
-/** MiB 转可读容量（与内存口径一致走 humanSize） */
+/** MiB 转紧凑容量：≥1 GiB 用一位小数的 GB（19.8 GB / 24 GB），避免撑爆值列 */
 function formatMB(mb: number): string {
-  return humanSize(mb * 1024 * 1024)
+  if (mb >= 1024) {
+    return `${Math.round((mb / 1024) * 10) / 10} GB`
+  }
+  return `${Math.round(mb)} MB`
 }
 
 /** 瓦数：整数不带小数，否则保留一位（93.6 W / 450 W） */
 function formatWatts(w: number): string {
   const r = Math.round(w * 10) / 10
   return Number.isInteger(r) ? String(r) : r.toFixed(1)
+}
+
+/** 占用条阈值配色：≥80% 红、≥60% 琥珀、其余基础色（风扇等非告警指标不用） */
+function gaugeColor(v: number, base: string): string {
+  if (v >= 80) return "#ef4444"
+  if (v >= 60) return "#f59e0b"
+  return base
 }
 
 /* ---------- 网卡相关 ---------- */
@@ -708,6 +717,10 @@ const panelStyle = computed(() => ({
                     >
                       {{ g.health }}
                     </span>
+                    <span v-if="g.perf_state" class="gpu-chip mono">
+                      {{ g.perf_state }}
+                    </span>
+                    <span v-if="g.pcie" class="gpu-chip mono">{{ g.pcie }}</span>
                     <span
                       v-if="g.temp_c > 0"
                       class="gpu-temp"
@@ -717,67 +730,91 @@ const panelStyle = computed(() => ({
                     </span>
                   </span>
                 </div>
-                <div class="gpu-body">
-                  <div class="gpu-rings">
-                    <GpuRing
-                      :percent="clamp(g.util_percent)"
-                      label="GPU"
-                      base-color="#7c5cff"
-                    />
-                    <GpuRing
-                      v-if="g.mem_total_mb > 0"
-                      :percent="clamp((g.mem_used_mb / g.mem_total_mb) * 100)"
-                      label="VRAM"
-                      base-color="#4ade80"
+                <div class="gpu-row">
+                  <span class="gpu-row-label">{{ t("hostInfo.gpuUtil") }}</span>
+                  <div class="gpu-row-bar">
+                    <NProgress
+                      type="line"
+                      :percentage="clamp(g.util_percent)"
+                      :show-indicator="false"
+                      :height="6"
+                      :color="gaugeColor(g.util_percent, '#7c5cff')"
+                      rail-color="var(--ashell-hover)"
                     />
                   </div>
-                  <div class="gpu-meta">
-                    <div v-if="g.mem_total_mb > 0" class="gpu-meta-row">
-                      <span class="gpu-meta-label">
-                        {{ t("hostInfo.gpuVram") }}
-                      </span>
-                      <span class="gpu-meta-value mono">
-                        {{ formatMB(g.mem_used_mb) }} /
-                        {{ formatMB(g.mem_total_mb) }}
-                      </span>
-                    </div>
-                    <div v-if="g.power_watts != null" class="gpu-meta-row">
-                      <span class="gpu-meta-label">
-                        {{ t("hostInfo.gpuPower") }}
-                      </span>
-                      <span class="gpu-meta-value mono">
-                        {{ formatWatts(g.power_watts) }} W<template
-                          v-if="g.power_limit_watts != null"
-                        >
-                          / {{ formatWatts(g.power_limit_watts) }} W</template
-                        >
-                      </span>
-                    </div>
-                    <div v-if="g.fan_percent != null" class="gpu-meta-row">
-                      <span class="gpu-meta-label">
-                        {{ t("hostInfo.gpuFan") }}
-                      </span>
-                      <span class="gpu-meta-value mono">
-                        {{ Math.round(g.fan_percent) }}%<template
-                          v-if="g.fan_rpm"
-                        >
-                          · {{ g.fan_rpm }} RPM</template
-                        >
-                      </span>
-                    </div>
-                    <div v-if="g.perf_state" class="gpu-meta-row">
-                      <span class="gpu-meta-label">
-                        {{ t("hostInfo.gpuPerf") }}
-                      </span>
-                      <span class="gpu-meta-value mono">{{ g.perf_state }}</span>
-                    </div>
-                    <div v-if="g.pcie" class="gpu-meta-row">
-                      <span class="gpu-meta-label">
-                        {{ t("hostInfo.gpuPcie") }}
-                      </span>
-                      <span class="gpu-meta-value mono">{{ g.pcie }}</span>
-                    </div>
+                  <span class="gpu-row-value mono">
+                    {{ g.util_percent.toFixed(0) }}%
+                  </span>
+                </div>
+                <div v-if="g.mem_total_mb > 0" class="gpu-row">
+                  <span class="gpu-row-label">{{ t("hostInfo.gpuVram") }}</span>
+                  <div class="gpu-row-bar">
+                    <NProgress
+                      type="line"
+                      :percentage="
+                        clamp((g.mem_used_mb / g.mem_total_mb) * 100)
+                      "
+                      :show-indicator="false"
+                      :height="6"
+                      :color="
+                        gaugeColor(
+                          (g.mem_used_mb / g.mem_total_mb) * 100,
+                          '#4ade80',
+                        )
+                      "
+                      rail-color="var(--ashell-hover)"
+                    />
                   </div>
+                  <span class="gpu-row-value mono">
+                    {{ formatMB(g.mem_used_mb) }} /
+                    {{ formatMB(g.mem_total_mb) }}
+                  </span>
+                </div>
+                <div v-if="g.power_watts != null" class="gpu-row">
+                  <span class="gpu-row-label">{{ t("hostInfo.gpuPower") }}</span>
+                  <div class="gpu-row-bar">
+                    <NProgress
+                      v-if="g.power_limit_watts != null"
+                      type="line"
+                      :percentage="
+                        clamp((g.power_watts / g.power_limit_watts) * 100)
+                      "
+                      :show-indicator="false"
+                      :height="6"
+                      :color="
+                        gaugeColor(
+                          (g.power_watts / g.power_limit_watts) * 100,
+                          '#f59e0b',
+                        )
+                      "
+                      rail-color="var(--ashell-hover)"
+                    />
+                  </div>
+                  <span class="gpu-row-value mono">
+                    {{ formatWatts(g.power_watts) }} W<template
+                      v-if="g.power_limit_watts != null"
+                    >
+                      / {{ formatWatts(g.power_limit_watts) }} W</template
+                    >
+                  </span>
+                </div>
+                <div v-if="g.fan_percent != null" class="gpu-row">
+                  <span class="gpu-row-label">{{ t("hostInfo.gpuFan") }}</span>
+                  <div class="gpu-row-bar">
+                    <NProgress
+                      type="line"
+                      :percentage="clamp(g.fan_percent)"
+                      :show-indicator="false"
+                      :height="6"
+                      color="#4a8cff"
+                      rail-color="var(--ashell-hover)"
+                    />
+                  </div>
+                  <span class="gpu-row-value mono">
+                    {{ Math.round(g.fan_percent) }}%<template v-if="g.fan_rpm">
+                      · {{ g.fan_rpm }} RPM</template
+                    >
+                  </span>
                 </div>
               </div>
             </section>
@@ -1238,42 +1275,36 @@ const panelStyle = computed(() => ({
   background: rgba(239, 68, 68, 0.12);
 }
 
-/* 卡片主体：左侧双环（利用率 / 显存），右侧明细行 */
-.gpu-body {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.gpu-rings {
-  display: flex;
-  gap: 10px;
+/* 头部属性徽章：性能状态 / PCIe 链路等非计量文本 */
+.gpu-chip {
   flex-shrink: 0;
+  font-size: 10px;
+  color: var(--ashell-text-muted);
+  background: var(--ashell-hover);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
 }
 
-.gpu-meta {
-  flex: 1;
-  min-width: 140px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.gpu-meta-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+.gpu-row {
+  display: grid;
+  grid-template-columns: 42px 1fr 110px;
+  align-items: center;
   gap: 8px;
-  font-size: 11px;
 }
 
-.gpu-meta-label {
+.gpu-row-label {
+  font-size: 11px;
   color: var(--ashell-text-muted);
   flex-shrink: 0;
 }
 
-.gpu-meta-value {
+.gpu-row-bar {
+  min-width: 0;
+}
+
+.gpu-row-value {
+  font-size: 11px;
   color: var(--ashell-text);
   font-variant-numeric: tabular-nums;
   text-align: right;
