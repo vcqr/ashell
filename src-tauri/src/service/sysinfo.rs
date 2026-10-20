@@ -73,6 +73,27 @@ pub struct GpuInfo {
     pub mem_used_mb: u64,
     pub mem_total_mb: u64,
     pub temp_c: f32,
+    /// 实时功耗（W）；读不到时省略
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_watts: Option<f32>,
+    /// 功耗上限（W）；无上限概念时省略
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_limit_watts: Option<f32>,
+    /// 风扇转速百分比 0-100；不支持读取时省略
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fan_percent: Option<f32>,
+    /// 风扇转速（RPM）；仅 sysfs 暴露 tach 时有值（AMD）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fan_rpm: Option<u32>,
+    /// NVIDIA 性能状态（P0-P12）；其他厂商省略
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perf_state: Option<String>,
+    /// PCIe 链路（如 "Gen4 x16"）；读不到时省略
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pcie: Option<String>,
+    /// 健康状态（昇腾 npu-smi 的 OK/Warning/Error）；非昇腾省略
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -311,12 +332,23 @@ if [ -n "$SMARTCTL" ] && [ -x "$SMARTCTL" ]; then
   done
 fi
 echo '===SECTION:gpu==='
-# NVIDIA：nvidia-smi 一次拿全利用率/显存/温度
+# NVIDIA：优先带风扇/功耗/性能状态的扩展查询；极老驱动不认识新字段会整条失败，
+# 失败时退回原始五字段。PCIe 链路单独查询（同样可能不被老驱动支持），
+# 输出 NVPCIE 行由 Rust 侧按行序与 NV 卡配对，行数不齐时整组丢弃。
 if command -v nvidia-smi >/dev/null 2>&1; then
-  nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null |
-  while IFS=, read -r n u mu mt tp; do
+  NVOUT=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,fan.speed,power.draw,power.limit,performance.state --format=csv,noheader,nounits 2>/dev/null)
+  if [ -z "$NVOUT" ]; then
+    NVOUT=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null)
+  fi
+  printf '%s\n' "$NVOUT" | while IFS=, read -r n u mu mt tp fn pw pl ps; do
+    [ -n "$n" ] || continue
     n=$(printf '%s' "$n" | sed 's/^ *//; s/ *$//')
-    printf 'NV\t%s\t%s\t%s\t%s\t%s\n' "$n" "$u" "$mu" "$mt" "$tp"
+    printf 'NV\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$u" "$mu" "$mt" "$tp" "$fn" "$pw" "$pl" "$ps"
+  done
+  nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.width.current --format=csv,noheader,nounits 2>/dev/null |
+  while IFS=, read -r gen w; do
+    [ -n "$gen" ] || continue
+    printf 'NVPCIE\t%s\t%s\n' "$gen" "$w"
   done
 fi
 # AMD（amdgpu 驱动）：走 drm sysfs，不依赖 rocm-smi
@@ -328,10 +360,26 @@ for d in /sys/class/drm/card[0-9]*; do
   te=$(cat "$d/device"/hwmon/hwmon*/temp1_input 2>/dev/null | head -n 1)
   vu=$(cat "$d/device/mem_info_vram_used" 2>/dev/null)
   vt=$(cat "$d/device/mem_info_vram_total" 2>/dev/null)
+  hwd=$(ls -d "$d/device"/hwmon/hwmon* 2>/dev/null | head -n 1)
+  fp=""; fr=""; pw=""; pl=""
+  if [ -n "$hwd" ]; then
+    # 功耗：新内核 power1_average 与旧 power1_input 二选一，微瓦转瓦
+    pwr=$(cat "$hwd/power1_average" 2>/dev/null)
+    [ -n "$pwr" ] || pwr=$(cat "$hwd/power1_input" 2>/dev/null)
+    [ -n "$pwr" ] && pw=$(awk -v r="$pwr" 'BEGIN{printf "%.1f", r/1000000}')
+    # 功耗上限：power1_cap 缺失时用板上限 power1_cap_max
+    cap=$(cat "$hwd/power1_cap" 2>/dev/null)
+    [ -n "$cap" ] || cap=$(cat "$hwd/power1_cap_max" 2>/dev/null)
+    [ -n "$cap" ] && pl=$(awk -v r="$cap" 'BEGIN{printf "%.0f", r/1000000}')
+    # 风扇：pwm1（0-255 占空比）换算百分比；fan1_input 直接是 RPM
+    pwm=$(cat "$hwd/pwm1" 2>/dev/null)
+    [ -n "$pwm" ] && fp=$(awk -v p="$pwm" 'BEGIN{printf "%.0f", p/255*100}')
+    fr=$(cat "$hwd/fan1_input" 2>/dev/null)
+  fi
   addr=$(basename "$(readlink -f "$d/device")" 2>/dev/null)
   name=$(lspci -s "$addr" 2>/dev/null | sed 's/^.*: //')
   [ -n "$name" ] || name="AMD GPU"
-  printf 'AM\t%s\t%s\t%s\t%s\t%s\n' "$name" "$busy" "$vu" "$vt" "$te"
+  printf 'AM\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$busy" "$vu" "$vt" "$te" "$fp" "$fr" "$pw" "$pl"
 done
 # 华为昇腾 NPU：npu-smi 表格原样输出，由 Rust 侧解析
 # npu-smi 常装在 /usr/local/sbin，非交互 SSH PATH 可能不含该目录，补绝对路径兜底
@@ -707,19 +755,37 @@ fn parse_temps(lines: &[&str]) -> Vec<TempZone> {
     out
 }
 
-/// 解析 GPU 段：每行 `NV\t<name>\t<util%>\t<used MiB>\t<total MiB>\t<°C>`
-/// 或 `AM\t<name>\t<busy%>\t<used bytes>\t<total bytes>\t<毫摄氏度>`。
-/// 字段可能为 "[N/A]" / 空，宽松解析，取不到置 0。
+/// 解析 GPU 段：每行 `NV\t<name>\t<util%>\t<used MiB>\t<total MiB>\t<°C>\t[<fan%>\t<W>\t<上限W>\t<P态>]`
+/// 或 `AM\t<name>\t<busy%>\t<used bytes>\t<total bytes>\t<毫摄氏度>\t[<fan%>\t<RPM>\t<W>\t<上限W>]`，
+/// 另有 `NVPCIE\t<gen>\t<width>` 行与 NV 卡按行序配对。
+/// 方括号内为扩展字段（风扇/功耗/P态），老脚本或兜底查询没有时缺省。
+/// 字段可能为 "[N/A]" / 空，宽松解析，取不到置 0 / None。
 fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
     let mut out = Vec::new();
-    // 昇腾 NPU 行与 Chip 行分两行输出，先用 pending 缓存配对
-    let mut ascend_pending: Vec<(String, f32, u32)> = Vec::new();
+    // PCIe 行先收集，与 NV 行数一致才按序配对（避免 nvidia-smi 两次查询间卡数变化错配）
+    let nv_pcie: Vec<Option<String>> = lines
+        .iter()
+        .filter(|l| l.starts_with("NVPCIE\t"))
+        .map(|l| parse_pcie_line(l))
+        .collect();
+    let nv_total = lines
+        .iter()
+        .filter(|l| l.split('\t').next() == Some("NV"))
+        .count();
+    let pcie_paired = nv_total > 0 && nv_total == nv_pcie.len();
+    let mut nv_seen = 0usize;
+    // 昇腾 NPU 行与 Chip 行分两行输出，先用 pending 缓存配对：
+    // (型号, 温度, NPU 编号, 功率W, 健康态)
+    let mut ascend_pending: Vec<(String, f32, u32, Option<f32>, String)> = Vec::new();
     for l in lines {
         // npu-smi 表格行（含 '|'，非制表符格式）
         if l.contains('|') {
             if let Some(gpu) = ascend_table_line(l, &mut ascend_pending) {
                 out.push(gpu);
             }
+            continue;
+        }
+        if l.starts_with("NVPCIE\t") {
             continue;
         }
         let cols: Vec<&str> = l.split('\t').collect();
@@ -737,9 +803,27 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
                 .unwrap_or(0.0)
         };
         let u64_of = |s: &str| -> u64 { s.trim().parse::<u64>().unwrap_or(0) };
+        // 扩展字段：解析失败（[N/A] / 空）返回 None，而不是降级成 0
+        let opt_f32 = |i: usize| -> Option<f32> {
+            cols.get(i).and_then(|s| s.trim().parse::<f32>().ok())
+        };
+        let opt_u32 = |i: usize| -> Option<u32> {
+            cols.get(i).and_then(|s| s.trim().parse::<u32>().ok())
+        };
         let gpu = match cols[0] {
             "NV" => {
                 let temp = f32_of(cols[5]);
+                let perf_state = cols
+                    .get(9)
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty() && !s.contains("N/A"))
+                    .map(|s| s.to_string());
+                let pcie = if pcie_paired {
+                    nv_pcie.get(nv_seen).cloned().flatten()
+                } else {
+                    None
+                };
+                nv_seen += 1;
                 GpuInfo {
                     index: out.len() as u32,
                     vendor: "nvidia".into(),
@@ -752,6 +836,13 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
                     } else {
                         0.0
                     },
+                    power_watts: opt_f32(7),
+                    power_limit_watts: opt_f32(8),
+                    fan_percent: opt_f32(6),
+                    fan_rpm: None,
+                    perf_state,
+                    pcie,
+                    health: None,
                 }
             }
             "AM" => {
@@ -773,6 +864,13 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
                     } else {
                         0.0
                     },
+                    power_watts: opt_f32(8),
+                    power_limit_watts: opt_f32(9),
+                    fan_percent: opt_f32(6),
+                    fan_rpm: opt_u32(7),
+                    perf_state: None,
+                    pcie: None,
+                    health: None,
                 }
             }
             _ => continue,
@@ -780,6 +878,25 @@ fn parse_gpus(lines: &[&str]) -> Vec<GpuInfo> {
         out.push(gpu);
     }
     out
+}
+
+/// 解析 `NVPCIE\t<gen>\t<width>`：兼容 nounits 的 "4" / "16" 与带单位的 "Gen4" / "x16"，
+/// 两段都提取到数字才成 "Gen4 x16"，否则放弃。
+fn parse_pcie_line(l: &str) -> Option<String> {
+    let cols: Vec<&str> = l.split('\t').collect();
+    if cols.len() < 3 {
+        return None;
+    }
+    let num_of = |s: &str| -> Option<u32> {
+        let digits: String = s.trim().chars().skip_while(|c| !c.is_ascii_digit()).collect();
+        digits.parse::<u32>().ok()
+    };
+    let gen = num_of(cols[1])?;
+    let width = num_of(cols[2])?;
+    if gen == 0 || width == 0 {
+        return None;
+    }
+    Some(format!("Gen{gen} x{width}"))
 }
 
 /// 判断是否为总线号 token：老格式 `0x0000`，新格式 `0000:C1:00.0` / `C1:00.0`
@@ -839,11 +956,14 @@ fn mem_pairs(tokens: &[&str]) -> Vec<(u64, u64)> {
 }
 
 /// 解析 npu-smi info 表格行。
-/// NPU 行：`| 0  910B4 | OK | 68.5  45 ... |` → 记下（型号, 温度）待配对；
-/// Chip 行（含 0x 总线号）：`| 0 | 0x0000 | 0 | 651 / 1517 ... |` → 取 AICore%
+/// NPU 行：`| 0  910B4 | OK | 68.5  45 ... |` → 记下（型号, 温度, 功率, 健康态）待配对；
+/// Chip 行（含总线号）：`| 0 | 0x0000 | 0 | 651 / 1517 ... |` → 取 AICore%
 /// 与显存（取最后一个 used / total 对，多芯片卡上即 HBM），与前一条 NPU 行合成一条记录。
 /// 老版本（如 20.x）一行格里塞多个字段，拆 '|' 后再按空白二次切分统一处理。
-fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32, u32)>) -> Option<GpuInfo> {
+fn ascend_table_line(
+    l: &str,
+    pending: &mut Vec<(String, f32, u32, Option<f32>, String)>,
+) -> Option<GpuInfo> {
     let t = l.trim();
     if t.starts_with('+') {
         return None;
@@ -868,9 +988,17 @@ fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32, u32)>) -> Option<G
                 .last()
                 .copied()
                 .unwrap_or((0, 0));
-            let (name, temp_c, npu_index) = pending
+            let (name, temp_c, npu_index, power_watts, health) = pending
                 .pop()
-                .unwrap_or_else(|| ("Ascend NPU".to_string(), 0.0, tokens[0].parse::<u32>().unwrap_or(0)));
+                .unwrap_or_else(|| {
+                    (
+                        "Ascend NPU".to_string(),
+                        0.0,
+                        tokens[0].parse::<u32>().unwrap_or(0),
+                        None,
+                        String::new(),
+                    )
+                });
             Some(GpuInfo {
                 index: npu_index,
                 vendor: "ascend".into(),
@@ -879,6 +1007,13 @@ fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32, u32)>) -> Option<G
                 mem_used_mb: mem_used,
                 mem_total_mb: mem_total,
                 temp_c: temp_c.clamp(0.0, 150.0),
+                power_watts,
+                power_limit_watts: None,
+                fan_percent: None,
+                fan_rpm: None,
+                perf_state: None,
+                pcie: None,
+                health: if health.is_empty() { None } else { Some(health) },
             })
         }
         None => {
@@ -892,8 +1027,9 @@ fn ascend_table_line(l: &str, pending: &mut Vec<(String, f32, u32)>) -> Option<G
                 .get(4)
                 .and_then(|s| s.parse::<f32>().ok())
                 .unwrap_or(0.0);
+            let power_watts = tokens.get(3).and_then(|s| s.parse::<f32>().ok());
             let npu_index = tokens[0].parse::<u32>().unwrap_or(0);
-            pending.push((name, temp_c, npu_index));
+            pending.push((name, temp_c, npu_index, power_watts, tokens[2].to_string()));
             None
         }
     }
@@ -1250,8 +1386,11 @@ mod tests {
         assert!((gpus[0].util_percent - 0.0).abs() < 0.01);
         assert_eq!(gpus[0].mem_used_mb, 1141);
         assert_eq!(gpus[0].mem_total_mb, 32768);
+        assert_eq!(gpus[0].power_watts, Some(68.5));
+        assert_eq!(gpus[0].health.as_deref(), Some("OK"));
         assert!((gpus[1].util_percent - 30.0).abs() < 0.01);
         assert_eq!(gpus[1].mem_used_mb, 2000);
+        assert_eq!(gpus[1].power_watts, Some(71.2));
     }
 
     #[test]
@@ -1266,6 +1405,8 @@ mod tests {
         assert!((gpus[0].temp_c - 41.0).abs() < 0.01);
         assert_eq!(gpus[0].mem_used_mb, 736);
         assert_eq!(gpus[0].mem_total_mb, 32268);
+        assert_eq!(gpus[0].power_watts, Some(63.5));
+        assert_eq!(gpus[0].health.as_deref(), Some("OK"));
     }
 
     #[test]
@@ -1299,6 +1440,83 @@ mod tests {
         assert_eq!(gpus[0].mem_used_mb, 60465);
         assert_eq!(gpus[0].mem_total_mb, 65536);
         assert!((gpus[1].temp_c - 42.0).abs() < 0.01);
+        assert_eq!(gpus[0].power_watts, Some(93.7));
+        assert_eq!(gpus[1].power_watts, Some(96.2));
+        assert_eq!(gpus[0].health.as_deref(), Some("OK"));
+        // 底部进程表行不产生记录，健康态也不被污染
+        assert_eq!(gpus[1].health.as_deref(), Some("OK"));
+    }
+
+    #[test]
+    fn test_parse_gpus_nv_extended_fields() {
+        // 扩展 10 列：name util used total temp fan power limit pstate
+        let lines = vec!["NV\tNVIDIA GeForce RTX 4090\t68\t20305\t24564\t33\t30\t21.36\t450\tP8"];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].fan_percent, Some(30.0));
+        assert_eq!(gpus[0].power_watts, Some(21.36));
+        assert_eq!(gpus[0].power_limit_watts, Some(450.0));
+        assert_eq!(gpus[0].perf_state.as_deref(), Some("P8"));
+
+        // [N/A] / 空字段 → None（老驱动兜底查询只有 6 列）
+        let lines = vec![
+            "NV\tNVIDIA A100\t80\t1024\t40960\t66\t[N/A]\t[N/A]\t[N/A]\t[N/A]",
+            "NV\tNVIDIA T4\t10\t512\t16384\t55",
+        ];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 2);
+        for g in &gpus {
+            assert_eq!(g.fan_percent, None);
+            assert_eq!(g.power_watts, None);
+            assert_eq!(g.power_limit_watts, None);
+            assert_eq!(g.perf_state, None);
+        }
+    }
+
+    #[test]
+    fn test_parse_gpus_nv_pcie_pairing() {
+        // NVPCIE 行按行序与 NV 卡配对，兼容 "4"/"16" 与 "Gen4"/"x16" 两种写法
+        let lines = vec![
+            "NV\tRTX 4090\t0\t1\t2\t33\t30\t21\t450\tP8",
+            "NV\tRTX 4090\t0\t1\t2\t33\t30\t21\t450\tP0",
+            "NVPCIE\t4\t16",
+            "NVPCIE\tGen5\tx8",
+        ];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus[0].pcie.as_deref(), Some("Gen4 x16"));
+        assert_eq!(gpus[1].pcie.as_deref(), Some("Gen5 x8"));
+
+        // 行数不齐（PCIe 查询失败）时整组丢弃，不错配
+        let lines = vec![
+            "NV\tRTX 4090\t0\t1\t2\t33\t30\t21\t450\tP8",
+            "NV\tRTX 4090\t0\t1\t2\t33\t30\t21\t450\tP0",
+            "NVPCIE\t4\t16",
+        ];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 2);
+        assert_eq!(gpus[0].pcie, None);
+        assert_eq!(gpus[1].pcie, None);
+    }
+
+    #[test]
+    fn test_parse_gpus_am_extended_fields() {
+        // 扩展 10 列：name busy used total temp fan% rpm power limit
+        let lines = vec!["AM\tAMD Radeon RX 7900\t33\t4294967296\t17179869184\t45000\t55\t1200\t168.5\t290"];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].fan_percent, Some(55.0));
+        assert_eq!(gpus[0].fan_rpm, Some(1200));
+        assert_eq!(gpus[0].power_watts, Some(168.5));
+        assert_eq!(gpus[0].power_limit_watts, Some(290.0));
+
+        // 老 6 列行仍可解析
+        let lines = vec!["AM\tAMD GPU\t10\t1073741824\t8589934592\t41000"];
+        let gpus = parse_gpus(&lines);
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(gpus[0].fan_percent, None);
+        assert_eq!(gpus[0].fan_rpm, None);
+        assert_eq!(gpus[0].power_watts, None);
+        assert_eq!(gpus[0].mem_total_mb, 8192);
     }
 
     #[test]

@@ -380,6 +380,20 @@ export interface GpuInfo {
   mem_total_mb: number
   /** 摄氏度；不支持读取时为 0 */
   temp_c: number
+  /** 实时功耗（W）；读不到时缺省 */
+  power_watts?: number
+  /** 功耗上限（W）；无上限概念时缺省 */
+  power_limit_watts?: number
+  /** 风扇转速百分比 0-100；不支持读取时缺省 */
+  fan_percent?: number
+  /** 风扇转速（RPM）；仅 sysfs 暴露 tach 时有值（AMD） */
+  fan_rpm?: number
+  /** NVIDIA 性能状态（P0-P12） */
+  perf_state?: string
+  /** PCIe 链路（如 "Gen4 x16"） */
+  pcie?: string
+  /** 健康状态（昇腾 OK/Warning/Error）；非 OK 时前端展示告警徽标 */
+  health?: string
 }
 
 export interface SysInfo {
