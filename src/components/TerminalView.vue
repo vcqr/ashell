@@ -649,51 +649,63 @@ function installCursorBlinkGuard() {
  *
  * addon-webgl 把 underline 光标画成单元格底部一条 dpr 设备像素（即 1 CSS px）
  * 高的矩形，高度硬编码且没有暴露任何配置项，实际观感过细、几乎看不见；bar
- * 光标有 cursorWidth 可调，underline 没有对应选项。这里包装
- * WebglRenderer._updateModel（私有 API，每次光标重绘都会重建光标模型）：
- * 重建完成后把 underline 光标的 dpr 抬到 2 倍设备像素（= 2 CSS px），
- * 与 bar 光标（cursorWidth=2）的粗细一致，block/bar/outline 不受影响。
+ * 光标有 cursorWidth 可调，underline 没有对应选项。
  *
- * 渲染器实例在 webgl 重载（连字切换、context loss）后会重建，loadWebgl 是
- * 唯一挂载点，每次加载后需重新调用；用实例标记防重复包装。内部结构变化时
- * 静默跳过，仅退回原来的 1px 细线。
- * 升级 addon-webgl 后需检查 _renderService/_updateModel 内部结构是否变化。
+ * 这里包装 RectangleRenderer.updateCursor（私有 API，所有光标绘制的必经单一
+ * 入口）：绘制前把传入模型的 dpr 抬到 2 倍设备像素（= 2 CSS px），与 bar
+ * 光标（cursorWidth=2）的粗细一致，block/bar/outline 不受影响。两点关键：
+ * - 必须挂钩绘制入口本身。渲染帧先 updateCursor 绘制、后 _updateModel 更新
+ *   模型，且光标对象跨帧复用；改模型（或包装 _updateModel）赶不上本次绘制。
+ * - 必须传浅拷贝、不能原地改模型：光标对象会跨帧复用，原地翻倍会逐帧累积。
+ *
+ * _rectangleRenderer 是懒注入引用，loadAddon 返回时可能尚未就绪，用 rAF
+ * 有界重试；渲染器实例在 webgl 重载后会重建，loadWebgl 是唯一挂载点，每次
+ * 加载后需重新调用。内部结构变化时静默放弃，仅退回原来的 1px 细线。
+ * 升级 addon-webgl 后需检查 _renderService/_rectangleRenderer 是否变化。
  */
 function thickenWebglUnderlineCursor() {
   if (!term) return
-  const core = (term as unknown as {
-    _core?: {
-      _renderService?: {
-        // xterm 6 的 RenderService 以懒引用持有渲染器（_renderer.value）
-        _renderer?: { value?: unknown } | unknown
+  const t = term
+  let attempts = 0
+  const tryInstall = () => {
+    if (attempts++ > 120) return
+    const core = (t as unknown as {
+      _core?: {
+        _renderService?: {
+          // xterm 6 的 RenderService 以懒引用持有渲染器（_renderer.value）
+          _renderer?: { value?: unknown } | unknown
+        }
       }
+    })._core
+    const service = core?._renderService as
+      | { _renderer?: { value?: Record<string, unknown> } }
+      | undefined
+    const renderer =
+      service?._renderer?.value ?? (service?._renderer as Record<string, unknown> | undefined)
+    const rect = (
+      renderer as { _rectangleRenderer?: { value?: Record<string, unknown> } } | undefined
+    )?._rectangleRenderer?.value
+    if (!rect) {
+      requestAnimationFrame(tryInstall)
+      return
     }
-  })._core
-  const service = core?._renderService as
-    | { _renderer?: { value?: Record<string, unknown> } }
-    | undefined
-  const renderer =
-    service?._renderer?.value ?? (service?._renderer as Record<string, unknown> | undefined)
-  if (
-    !renderer ||
-    typeof renderer._updateModel !== "function" ||
-    renderer.__underlineCursorThickened
-  ) {
-    return
-  }
-  renderer.__underlineCursorThickened = true
-  const originalUpdateModel = (renderer._updateModel as (...args: unknown[]) => void).bind(
-    renderer,
-  )
-  renderer._updateModel = (...args: unknown[]) => {
-    originalUpdateModel(...args)
-    const cursor = (renderer._model as { cursor?: { style?: string; dpr?: number } } | undefined)
-      ?.cursor
-    // _updateModel 每次重绘都会用原始 dpr 重建 cursor 对象，此处改写不会累积放大
-    if (cursor?.style === "underline" && typeof cursor.dpr === "number" && cursor.dpr > 0) {
-      cursor.dpr *= 2
+    if (rect.__underlineCursorThickened) return
+    if (typeof rect.updateCursor !== "function") return
+    rect.__underlineCursorThickened = true
+    const originalUpdateCursor = (rect.updateCursor as (m: unknown) => void).bind(rect)
+    rect.updateCursor = (model: unknown) => {
+      const cursor = (model as { cursor?: { style?: string; dpr?: number } } | undefined)?.cursor
+      if (cursor?.style === "underline" && typeof cursor.dpr === "number" && cursor.dpr > 0) {
+        originalUpdateCursor({
+          ...(model as Record<string, unknown>),
+          cursor: { ...cursor, dpr: cursor.dpr * 2 },
+        })
+        return
+      }
+      originalUpdateCursor(model)
     }
   }
+  tryInstall()
 }
 
 /**
