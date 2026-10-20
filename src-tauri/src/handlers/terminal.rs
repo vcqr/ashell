@@ -503,15 +503,16 @@ fn resolve_completion(
 }
 
 /// 注入行回显剥离的放弃时限：正常情况下回显在建连后一两秒内出现，
-/// 慢 rc 的 shell（macOS zsh）重显也只是再晚几秒
+/// 慢 rc 的 shell（macOS zsh）重显也只是再晚几秒。放弃后由
+/// [`LooseEchoFilter`] 按标记 token 兜底
 const CWD_ECHO_STRIP_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// 单个注入行最多剥离的回显次数：内核规范模式回显（ZLE/readline 接管
 /// tty 前的那次）+ ZLE/readline 在提示符处重显，另留重绘余量。注入行仍在
 /// ZLE 里 pending 的窗口内（macOS 慢启动 shell 可达数秒）发生的列宽变化
 /// （批量连接的 tab 激活切换、窗口调整）都会触发 SIGWINCH 重绘，每一轮
-/// 都是一次新的回显出现——预算放宽到 10 次；超预算后放行原始流（退化为
-/// 可见的注入行回显，且折行显示在 accept 擦除后留下首行残影）。
+/// 都是一次新的回显出现——预算放宽到 10 次；超预算后放行原始流，由
+/// [`LooseEchoFilter`] 接管。
 const MAX_ECHO_OCCURRENCES: usize = 10;
 
 /// 在输出流中剥离 cwd 注入行的回显。注入行会被回显多次（见上方模块
@@ -534,6 +535,8 @@ struct CwdEchoStripper {
     /// 无时限、无次数上限（marker 行会话内每次注入都回显一次，剥离器
     /// 需持续生效；钩子行只在建连时注入一次，才有 20s/10 次预算可言）
     unbounded: bool,
+    /// 日志标签（会话 sid）：放弃路径的告警按会话定位
+    label: String,
 }
 
 enum FindEcho {
@@ -559,12 +562,19 @@ impl CwdEchoStripper {
             last_forwarded: None,
             done: false,
             unbounded: true,
+            label: String::new(),
         }
     }
 
     /// 取走跨块扣留的尾巴（重置剥离器时冲刷，避免扣留字节丢失）
     fn take_pending(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.pending)
+    }
+
+    /// 附加日志标签（会话 sid）
+    fn with_label(mut self, label: &str) -> Self {
+        self.label = label.to_string();
+        self
     }
 
     fn with_timeout(target: &str, timeout: Duration) -> Self {
@@ -576,6 +586,7 @@ impl CwdEchoStripper {
             last_forwarded: None,
             done: false,
             unbounded: false,
+            label: String::new(),
         }
     }
 
@@ -594,6 +605,22 @@ impl CwdEchoStripper {
         }
         if !self.unbounded && Instant::now() >= self.deadline {
             self.done = true;
+            if self.stripped == 0 {
+                // 一次都没命中：回显迟到超时，或流被中继改写导致逐字节
+                // 锁不上。扣留尾巴按转义字节记录，供与注入行对照定位失
+                // 配形态；残影由宽松兜底过滤器接管（见 LooseEchoFilter）。
+                log::warn!(
+                    "[{}] telemetry hook echo never matched before deadline, passing raw; held tail: {}",
+                    self.label,
+                    self.pending.escape_ascii()
+                );
+            } else {
+                log::debug!(
+                    "[{}] telemetry hook echo strip deadline reached after {} occurrence(s)",
+                    self.label,
+                    self.stripped
+                );
+            }
             let mut out = std::mem::take(&mut self.pending);
             out.extend_from_slice(data);
             return out;
@@ -607,6 +634,12 @@ impl CwdEchoStripper {
                     self.stripped += 1;
                     if !self.unbounded && self.stripped >= MAX_ECHO_OCCURRENCES {
                         self.done = true;
+                        // 预算耗尽：后续重绘回显原样放行，由宽松兜底过滤器接管
+                        log::warn!(
+                            "[{}] telemetry hook echo strip budget ({}) exhausted, further echoes pass raw",
+                            self.label,
+                            MAX_ECHO_OCCURRENCES
+                        );
                     }
                     out.extend_from_slice(&buf[..start]);
                     buf.drain(..end);
@@ -702,6 +735,122 @@ impl CwdEchoStripper {
             .rev()
             .find(|&l| &buf[buf.len() - l..] == &target[..l])
             .unwrap_or(0)
+    }
+}
+
+/// 主剥离器放弃后的宽松兜底：整行逐字节匹配在流被中继改写（插入/删除
+/// 字节）或回显迟到（超时放行）时会漏，回显一旦折行还叠加上移擦除只清
+/// 最后一行的首行残影。本过滤器在会话开头窗口期内按标记 token
+/// `__arc(){`（bash/zsh 变体行体共用）盲扫输出流，命中即吞掉 token 起
+/// 到行尾的字节。吞没按内容盲吃：吃满「token 到行尾的最短字节数」后保
+/// 留第一个行尾 \r/\n；其前的 \r/\n 视为按列宽折行的插入物一并吞掉（字
+/// 节流里与真行尾无法区分，按长度阈值区分）。保留的换行让光标落到下一
+/// 行，注入行首句的上移擦除才能定位并清掉提示符行——token 之前的行头
+/// 残端随该行一并擦除，无需匹配，这正是逐字节匹配做不到的。上游删字节
+/// 类改写会让真行尾提前于阈值：吞没总量超过兜帽即放弃本次原样放行，把
+/// 误吞邻接输出的量压在几十字节内。窗口期后原样透传。
+struct LooseEchoFilter {
+    /// 锚定标记
+    token: Vec<u8>,
+    /// token 末尾到注入行行尾的最短字节数（不含行尾换行）
+    min_tail: usize,
+    deadline: Instant,
+    /// 跨块扣留的尾部（可能是半截 token 开头）
+    pending: Vec<u8>,
+    /// 吞没态：Some(已吞字节数)；None 为扫描态
+    swallowing: Option<usize>,
+    /// 已兜底吞掉的回显次数（首次吞掉时记一条告警，说明主剥离器漏了）
+    suppressed: usize,
+    label: String,
+}
+
+/// 吞没总量兜帽：超过「最短行尾 + 该余量」仍未见行尾换行即放弃本次吞没
+const SWALLOW_SLACK: usize = 64;
+
+/// 兜底窗口：主剥离器 20s 超时之外再留迟到回显余量
+const LOOSE_FILTER_WINDOW: Duration = Duration::from_secs(60);
+
+impl LooseEchoFilter {
+    /// 从注入行构造；行内找不到 token 时返回 None（两种变体行体都含该
+    /// 标记，不该发生）
+    fn new(target: &str, label: &str) -> Option<Self> {
+        Self::with_window(target, label, LOOSE_FILTER_WINDOW)
+    }
+
+    fn with_window(target: &str, label: &str, window: Duration) -> Option<Self> {
+        const TOKEN: &[u8] = b"__arc(){";
+        let bytes = target.as_bytes();
+        let off = bytes.windows(TOKEN.len()).position(|w| w == TOKEN)?;
+        Some(Self {
+            token: TOKEN.to_vec(),
+            min_tail: bytes.len() - off - TOKEN.len(),
+            deadline: Instant::now() + window,
+            pending: Vec::new(),
+            swallowing: None,
+            suppressed: 0,
+            label: label.to_string(),
+        })
+    }
+
+    /// 喂入一块（已经过主剥离器的）输出，返回应转发的字节
+    fn feed(&mut self, data: &[u8]) -> Vec<u8> {
+        // 窗口关闭且无进行中的吞没：冲刷扣留尾巴，此后原样透传
+        if self.swallowing.is_none() && Instant::now() >= self.deadline {
+            let mut out = std::mem::take(&mut self.pending);
+            out.extend_from_slice(data);
+            return out;
+        }
+        let mut buf = std::mem::take(&mut self.pending);
+        buf.extend_from_slice(data);
+        let mut out = Vec::with_capacity(buf.len());
+        let mut i = 0usize;
+        while i < buf.len() {
+            match self.swallowing {
+                Some(eaten) => {
+                    let b = buf[i];
+                    i += 1;
+                    if eaten >= self.min_tail && (b == b'\r' || b == b'\n') {
+                        // 真行尾：保留换行，注入行首句的上移擦除依赖它定位
+                        out.push(b);
+                        self.swallowing = None;
+                        self.suppressed += 1;
+                        if self.suppressed == 1 {
+                            log::warn!(
+                                "[{}] loose echo filter engaged: strict stripper missed the hook echo",
+                                self.label
+                            );
+                        }
+                    } else if eaten >= self.min_tail + SWALLOW_SLACK {
+                        // 兜帽：放弃本次吞没，原样放行（残影退化）
+                        out.push(b);
+                        self.swallowing = None;
+                    } else {
+                        self.swallowing = Some(eaten + 1);
+                    }
+                }
+                None => {
+                    if buf[i..].starts_with(&self.token) {
+                        i += self.token.len();
+                        self.swallowing = Some(0);
+                    } else {
+                        out.push(buf[i]);
+                        i += 1;
+                    }
+                }
+            }
+        }
+        // 扫描态下扣留尾部半截 token 开头（≥2 字节），跨块补全后整段吞
+        // 掉；吞没态盲吃无前缀匹配问题，不扣留
+        if self.swallowing.is_none() {
+            let hold = (2..=buf.len().min(self.token.len() - 1))
+                .rev()
+                .find(|&l| buf[buf.len() - l..] == self.token[..l]);
+            if let Some(l) = hold {
+                let split = out.len().saturating_sub(l);
+                self.pending = out.split_off(split);
+            }
+        }
+        out
     }
 }
 
@@ -1057,6 +1206,7 @@ async fn run_terminal(
     // 经 cmd_tx 写入：中继循环启动后它是写进交互 channel 的第一笔数据，
     // 此时用户尚未来得及输入，不会与用户命令行交错。
     let mut cwd_echo_strip: Option<CwdEchoStripper> = None;
+    let mut loose_echo_filter: Option<LooseEchoFilter> = None;
     let mut marker_mode = false;
     match session_arc.execute(SHELL_PROBE).await {
         Ok(res) => {
@@ -1073,7 +1223,11 @@ async fn run_terminal(
                     Ok(sender) => {
                         let _ = sender.send(line.clone());
                         // 注入行会被回显进输出流：武装剥离器，转发前移除其首次出现
-                        cwd_echo_strip = Some(CwdEchoStripper::new(line.trim_end_matches('\n')));
+                        let trimmed = line.trim_end_matches('\n');
+                        cwd_echo_strip = Some(CwdEchoStripper::new(trimmed).with_label(sid));
+                        // 宽松兜底：整行逐字节匹配在流被中继改写或回显迟到
+                        // 时会漏，按标记 token 盲吞兜住（见 LooseEchoFilter）
+                        loose_echo_filter = LooseEchoFilter::new(trimmed, sid);
                     }
                     Err(e) => log::debug!("terminal sender missing for telemetry hook: {e}"),
                 }
@@ -1190,6 +1344,12 @@ async fn run_terminal(
                         let bytes = match cwd_echo_strip.as_mut() {
                             Some(s) => s.feed(data),
                             None => data.to_vec(),
+                        };
+                        // 宽松兜底过滤器接管主剥离器漏掉的回显（迟到/预算
+                        // 耗尽/流被改写）
+                        let bytes = match loose_echo_filter.as_mut() {
+                            Some(f) => f.feed(&bytes),
+                            None => bytes,
                         };
                         let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
                         if !bytes.is_empty()
@@ -1513,6 +1673,115 @@ mod tests {
         let target = line.trim_end_matches('\n');
         let mut s = CwdEchoStripper::new(target);
         assert_eq!(s.feed(b"host:~% "), b"host:~% ".to_vec());
+    }
+
+    #[test]
+    fn loose_filter_strips_full_leaked_echo() {
+        // 主剥离器放弃后（整行逐字节匹配失败/超时），兜底过滤器按 token
+        // 吞掉行尾；token 之前的行头残端留在提示符行上，由注入行首句的
+        // 上移擦除随行清掉，因此字节流里保留是正确的
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
+        let t = target.as_bytes();
+        let off = target.find("__arc(){").unwrap();
+        let mut f = LooseEchoFilter::new(target, "t").unwrap();
+        let mut stream = b"host:~$ ".to_vec();
+        stream.extend_from_slice(t);
+        stream.extend_from_slice(b"\r\nhost:~$ ");
+        let out = f.feed(&stream);
+        let mut expected = b"host:~$ ".to_vec();
+        expected.extend_from_slice(&t[..off]);
+        expected.extend_from_slice(b"\r\nhost:~$ ");
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn loose_filter_swallows_wrap_crlf() {
+        // 折行插入的 \r\n 出现在最短行尾长度之前：视为折行物一并吞掉，
+        // 只保留真行尾换行
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
+        let t = target.as_bytes();
+        let off = target.find("__arc(){").unwrap();
+        let mut f = LooseEchoFilter::new(target, "t").unwrap();
+        let mut stream = b"host:~$ ".to_vec();
+        let wrap_at = off + 40; // 吞没区内，距行尾阈值尚远
+        stream.extend_from_slice(&t[..wrap_at]);
+        stream.extend_from_slice(b"\r\n");
+        stream.extend_from_slice(&t[wrap_at..]);
+        stream.extend_from_slice(b"\r\nhost:~$ ");
+        let out = f.feed(&stream);
+        let mut expected = b"host:~$ ".to_vec();
+        expected.extend_from_slice(&t[..off]);
+        expected.extend_from_slice(b"\r\nhost:~$ ");
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn loose_filter_completes_token_across_chunks() {
+        // 第一块断在 token 中间：尾部扣留，跨块补全后整段吞掉
+        let line = telemetry_line_zsh(true);
+        let target = line.trim_end_matches('\n');
+        let t = target.as_bytes();
+        let off = target.find("__arc(){").unwrap();
+        let mut f = LooseEchoFilter::new(target, "t").unwrap();
+        let mut first = b"host:~% ".to_vec();
+        first.extend_from_slice(&t[..off + 3]);
+        let out1 = f.feed(&first);
+        let mut expected1 = b"host:~% ".to_vec();
+        expected1.extend_from_slice(&t[..off]);
+        assert_eq!(out1, expected1);
+        let mut rest = t[off + 3..].to_vec();
+        rest.extend_from_slice(b"\r\nhost:~% ");
+        let out2 = f.feed(&rest);
+        assert_eq!(out2, b"\r\nhost:~% ".to_vec());
+    }
+
+    #[test]
+    fn loose_filter_passthrough_after_window() {
+        // 窗口关闭后原样透传，不再吞任何内容
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
+        let mut f = LooseEchoFilter::with_window(target, "t", Duration::ZERO).unwrap();
+        let mut stream = b"host:~$ ".to_vec();
+        stream.extend_from_slice(target.as_bytes());
+        stream.extend_from_slice(b"\r\n");
+        assert_eq!(f.feed(&stream), stream);
+        assert_eq!(f.feed(b"more"), b"more".to_vec());
+    }
+
+    #[test]
+    fn loose_filter_gives_up_over_cap() {
+        // 上游删字节类改写会让真行尾提前于阈值：吞没越过兜帽后原样放行，
+        // 误吞邻接输出的量压在 SWALLOW_SLACK 内
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
+        let off = target.find("__arc(){").unwrap();
+        let min_tail = target.len() - off - 8;
+        let mut f = LooseEchoFilter::new(target, "t").unwrap();
+        let mut stream = b"host:~$ ".to_vec();
+        stream.extend_from_slice(target.as_bytes());
+        // 改写形态：行尾换行丢失，token 后紧跟无换行的长内容
+        stream.extend_from_slice(&vec![b'x'; min_tail + SWALLOW_SLACK + 50]);
+        let out = f.feed(&stream);
+        // 兜帽吃掉 SWALLOW_SLACK 个 x 后放弃，其余原样转发
+        assert_eq!(out.len(), 8 + off + min_tail + 50);
+        assert!(out.ends_with(&vec![b'x'; 50]));
+    }
+
+    #[test]
+    fn loose_filter_noop_when_primary_stripped() {
+        // 双层并存安全：主剥离器剥掉回显后，兜底过滤器扫不到 token，
+        // 原样透传不误伤
+        let line = telemetry_line_bash(true);
+        let target = line.trim_end_matches('\n');
+        let mut s = CwdEchoStripper::new(target);
+        let mut f = LooseEchoFilter::new(target, "t").unwrap();
+        let mut stream = b"host:~$ ".to_vec();
+        stream.extend_from_slice(target.as_bytes());
+        stream.extend_from_slice(b"\r\nhost:~$ ");
+        let stripped = s.feed(&stream);
+        assert_eq!(f.feed(&stripped), stripped);
     }
 }
 
