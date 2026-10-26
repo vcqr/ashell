@@ -147,6 +147,9 @@ rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustl
 pbkdf2 = "0.13"
 sha2 = "0.11"
 
+# Webhook 通知签名（钉钉加签 / 飞书签名校验），与 sha2 同代际（digest 0.11）
+hmac = "0.13"
+
 # Local PTY (Windows ConPTY / Unix forkpty)
 portable-pty = "0.9"
 

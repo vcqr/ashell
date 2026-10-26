@@ -299,6 +299,12 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/backup/import", post(handlers::backup::import_backup))
         .route("/api/backup/delete", post(handlers::backup::delete_backup))
+        // 通知推送（AI 审批/提问 webhook）
+        .route(
+            "/api/notify/config",
+            get(handlers::notify::get_config).put(handlers::notify::save_config),
+        )
+        .route("/api/notify/test", post(handlers::notify::test_connection))
         // 上传体积上限放在 Router 级别（避免 MethodRouter::layer 类型推导歧义）
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT))

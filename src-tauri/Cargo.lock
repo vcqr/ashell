@@ -219,6 +219,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
+ "hmac 0.13.0",
  "keyring",
  "libc",
  "log 0.4.34",

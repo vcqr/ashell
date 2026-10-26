@@ -16,6 +16,7 @@ pub mod op_password;
 pub mod phrase;
 pub mod template;
 pub mod backup;
+pub mod notify;
 pub mod sftp_backup;
 pub mod webdav;
 

@@ -19,6 +19,7 @@ export default {
     startup: "Startup",
     "ai-providers": "Model Providers",
     ai: "AI Assistant",
+    notify: "Notifications",
     security: "Security",
     backup: "Backup & Restore",
     about: "About",
@@ -457,5 +458,32 @@ export default {
     saveSuccess: "Configuration saved",
     saveFailed: "Save failed: {error}",
     loadFailed: "Failed to load backup list: {error}",
+  },
+  notify: {
+    title: "Notification Push",
+    description:
+      "Push a message to a group robot whenever the AI assistant needs an approval or asks you a question, so you can respond while away from the desk.",
+    enabled: "Enable Notifications",
+    platform: "Platform",
+    platform_feishu: "Feishu (Lark)",
+    platform_wecom: "WeCom (WeChat Work)",
+    platform_dingtalk: "DingTalk",
+    webhook: "Webhook URL",
+    webhookHint:
+      "The group robot's webhook URL (group settings → group robot → add robot)",
+    webhookPlaceholder: "https://open.feishu.cn/open-apis/bot/v2/hook/…",
+    webhookRequired: "Please enter the webhook URL first",
+    secret: "Signing Secret",
+    secretPlaceholder: "Leave empty if signature verification is off",
+    secretHintDingtalk:
+      "DingTalk robot's \"signed\" secret (starts with SEC); leave empty if signing is off",
+    secretHintFeishu:
+      "Feishu robot's signature verification secret; leave empty if verification is off",
+    save: "Save",
+    saveSuccess: "Notification settings saved",
+    saveFailed: "Save failed: {error}",
+    testConnection: "Send Test Message",
+    testSuccess: "Test message sent, check the group chat",
+    testFailed: "Send failed: {error}",
   },
 } as const

@@ -348,6 +348,7 @@ fn handle_daemon_line(text: &str) {
 
 /// 事件按 ssid 转发：桌面端 Tauri emit（事件名与旧版一致）+ Web 端广播通道
 fn forward_event(sid: &str, line: String) {
+    maybe_notify_event(sid, &line);
     let guard = match DAEMON.lock() {
         Ok(g) => g,
         Err(e) => {
@@ -375,6 +376,83 @@ fn forward_event(sid: &str, line: String) {
         stream: "stdout",
         line,
     });
+}
+
+/// 审批/提问事件 webhook 通知钩子：`[TOOL_CONFIRM]`（工具审批，options 含
+/// command/risk_reason 或原始工具入参）与 `[AI_ASKUSERQUESTION]`（向用户提问，
+/// payload 含 title/items）触发推送；未配置或发送失败不影响事件转发。
+fn maybe_notify_event(sid: &str, line: &str) {
+    const TAG_CONFIRM: &str = "[TOOL_CONFIRM]";
+    const TAG_ASK: &str = "[AI_ASKUSERQUESTION]";
+    let is_confirm = line.starts_with(TAG_CONFIRM);
+    let is_ask = line.starts_with(TAG_ASK);
+    if !is_confirm && !is_ask {
+        return;
+    }
+    let rest = if is_confirm {
+        &line[TAG_CONFIRM.len()..]
+    } else {
+        &line[TAG_ASK.len()..]
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) else {
+        return;
+    };
+    let payload = v.get("payload").cloned().unwrap_or(serde_json::Value::Null);
+    use crate::service::notify::NotifyLine;
+
+    let mut lines: Vec<NotifyLine> = Vec::new();
+    // 命中风险规则（dangerCheck 强制审批）用红色，普通审批橙色，提问蓝色
+    let template;
+    if is_confirm {
+        if let Some(opts) = payload.get("options") {
+            match opts.get("command").and_then(|c| c.as_str()) {
+                Some(cmd) => {
+                    lines.push(NotifyLine::labeled("命令", cmd, true));
+                    if let Some(risk) = opts.get("risk_reason").and_then(|r| r.as_str()) {
+                        lines.push(NotifyLine::labeled("风险", risk, false));
+                        template = "red";
+                    } else {
+                        template = "orange";
+                    }
+                }
+                None => {
+                    // canUseTool 审批的原始工具入参，序列化后截断展示
+                    let s = serde_json::to_string(opts).unwrap_or_default();
+                    lines.push(NotifyLine::labeled("操作", truncate_notify(&s, 300), false));
+                    template = "orange";
+                }
+            }
+        } else {
+            template = "orange";
+        }
+        lines.push(NotifyLine::plain("请在 ashell 中处理该审批"));
+    } else {
+        template = "blue";
+        if let Some(t) = payload.get("title").and_then(|t| t.as_str()) {
+            lines.push(NotifyLine::labeled("问题", t, false));
+        }
+        if let Some(items) = payload.get("items").and_then(|i| i.as_array()) {
+            for it in items {
+                if let Some(s) = it.as_str() {
+                    lines.push(NotifyLine::plain(s));
+                }
+            }
+        }
+        lines.push(NotifyLine::plain("请在 ashell 中回复该问题"));
+    }
+    let title = if is_confirm {
+        "AI 助手等待审批"
+    } else {
+        "AI 助手向您提问"
+    };
+    crate::service::notify::spawn_event_notify(sid, title, template, lines);
+}
+
+fn truncate_notify(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    format!("{}…", s.chars().take(max).collect::<String>())
 }
 
 /// daemon 退出：清空注册表、失败挂起应答，并向每个存活会话播报断线

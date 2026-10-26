@@ -14,6 +14,7 @@ pub mod op_password;
 pub mod phrase;
 pub mod template;
 pub mod backup;
+pub mod notify;
 pub mod ai_sidecar;
 pub mod auth;
 pub mod webapi;
