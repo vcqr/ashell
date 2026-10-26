@@ -495,6 +495,7 @@ export default {
     notLoggedIn: "尚未连接微信。扫码登录后即可接收推送到微信的消息。",
     startLogin: "扫码登录微信",
     qrAlt: "微信登录二维码",
+    loginLink: "登录链接",
     verifyPrompt: "请输入手机微信上显示的配对数字：",
     verifyPlaceholder: "配对数字",
     verifySubmit: "提交",

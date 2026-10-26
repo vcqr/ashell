@@ -13,6 +13,7 @@ import {
 } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import QRCode from "qrcode";
+import { copyText } from "@/utils/clipboard";
 import {
   cancelWeixinLogin,
   getWeixinStatus,
@@ -113,6 +114,17 @@ async function handleStartLogin() {
   }
 }
 
+async function handleCopyLink() {
+  const url = login.value?.qr_url;
+  if (!url) return;
+  try {
+    await copyText(url);
+    message.success(t("common.copySuccess"));
+  } catch {
+    message.error(t("common.copyFailed"));
+  }
+}
+
 async function handleCancelLogin() {
   stopLoginPoll();
   loggingIn.value = false;
@@ -205,7 +217,7 @@ onBeforeUnmount(() => {
         </NButton>
       </template>
 
-      <!-- 登录中：二维码 + 状态 -->
+      <!-- 登录中：二维码 + 状态 + 登录链接 -->
       <template v-if="loggingIn">
         <div class="login-panel">
           <div v-if="qrDataUrl" class="qr-wrap">
@@ -237,6 +249,13 @@ onBeforeUnmount(() => {
                 }}
               </p>
             </template>
+            <div v-if="login?.qr_url" class="login-link-row">
+              <span class="login-link-label">{{ t("settings.remote.loginLink") }}</span>
+              <span class="login-link">{{ login.qr_url }}</span>
+              <NButton size="tiny" quaternary type="primary" @click="handleCopyLink">
+                {{ t("common.copy") }}
+              </NButton>
+            </div>
             <NButton size="small" quaternary @click="handleCancelLogin">
               {{ t("settings.remote.cancelLogin") }}
             </NButton>
@@ -330,8 +349,9 @@ onBeforeUnmount(() => {
 
 .login-panel {
   display: flex;
-  gap: 16px;
-  align-items: center;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 6px 0 2px;
 }
 
 .qr-wrap {
@@ -339,6 +359,7 @@ onBeforeUnmount(() => {
   background: #fff;
   border-radius: 8px;
   line-height: 0;
+  flex-shrink: 0;
 }
 
 .qr-img {
@@ -349,8 +370,42 @@ onBeforeUnmount(() => {
 .login-status {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
   align-items: flex-start;
+  min-width: 0;
+  flex: 1;
+  padding-top: 8px;
+}
+
+.login-link-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ashell-border, rgba(128, 128, 128, 0.25));
+  border-radius: 6px;
+  background: var(--ashell-bg-muted, rgba(128, 128, 128, 0.06));
+}
+
+.login-link-label {
+  font-size: 12px;
+  color: var(--ashell-text-muted, #98a2b3);
+  flex-shrink: 0;
+  line-height: 20px;
+}
+
+.login-link {
+  font-size: 12px;
+  color: var(--ashell-text-muted, #98a2b3);
+  word-break: break-all;
+  line-height: 20px;
+  min-width: 0;
+}
+
+.login-link-row :deep(.n-button) {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .status-grid {

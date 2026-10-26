@@ -503,6 +503,7 @@ export default {
       "WeChat is not connected yet. Scan the QR code to start receiving pushes in WeChat.",
     startLogin: "Sign in with WeChat",
     qrAlt: "WeChat login QR code",
+    loginLink: "Login link",
     verifyPrompt: "Enter the pairing number shown in WeChat on your phone:",
     verifyPlaceholder: "Pairing number",
     verifySubmit: "Submit",
