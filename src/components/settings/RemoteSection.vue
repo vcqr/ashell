@@ -202,20 +202,23 @@ onBeforeUnmount(() => {
     <p class="settings-hint">{{ t("settings.remote.description") }}</p>
 
     <NSpin :show="loading">
-      <!-- 未登录：引导扫码 -->
-      <template v-if="!loggedIn && !loggingIn">
-        <NAlert type="info" :show-icon="false" class="hint-block">
-          {{ t("settings.remote.notLoggedIn") }}
-        </NAlert>
-        <NButton
-          type="primary"
-          size="small"
-          :loading="startingLogin"
-          @click="handleStartLogin"
-        >
-          {{ t("settings.remote.startLogin") }}
-        </NButton>
-      </template>
+      <div class="remote-body">
+        <!-- 未登录：引导扫码 -->
+        <template v-if="!loggedIn && !loggingIn">
+          <NAlert type="info" :show-icon="false" class="hint-block">
+            {{ t("settings.remote.notLoggedIn") }}
+          </NAlert>
+          <div>
+            <NButton
+              type="primary"
+              size="small"
+              :loading="startingLogin"
+              @click="handleStartLogin"
+            >
+              {{ t("settings.remote.startLogin") }}
+            </NButton>
+          </div>
+        </template>
 
       <!-- 登录中：二维码 + 状态 + 登录链接 -->
       <template v-if="loggingIn">
@@ -319,6 +322,7 @@ onBeforeUnmount(() => {
           </NFormItem>
         </NForm>
       </template>
+      </div>
     </NSpin>
   </section>
 </template>
@@ -343,7 +347,16 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
+.remote-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .hint-block {
+  /* naive-ui 的 NAlert 自带 width:100%，改为适应内容宽度 */
+  width: fit-content;
+  max-width: 100%;
   margin-right: auto;
 }
 
