@@ -5,8 +5,13 @@
 //! - 下行 首帧 Text JSON：`{kind:"ready", sid}`，之后 Binary 帧为 PTY 输出。
 //!
 //! 关键平台细节：
-//! - Windows ConPTY 启动时会发 `ESC[6n`（DSR-CPR）查询光标位置，xterm.js 会自动应答；
-//!   但为了让裸 WebSocket 客户端也能跑通，这里统一在读线程拦截并合成 `ESC[1;1R`。
+//! - Windows ConPTY 启动时会发 `ESC[6n`（DSR-CPR）/`ESC[c`（DA）探测序列。对这些探测
+//!   **不做任何代答**（见 read_task 处注释）：实测自带 OpenConsole（conpty.dll
+//!   1.24.2607）对写入输入管道的应答序列不做消费，而是闪屏（`ESC[?5h ESC[?5l`）后把
+//!   尾部字节当幽灵按键注入子进程（`ESC[1;1R` → 注入 `R`，`ESC[?1;2c` → 注入 `1`/`2c`），
+//!   打字途中的注入会把后续输入解析撕碎，正是中文乱码的根源；而完全不应答时
+//!   OpenConsole 照常工作（探测是尽力而为的能力协商）。xterm.js 前端会以真实光标
+//!   位置应答，那才是唯一该进入输入管道的应答。
 //! - `CommandBuilder` 默认不继承父进程环境，必须显式 `cmd.env(k, v)`，否则 PowerShell / bash
 //!   常常因为缺少 PATH / SystemRoot 等关键变量直接退出。
 //! - macOS/Linux 上必须以登录交互 shell（`-l -i`）启动：GUI app 从 Finder/Dock 拉起时
@@ -281,6 +286,12 @@ fn bash_rcfile() -> &'static Option<std::path::PathBuf> {
         }
         let rc = dir.join("ashell-rcfile");
         let body = concat!(
+            // 补齐登录环境：本 shell 以非登录交互形态启动（--rcfile -i），登录链
+            // /etc/profile（含 profile.d 的 lang.sh 与 /etc/msystem 的 MSYSTEM_*
+            // 等）从未执行，LANG 等字符集变量缺失，与 mintty / Windows Terminal
+            // 的 --login 启动环境不一致。先补 source 再走常规链，保证后续
+            // git-prompt.sh 设置的 PROMPT_COMMAND 仍能被下面的钩子前插保留。
+            "[[ -f /etc/profile ]] && . /etc/profile\n",
             "[[ -f /etc/bash.bashrc ]] && . /etc/bash.bashrc\n",
             "[[ -f ~/.bashrc ]] && . ~/.bashrc\n",
             "__ashell_report_cwd() { printf '\\033]9;9;%s\\007' \"$(cygpath -w \"$PWD\" 2>/dev/null || printf '%s' \"$PWD\")\"; }\n",
@@ -397,7 +408,21 @@ fn scan_cwd_osc(buf: &mut Vec<u8>, out: &Arc<Mutex<Option<String>>>) {
 }
 
 /// 向 PTY 写输入并 flush；返回 true 表示写入失败（调用方应退出主循环）。
+/// debug 日志输出实际写入字节的前 96 字节十六进制：排查 conhost 输入解析
+/// 类问题时用于区分「前端发了什么」与「真正进入 PTY 管道的字节」。
+/// hex 按需构造——这是每次按键都走的热路径，日志关闭时不应白白分配。
 fn write_input(writer: &mut dyn std::io::Write, data: &[u8], ctx: &str) -> bool {
+    if log::log_enabled!(log::Level::Debug) {
+        const HEX_DUMP_CAP: usize = 96;
+        let head = &data[..data.len().min(HEX_DUMP_CAP)];
+        let hex: String = head.iter().map(|b| format!("{b:02x}")).collect();
+        log::debug!(
+            "local_pty: PTY 写入 ctx={ctx} len={} hex={}{}",
+            data.len(),
+            hex,
+            if data.len() > HEX_DUMP_CAP { "…" } else { "" }
+        );
+    }
     if let Err(e) = writer.write_all(data) {
         log::warn!("local_pty: pty 写入失败 ctx={ctx}: {e}");
         return true;
@@ -568,7 +593,6 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
         };
 
         let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(64);
-        let (dsr_tx, mut dsr_rx) = mpsc::channel::<Vec<u8>>(8);
 
         // Windows ConPTY 下 shell 退出后 reader.read() 不会返回 EOF，
         // 需要单独监听子进程退出信号来驱动主循环 break。
@@ -604,8 +628,11 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
             let _ = exit_tx;
         }
 
-        // 阻塞读线程：扫描 DSR 查询并代为应答（避免 ConPTY 启动时无人回应）；
-        // 同时捕获 OSC 9;9 cwd 上报，供重启代恢复工作目录
+        // 阻塞读线程：捕获 OSC 9;9 cwd 上报，供重启代恢复工作目录。
+        // 注意：不要在这里对输出流里的 DSR/DA 查询合成应答写回输入管道——
+        // 自带 OpenConsole 不消费应答序列，而是把尾部字节当幽灵按键注入子进程
+        // （`\e[1;1R` → 注入 `R`），打字途中注入会撕裂后续输入（中文乱码根源）；
+        // 且实测 OpenConsole 探测无人应答也照常工作，xterm.js 会以真实光标位置应答。
         let cwd_sink = last_cwd.clone();
         let read_task = tokio::task::spawn_blocking(move || {
             let mut buf = [0u8; 4096];
@@ -618,31 +645,6 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                     }
                     Ok(n) => {
                         let chunk = &buf[..n];
-                        let mut i = 0;
-                        while i + 3 < chunk.len() {
-                            if chunk[i] == 0x1b && chunk[i + 1] == b'[' {
-                                let mut j = i + 2;
-                                while j < chunk.len() && !(0x40..=0x7e).contains(&chunk[j]) {
-                                    j += 1;
-                                }
-                                if j < chunk.len() && chunk[j] == b'n' {
-                                    let param = &chunk[i + 2..j];
-                                    let reply: &[u8] = if param == b"6" {
-                                        b"\x1b[1;1R"
-                                    } else if param == b"5" {
-                                        b"\x1b[0n"
-                                    } else {
-                                        &[]
-                                    };
-                                    if !reply.is_empty() {
-                                        let _ = dsr_tx.blocking_send(reply.to_vec());
-                                    }
-                                }
-                                i = j + 1;
-                            } else {
-                                i += 1;
-                            }
-                        }
 
                         osc_carry.extend_from_slice(chunk);
                         scan_cwd_osc(&mut osc_carry, &cwd_sink);
@@ -704,12 +706,6 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
                             }
                             break;
                         }
-                    }
-                }
-                Some(reply) = dsr_rx.recv() => {
-                    if write_input(&mut writer, &reply, "dsr") {
-                        log::info!("local_pty: [break] DSR 应答写入失败 sid={sid}");
-                        break;
                     }
                 }
                 // 外部命令注入（POST /api/ssh/send/{sid}）：与 ws 输入同样规一化行尾
