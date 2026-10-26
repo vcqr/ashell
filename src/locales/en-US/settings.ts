@@ -497,7 +497,7 @@ export default {
   remote: {
     title: "WeChat Remote",
     description:
-      "Sign in with a personal WeChat bot via QR code (same protocol as Tencent's openclaw-weixin plugin). AI approvals and questions are pushed to WeChat; reply with \"@sessionID + number/answer\" right in WeChat to respond remotely.",
+      "Sign in with a personal WeChat bot via QR code (same protocol as Tencent's openclaw-weixin plugin). AI approvals and questions are pushed to WeChat; reply with \"{'@'}sessionID + number/answer\" right in WeChat to respond remotely.",
     loadFailed: "Failed to load remote status: {error}",
     notLoggedIn:
       "WeChat is not connected yet. Scan the QR code to start receiving pushes in WeChat.",
