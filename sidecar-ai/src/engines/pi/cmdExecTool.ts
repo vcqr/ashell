@@ -1,12 +1,14 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { detectDanger } from "../../dangerCheck";
 import { emitToolConfirm } from "../../protocol";
 import { execRemoteCommand, type SshTarget } from "../../remote";
 import { STOP_SENTINEL } from "../../stdin";
 
 /**
  * 远程命令执行工具。addr/ssid/token 启动时已知，经闭包注入（不进模型上下文）。
- * 危险命令由 LLM 自主标记 needs_approval=true，工具先发 [TOOL_CONFIRM] 等 y/n。
+ * 审批双闸：服务端静态检测命中危险模式强制确认（模型无法绕过），
+ * 模型标记 needs_approval=true 作为第二道保险（检测覆盖不到的业务风险）。
  */
 export function createCmdExecTool(
   target: SshTarget,
@@ -38,8 +40,12 @@ export function createCmdExecTool(
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      if (params.needs_approval) {
-        emitToolConfirm(target.ssid, "Allow this action? (y/n): ", { command: params.cmd });
+      const verdict = detectDanger(params.cmd);
+      if (params.needs_approval || verdict.dangerous) {
+        emitToolConfirm(target.ssid, "Allow this action? (y/n): ", {
+          command: params.cmd,
+          ...(verdict.dangerous && { risk_reason: verdict.reason }),
+        });
 
         const response = (await readLineFromStdin()).trim().toLowerCase();
         if (response === STOP_SENTINEL || response !== "y") {
