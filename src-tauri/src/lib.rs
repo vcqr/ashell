@@ -163,6 +163,9 @@ async fn start_api_server() -> anyhow::Result<ApiInfo> {
         log::warn!("ensure default icons: {e}");
     }
 
+    // 1.1.1) 微信远程：有已登录凭证则恢复长轮询保活（未登录跳过，失败不阻塞）
+    service::weixin::init_polling();
+
     // 2) 初始化 DB
     let pool = models::init_pool(&cfg.db_path)
         .await

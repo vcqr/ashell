@@ -2,6 +2,8 @@
 
 微信通知桥：把本地 HTTP 请求转发到**个人微信**。用于让 AShell 的通知模块（`custom` 平台）把 AI 审批提问、任务完成等事件推送到微信。
 
+> **注**：AShell 桌面版/ Web 版现已原生集成此能力（设置 → 远程，Rust 实现，见 `src-tauri/src/service/weixin.rs`），日常使用无需再跑本服务。本目录保留作为独立工具与协议参考实现（可配合任何能 POST webhook 的场景）。
+
 协议层抽取自腾讯官方的 [`@tencent-weixin/openclaw-weixin`](https://github.com/Tencent/openclaw-weixin)（OpenClaw 微信渠道插件，MIT），请求格式与其保持一致；这里去掉了 OpenClaw 依赖，只保留「登录 + 保活 + 发文本」三件事。
 
 ## 工作原理

@@ -54,6 +54,9 @@ pub async fn run(opts: ServerOptions) -> anyhow::Result<()> {
         log::warn!("ensure default icons: {e}");
     }
 
+    // 1.1.1) 微信远程：有已登录凭证则恢复长轮询保活（未登录跳过，失败不阻塞）
+    crate::service::weixin::init_polling();
+
     // 1.2) 解析访问令牌：显式参数 > 环境变量 > 持久化文件（首次生成）
     let token = resolve_web_token(opts.token)?;
     cfg.token = token;

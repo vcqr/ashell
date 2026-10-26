@@ -17,6 +17,7 @@ pub mod phrase;
 pub mod template;
 pub mod backup;
 pub mod notify;
+pub mod weixin;
 pub mod sftp_backup;
 pub mod webdav;
 

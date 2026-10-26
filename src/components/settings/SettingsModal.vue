@@ -10,6 +10,7 @@ import {
   RiKeyboardLine,
   RiNotification3Line,
   RiPaletteLine,
+  RiRemoteControlLine,
   RiRocketLine,
   RiShieldCheckLine,
   RiSparklingLine,
@@ -37,6 +38,7 @@ import TraySection from "./TraySection.vue";
 import AiSection from "./AiSection.vue";
 import AiProvidersSection from "./AiProvidersSection.vue";
 import NotificationSection from "./NotificationSection.vue";
+import RemoteSection from "./RemoteSection.vue";
 import SecuritySection from "./SecuritySection.vue";
 import AboutSection from "./AboutSection.vue";
 import BackupSection from "./BackupSection.vue";
@@ -55,6 +57,7 @@ type SettingsTab =
   | "ai-providers"
   | "ai"
   | "notify"
+  | "remote"
   | "backup"
   | "security"
   | "about";
@@ -115,6 +118,7 @@ const navGroups = computed<
       { key: "ai-providers", icon: RiBox3Line },
       { key: "ai", icon: RiSparklingLine },
       { key: "notify", icon: RiNotification3Line },
+      { key: "remote", icon: RiRemoteControlLine },
     ],
   },
   {
@@ -201,6 +205,7 @@ function close() {
             <AiProvidersSection v-else-if="activeTab === 'ai-providers'" />
             <AiSection v-else-if="activeTab === 'ai'" />
             <NotificationSection v-else-if="activeTab === 'notify'" />
+            <RemoteSection v-else-if="activeTab === 'remote'" />
             <SecuritySection v-else-if="activeTab === 'security'" />
             <BackupSection v-else-if="activeTab === 'backup'" />
             <AboutSection v-else-if="activeTab === 'about'" />

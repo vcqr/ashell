@@ -124,9 +124,23 @@ pub fn save_config(cfg: &NotifyConfig) -> AppResult<()> {
 
 // ── Sending ──
 
-/// sidecar 事件通知入口（在同步线程上调用）：读配置，未启用/未配置 webhook 则
-/// 静默跳过；通知在独立线程上以临时 tokio runtime 发送，不阻塞事件转发。
+/// sidecar 事件通知入口（在同步线程上调用）：先分发微信远程推送（独立配置），
+/// 再读通知配置，未启用/未配置 webhook 则静默跳过；发送在独立线程上以
+/// 临时 tokio runtime 进行，不阻塞事件转发。
 pub fn spawn_event_notify(sid: &str, title: &str, template: &'static str, lines: Vec<NotifyLine>) {
+    let event = NotifyEvent {
+        title: title.to_string(),
+        sid: sid.to_string(),
+        template,
+        lines,
+    };
+
+    // 微信远程推送（设置 → 远程；独立于 webhook 通知开关）
+    {
+        let body = plain_lines(&event);
+        crate::service::weixin::spawn_event_push(title, sid, &body);
+    }
+
     let cfg = match load_config() {
         Ok(c) => c,
         Err(e) => {
@@ -137,12 +151,6 @@ pub fn spawn_event_notify(sid: &str, title: &str, template: &'static str, lines:
     if !cfg.enabled || cfg.webhook.trim().is_empty() {
         return;
     }
-    let event = NotifyEvent {
-        title: title.to_string(),
-        sid: sid.to_string(),
-        template,
-        lines,
-    };
     let title = title.to_string();
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_current_thread()

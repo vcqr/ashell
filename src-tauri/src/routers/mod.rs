@@ -1,6 +1,6 @@
 use axum::extract::DefaultBodyLimit;
 use axum::middleware as axum_mw;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, MakeSpan, TraceLayer};
@@ -305,6 +305,27 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::notify::get_config).put(handlers::notify::save_config),
         )
         .route("/api/notify/test", post(handlers::notify::test_connection))
+        // 微信远程（扫码登录 + 通知推送）
+        .route("/api/weixin/status", get(handlers::weixin::get_status))
+        .route(
+            "/api/weixin/login/start",
+            post(handlers::weixin::login_start),
+        )
+        .route("/api/weixin/login/poll", get(handlers::weixin::login_poll))
+        .route(
+            "/api/weixin/login/verify",
+            post(handlers::weixin::login_verify),
+        )
+        .route(
+            "/api/weixin/login/cancel",
+            post(handlers::weixin::login_cancel),
+        )
+        .route("/api/weixin/logout", post(handlers::weixin::logout))
+        .route(
+            "/api/weixin/config",
+            put(handlers::weixin::save_config),
+        )
+        .route("/api/weixin/test", post(handlers::weixin::test_push))
         // 上传体积上限放在 Router 级别（避免 MethodRouter::layer 类型推导歧义）
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT))
