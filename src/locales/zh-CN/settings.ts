@@ -490,7 +490,7 @@ export default {
   remote: {
     title: "微信远程",
     description:
-      "扫码登录个人微信机器人（协议同腾讯 openclaw-weixin 插件）。登录后可把 AI 审批与提问推送到微信，离开电脑时在手机上及时处理。",
+      "扫码登录个人微信机器人（协议同腾讯 openclaw-weixin 插件）。登录后可把 AI 审批与提问推送到微信；在微信里回复「@会话ID + 序号/答案」即可远程答复，双向互通。",
     loadFailed: "加载远程状态失败：{error}",
     notLoggedIn: "尚未连接微信。扫码登录后即可接收推送到微信的消息。",
     startLogin: "扫码登录微信",

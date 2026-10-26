@@ -854,8 +854,8 @@ async fn poll_once(buf: &str) -> Result<String, String> {
         .unwrap_or("")
         .to_string();
 
-    // 采集入站消息的 context token（配对）
-    let mut inbound: Vec<(String, String, String)> = Vec::new();
+    // 采集入站消息的 context token（配对）与文本（指令路由）
+    let mut inbound: Vec<(String, String, String, i64)> = Vec::new();
     if let Some(msgs) = resp.get("msgs").and_then(|v| v.as_array()) {
         for m in msgs {
             let from = m.get("from_user_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -867,39 +867,44 @@ async fn poll_once(buf: &str) -> Result<String, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            if ctx.is_empty() {
-                continue;
-            }
-            let text = m
-                .get("item_list")
-                .and_then(|v| v.as_array())
-                .and_then(|items| {
-                    items.iter().find_map(|it| {
-                        if it.get("type").and_then(|v| v.as_i64()) == Some(1) {
-                            it.pointer("/text_item/text").and_then(|v| v.as_str())
-                        } else {
-                            None
+            let msg_type = m.get("message_type").and_then(|v| v.as_i64()).unwrap_or(0);
+            // TEXT 项取全文（指令路由用），非文本项记类型名
+            let mut text = String::new();
+            if let Some(items) = m.get("item_list").and_then(|v| v.as_array()) {
+                for it in items {
+                    if it.get("type").and_then(|v| v.as_i64()) == Some(1) {
+                        if let Some(s) = it.pointer("/text_item/text").and_then(|v| v.as_str()) {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(s);
                         }
-                    })
-                })
-                .unwrap_or("");
-            inbound.push((from.to_string(), ctx, text.to_string()));
+                    } else if text.is_empty() {
+                        let t = it.get("type").and_then(|v| v.as_i64()).unwrap_or(0);
+                        text = format!("(type {t})");
+                    }
+                }
+            }
+            inbound.push((from.to_string(), ctx, text, msg_type));
         }
     }
 
     if !inbound.is_empty() || !new_buf.is_empty() {
         let mut cfg = load_config().map_err(|e| e.to_string())?;
         let mut changed = false;
-        for (from, ctx, text) in inbound {
+        for (from, ctx, text, _) in &inbound {
+            if ctx.is_empty() {
+                continue;
+            }
             cfg.peers.insert(
                 from.clone(),
                 WeixinPeer {
-                    context_token: ctx,
+                    context_token: ctx.clone(),
                     updated_at: now_ms(),
-                    last_text: truncate(&text, 50).to_string(),
+                    last_text: truncate(text, 50).to_string(),
                 },
             );
-            tracing::info!("[WEIXIN] 配对更新 from={from} text=\"{}\"", truncate(&text, 50));
+            tracing::info!("[WEIXIN] 配对更新 from={from} text=\"{}\"", truncate(text, 50));
             changed = true;
         }
         if !new_buf.is_empty() {
@@ -911,10 +916,24 @@ async fn poll_once(buf: &str) -> Result<String, String> {
                 tracing::warn!("[WEIXIN] 状态落盘失败: {e}");
             }
         }
-        if let Ok(mut g) = runtime().inner.lock() {
-            if !cfg.peers.is_empty() {
+        if !inbound.is_empty() {
+            if let Ok(mut g) = runtime().inner.lock() {
                 g.last_inbound_at = now_ms();
             }
+        }
+    }
+
+    // 指令路由：用户消息里 @sid 开头的当作远程答复转发进对应会话（不阻塞轮询）
+    for (from, _, text, msg_type) in inbound {
+        // message_type: 1=USER；跳过机器人自己发出的（防回环）
+        if msg_type != 0 && msg_type != 1 {
+            continue;
+        }
+        if let Some((sid, content)) = parse_weixin_command(&text) {
+            let from = from.clone();
+            tokio::spawn(async move {
+                handle_weixin_command(&from, &sid, &content).await;
+            });
         }
     }
 
@@ -989,10 +1008,66 @@ async fn poll_loop() {
     }
 }
 
+// ── 微信远程答复（@sid 指令） ──
+
+/// 解析 `@<sid> 内容` 指令文本（兼容全角 ＠ 与前导空白）。
+/// 内容为指令后剩余文本，换行折叠为空格（应答是单行 stdin）。
+/// 不带 @ 前缀的普通消息返回 None（仅用于配对，不路由）。
+fn parse_weixin_command(text: &str) -> Option<(String, String)> {
+    let t = text.trim_start();
+    let t = t
+        .strip_prefix('＠')
+        .or_else(|| t.strip_prefix('@'))?
+        .trim_start();
+    let mut it = t.splitn(2, char::is_whitespace);
+    let sid = it.next()?.trim().to_string();
+    if sid.is_empty() {
+        return None;
+    }
+    let content = it
+        .next()
+        .unwrap_or("")
+        .split(['\n', '\r'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some((sid, content))
+}
+
+/// 处理一条 @sid 远程答复：鉴权（仅扫码绑定的微信账号）→ 转发进会话 → 回执。
+async fn handle_weixin_command(from: &str, sid: &str, content: &str) {
+    let cfg = load_config().unwrap_or_default();
+    if !cfg.user_id.is_empty() && from != cfg.user_id {
+        tracing::warn!("[WEIXIN] 拒绝非绑定账号 {from} 的远程答复");
+        let _ = send_text(Some(from), "仅扫码绑定的微信账号可远程答复 AShell 会话").await;
+        return;
+    }
+    if content.is_empty() {
+        let _ = send_text(
+            Some(from),
+            &format!("用法：@{sid} + 内容（审批回选项序号，提问回序号或自定义答案）"),
+        )
+        .await;
+        return;
+    }
+    match crate::sidecar::write_to_sidecar(sid.to_string(), content.to_string()) {
+        Ok(()) => {
+            tracing::info!("[WEIXIN] 微信答复已转发 ssid={sid} content=\"{}\"", truncate(content, 50));
+            let _ = send_text(Some(from), &format!("已转发至会话 {sid}")).await;
+        }
+        Err(e) => {
+            let _ = send_text(Some(from), &format!("转发失败：{e}")).await;
+        }
+    }
+}
+
 // ── 发送 ──
 
 /// sidecar 事件推送入口（在同步线程上调用）：读取远程配置，启用且已登录时
 /// 在独立线程上以临时 tokio runtime 推送纯文本，不阻塞事件转发。
+/// 文本携带 `@{sid}` 标识：用户在微信里回复 `@{sid} 序号/答案` 可远程答复
+/// 该会话的审批/提问（入站解析见 poll_once → handle_weixin_command）。
 pub fn spawn_event_push(title: &str, sid: &str, body_plain: &str) {
     let cfg = match load_config() {
         Ok(c) => c,
@@ -1004,7 +1079,9 @@ pub fn spawn_event_push(title: &str, sid: &str, body_plain: &str) {
     if !cfg.notify_enabled || !cfg.logged_in() {
         return;
     }
-    let text = strip_markdown(&format!("【ashell】{title}\n会话 {sid}\n\n{body_plain}"));
+    let text = strip_markdown(&format!(
+        "【ashell】{title}\n@{sid}\n\n{body_plain}\n\n微信快捷回复：@{sid} 序号或答案"
+    ));
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1162,5 +1239,47 @@ pub fn status_view() -> StatusView {
             list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
             list
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_command_basic() {
+        let (sid, content) = parse_weixin_command("@sess-abc 1").unwrap();
+        assert_eq!(sid, "sess-abc");
+        assert_eq!(content, "1");
+    }
+
+    #[test]
+    fn parse_command_fullwidth_and_spaces() {
+        let (sid, content) = parse_weixin_command("＠ abc-1 自定义 答案").unwrap();
+        assert_eq!(sid, "abc-1");
+        assert_eq!(content, "自定义 答案");
+    }
+
+    #[test]
+    fn parse_command_multiline_content_folds() {
+        let (sid, content) = parse_weixin_command("@s1 第一行\n第二行").unwrap();
+        assert_eq!(sid, "s1");
+        assert_eq!(content, "第一行 第二行");
+    }
+
+    #[test]
+    fn parse_command_no_content() {
+        let (sid, content) = parse_weixin_command("@s1").unwrap();
+        assert_eq!(sid, "s1");
+        assert_eq!(content, "");
+    }
+
+    #[test]
+    fn parse_command_rejects_plain_text() {
+        assert!(parse_weixin_command("你好").is_none());
+        assert!(parse_weixin_command("hello @s1 hi").is_none());
+        // @ 后无 sid 不路由
+        assert!(parse_weixin_command("@").is_none());
+        assert!(parse_weixin_command("＠  ").is_none());
     }
 }
