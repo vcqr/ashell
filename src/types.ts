@@ -293,6 +293,15 @@ export interface AiCompactInfo {
   tokensAfter?: number
 }
 
+/** 审批请求的结构化载荷：[TOOL_CONFIRM] 生成，渲染为审批卡片并回写状态 */
+export interface MessageApproval {
+  command?: string
+  /** sidecar 静态检测命中的风险说明（可空：模型主动请求确认时没有） */
+  riskReason?: string
+  question: string
+  status: 'pending' | 'allowed' | 'denied'
+}
+
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'
@@ -304,6 +313,8 @@ export interface ChatMessage {
   processSteps?: ProcessStep[]
   /** 标记为 thinking 消息：渲染为可折叠的思考过程块 */
   thinking?: boolean
+  /** 审批请求：渲染为卡片（命令 + 风险 + 允许/拒绝），非普通 markdown */
+  approval?: MessageApproval
   /** 本轮 token 用量统计（仅 assistant 消息，轮末 [AI_USAGE] 帧附着） */
   usage?: AiUsageStats
 }

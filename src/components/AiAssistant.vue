@@ -3,15 +3,21 @@ import {
   RiArrowDownLine,
   RiArrowDownSLine,
   RiBookmarkLine,
+  RiCheckboxCircleLine,
+  RiCheckLine,
+  RiCloseCircleLine,
   RiCloseLine,
   RiDeleteBinLine,
+  RiErrorWarningLine,
   RiExternalLinkLine,
   RiFileCopyLine,
+  RiKeyboardLine,
   RiPushpinFill,
   RiPushpinLine,
   RiRefreshLine,
   RiSendPlaneLine,
   RiSettingsLine,
+  RiShieldKeyholeLine,
   RiSparklingLine,
   RiStarFill,
   RiStarLine,
@@ -47,7 +53,13 @@ import {
 
 import { copyText as copyToClipboard } from "@/utils/clipboard";
 import { useI18n } from "vue-i18n";
-import type { AiCompactInfo, AiUsageStats, ChatMessage, ProcessStep } from "@/types";
+import type {
+  AiCompactInfo,
+  AiUsageStats,
+  ChatMessage,
+  MessageApproval,
+  ProcessStep,
+} from "@/types";
 import { useApiStore } from "@/stores/api";
 import { useAiStore } from "@/stores/ai";
 import { useAiConfigStore } from "@/stores/aiConfig";
@@ -773,12 +785,22 @@ function handleSidecarOutput(ssid: string, line: string) {
     const msg = JSON.parse(aiMsg);
     const obj = msg.payload;
 
+    // 结构化审批载荷：卡片渲染 + 回答后回写状态；content 保留原 markdown 兼容复制/导出
+    const approval: MessageApproval = {
+      question: String(obj.question ?? ""),
+      status: "pending",
+    };
+
     let content = "";
     if (obj.options) {
       content += `**Action:**\n\n`;
       for (const [key, value] of Object.entries(obj.options as Record<string, unknown>)) {
         if (key === "command") {
+          approval.command = String(value);
           content += `\`\`\`\n${value}\n\`\`\`\n`;
+        } else if (key === "risk_reason") {
+          approval.riskReason = String(value);
+          content += `> ⚠️ ${value}\n\n`;
         } else {
           content += `- **${key}:** ${value}\n`;
         }
@@ -788,7 +810,7 @@ function handleSidecarOutput(ssid: string, line: string) {
 
     aiStore.finalizeProcess(ssid);
     aiStore.patch(ssid, { isApprovalActive: true });
-    pushAssistantMessage(ssid, content);
+    pushAssistantMessage(ssid, content, false, approval);
     return;
   }
 
@@ -806,12 +828,18 @@ function handleSidecarOutput(ssid: string, line: string) {
   }
 }
 
-function pushAssistantMessage(ssid: string, content: string, thinking = false) {
+function pushAssistantMessage(
+  ssid: string,
+  content: string,
+  thinking = false,
+  approval?: MessageApproval,
+) {
   aiStore.pushMessage(ssid, {
     role: "assistant",
     content,
     time: nowStr(),
     thinking,
+    approval,
   });
 }
 
@@ -881,8 +909,40 @@ async function sendMessage() {
   scrollToBottom();
 }
 
+/**
+ * 发送快捷键偏好：enter（默认）/ ctrlEnter，localStorage 持久化。
+ * ctrlEnter 模式下 Enter 换行，避免输入法选词误触发送。
+ */
+type SendKeyMode = "enter" | "ctrlEnter";
+const SEND_KEY_KEY = "ashell:ai-send-key";
+const sendKeyMode = ref<SendKeyMode>(
+  localStorage.getItem(SEND_KEY_KEY) === "ctrlEnter" ? "ctrlEnter" : "enter",
+);
+
+function setSendKeyMode(mode: SendKeyMode) {
+  sendKeyMode.value = mode;
+  try {
+    localStorage.setItem(SEND_KEY_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
+
+const inputPlaceholder = computed(() =>
+  sendKeyMode.value === "enter"
+    ? t("ai.inputPlaceholder")
+    : t("ai.inputPlaceholderCtrl"),
+);
+
 function handleKeyPress(event: KeyboardEvent) {
-  if (event.key === "Enter" && !event.shiftKey) {
+  // 输入法组合中的回车（选词/确认候选）不触发发送，避免字没打完就误发
+  if (event.isComposing || event.keyCode === 229) return;
+  if (event.key !== "Enter") return;
+  const send =
+    sendKeyMode.value === "enter"
+      ? !event.shiftKey && !event.ctrlKey && !event.metaKey
+      : event.ctrlKey && !event.shiftKey;
+  if (send) {
     event.preventDefault();
     sendMessage();
   }
@@ -902,29 +962,63 @@ async function handleStopSession() {
   aiStore.patch(ssid, { isTyping: false, isApprovalActive: false });
 }
 
-async function handleApprovalYes() {
-  await sendApproval("y");
-}
-
-async function handleApprovalNo() {
-  await sendApproval("n");
-}
-
-async function sendApproval(content: "y" | "n") {
+/**
+ * 回答审批：把对应卡片置为已允许/已拒绝，并把 y/n 写入 sidecar stdin。
+ * 只有会话处于审批等待且该卡片仍为 pending 时才生效（防误触历史卡片）。
+ */
+async function answerApproval(m: ChatMessage, yes: boolean) {
   const ssid = currentSsid.value;
   if (!ssid) return;
   const session = aiStore.sessions[ssid];
   if (!session || session.sidecarPid === null) return;
+  if (!isApprovalActive.value || m.approval?.status !== "pending") return;
 
+  const answer = yes ? "y" : "n";
   aiStore.pushMessage(ssid, {
     role: "user",
-    content,
+    content: answer,
     time: nowStr(),
   });
-  await aiStore.writeTo(ssid, content + "\n");
+  aiStore.updateMessage(ssid, m.id, {
+    approval: { ...m.approval, status: yes ? "allowed" : "denied" },
+  });
+  await aiStore.writeTo(ssid, answer + "\n");
   aiStore.patch(ssid, { isTyping: true, isApprovalActive: false });
   scrollToBottom();
 }
+
+function handleApprovalYes(m: ChatMessage) {
+  void answerApproval(m, true);
+}
+
+function handleApprovalNo(m: ChatMessage) {
+  void answerApproval(m, false);
+}
+
+/** 审批等待期间的 y/n 键盘快捷键（输入框聚焦时不劫持） */
+function onApprovalKeydown(e: KeyboardEvent) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const target = e.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+  ) {
+    return;
+  }
+  const key = e.key.toLowerCase();
+  if (key !== "y" && key !== "n") return;
+  e.preventDefault();
+  const pending = messages.value.find((m) => m.approval?.status === "pending");
+  if (pending) void answerApproval(pending, key === "y");
+}
+
+watch(isApprovalActive, (active) => {
+  if (active) {
+    window.addEventListener("keydown", onApprovalKeydown);
+  } else {
+    window.removeEventListener("keydown", onApprovalKeydown);
+  }
+});
 
 function handleNewChat() {
   if (messages.value.length === 0) return;
@@ -1069,6 +1163,7 @@ onBeforeUnmount(() => {
     unlistenApiMessage();
     unlistenApiMessage = null;
   }
+  window.removeEventListener("keydown", onApprovalKeydown);
   // 注意：不在这里 kill 各 ssid 的 sidecar；
   // sidecar 生命周期跟随对应的 SSH 终端会话，由 App.vue::onStatusChange 在
   // status 变为 closed/error 时统一回收。
@@ -1265,7 +1360,10 @@ defineExpose({
                 >
                   <NIcon><RiSparklingLine /></NIcon>
                 </NAvatar>
-                <div class="bubble" :class="{ streaming: m.isStreaming }">
+                <div
+                  class="bubble"
+                  :class="{ streaming: m.isStreaming, approval: !!m.approval }"
+                >
                   <template v-if="m.isProcess && m.processSteps">
                     <details class="process-block">
                       <summary class="process-summary">
@@ -1294,6 +1392,61 @@ defineExpose({
                         v-html="parseMarkdown(m.content)"
                       />
                     </details>
+                  </template>
+                  <template v-else-if="m.approval">
+                    <div class="approval-head">
+                      <NIcon :size="14" class="approval-head-icon">
+                        <RiShieldKeyholeLine />
+                      </NIcon>
+                      <span class="approval-title">{{ t("ai.approval.title") }}</span>
+                      <span
+                        v-if="m.approval.status === 'pending' && isApprovalActive"
+                        class="approval-wait-dot"
+                      />
+                    </div>
+                    <pre v-if="m.approval.command" class="approval-cmd"><code>{{ m.approval.command }}</code></pre>
+                    <div v-if="m.approval.riskReason" class="approval-risk">
+                      <NIcon :size="13" class="approval-risk-icon">
+                        <RiErrorWarningLine />
+                      </NIcon>
+                      <span>{{ m.approval.riskReason }}</span>
+                    </div>
+                    <div class="approval-foot">
+                      <template v-if="m.approval.status === 'pending' && isApprovalActive">
+                        <!-- 次操作轻量化（secondary 灰底），主操作用品牌主色：
+                             琥珀警示卡内不再引入第三种色相，绿色只留给结果状态签 -->
+                        <NButton
+                          size="small"
+                          secondary
+                          class="approval-btn"
+                          @click="handleApprovalNo(m)"
+                        >
+                          {{ t("ai.approval.deny") }}
+                        </NButton>
+                        <NButton
+                          size="small"
+                          type="primary"
+                          class="approval-btn"
+                          @click="handleApprovalYes(m)"
+                        >
+                          {{ t("ai.approval.allow") }}
+                        </NButton>
+                      </template>
+                      <span
+                        v-else-if="m.approval.status === 'allowed'"
+                        class="approval-status ok"
+                      >
+                        <NIcon :size="13"><RiCheckboxCircleLine /></NIcon>
+                        {{ t("ai.approval.allowed") }}
+                      </span>
+                      <span v-else-if="m.approval.status === 'denied'" class="approval-status no">
+                        <NIcon :size="13"><RiCloseCircleLine /></NIcon>
+                        {{ t("ai.approval.denied") }}
+                      </span>
+                      <span v-else class="approval-status expired">
+                        {{ t("ai.approval.expired") }}
+                      </span>
+                    </div>
                   </template>
                   <template v-else-if="m.role === 'assistant' && m.content">
                     <div
@@ -1331,7 +1484,7 @@ defineExpose({
                       </NIcon>
                     </button>
                     <button
-                      v-else-if="m.role === 'assistant' && m.content"
+                      v-if="m.content"
                       class="fav-btn"
                       :title="t('common.copy')"
                       @click="copyText(m.content)"
@@ -1376,19 +1529,7 @@ defineExpose({
           </transition>
         </div>
 
-        <div v-if="isApprovalActive" class="approval-bar">
-          <NButton size="small" type="success" @click="handleApprovalYes">
-            {{ t("ai.approval.allow") }}
-          </NButton>
-          <NButton size="small" @click="handleApprovalNo">
-            {{ t("ai.approval.deny") }}
-          </NButton>
-        </div>
-
-        <div
-          class="composer-bar"
-          :class="{ 'no-border': isApprovalActive }"
-        >
+        <div class="composer-bar">
           <NButton
             v-if="canRegenerate"
             size="tiny"
@@ -1501,13 +1642,43 @@ defineExpose({
               </template>
             </div>
           </NPopover>
+
+          <!-- 发送快捷键切换：Enter 发送 / Ctrl+Enter 发送（输入法选词防误触） -->
+          <NPopover trigger="click" placement="top-end" :width="200">
+            <template #trigger>
+              <NButton size="tiny" quaternary :title="t('ai.sendKey.title')">
+                <span class="sendkey-label">
+                  <NIcon :size="12"><RiKeyboardLine /></NIcon>
+                  {{ sendKeyMode === "enter" ? "Enter" : "Ctrl+Enter" }}
+                </span>
+              </NButton>
+            </template>
+            <div class="sendkey-panel">
+              <button
+                class="sendkey-option"
+                :class="{ active: sendKeyMode === 'enter' }"
+                @click="setSendKeyMode('enter')"
+              >
+                <span>{{ t("ai.sendKey.enter") }}</span>
+                <NIcon v-if="sendKeyMode === 'enter'" :size="13"><RiCheckLine /></NIcon>
+              </button>
+              <button
+                class="sendkey-option"
+                :class="{ active: sendKeyMode === 'ctrlEnter' }"
+                @click="setSendKeyMode('ctrlEnter')"
+              >
+                <span>{{ t("ai.sendKey.ctrlEnter") }}</span>
+                <NIcon v-if="sendKeyMode === 'ctrlEnter'" :size="13"><RiCheckLine /></NIcon>
+              </button>
+            </div>
+          </NPopover>
         </div>
 
         <div class="composer">
           <NInput
             v-model:value="input"
             type="textarea"
-            :placeholder="t('ai.inputPlaceholder')"
+            :placeholder="inputPlaceholder"
             :autosize="{ minRows: 1, maxRows: 4 }"
             :disabled="isTyping"
             @keydown="handleKeyPress"
@@ -1958,6 +2129,16 @@ defineExpose({
   color: #ffe082;
 }
 
+/* 浅色主题下助手气泡是浅底，白色半透明图标不可见，换深色 */
+:root[data-ashell-theme="light"] .msg.assistant .fav-btn {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+:root[data-ashell-theme="light"] .msg.assistant .fav-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.85);
+}
+
 /* ── Process block (AITOOL / TOOL_RET 聚合) ── */
 
 .process-block {
@@ -2072,8 +2253,14 @@ defineExpose({
   border-radius: 4px;
   background: var(--ashell-terminal-bg);
   border: 1px solid var(--ashell-border-soft);
-  overflow-x: auto;
   font-size: 11px;
+}
+
+/* 同消息气泡：命令过长时折行而不是横向滚动 */
+.process-step :deep(pre code) {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .process-step :deep(code) {
@@ -2234,14 +2421,109 @@ defineExpose({
   }
 }
 
-/* ── Approval bar ── */
+/* ── 审批卡片（bubble.approval 承担卡片外观） ── */
 
-.approval-bar {
+.bubble.approval {
+  border: 1px solid color-mix(in srgb, #f0a020 40%, transparent);
+  border-left: 3px solid #f0a020;
+  background: color-mix(in srgb, #f0a020 5%, var(--ashell-panel-bg-soft));
+  padding: 10px 12px;
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.approval-head-icon {
+  color: #f0a020;
+}
+
+.approval-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+}
+
+/* 等待中的呼吸圆点，提示卡片正等待操作 */
+.approval-wait-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: auto;
+  background: #f0a020;
+  animation: approval-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes approval-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.approval-cmd {
+  margin: 0 0 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--ashell-terminal-bg);
+  font-family: var(--ashell-mono, "Fira Code", "JetBrains Mono", Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ashell-text);
+}
+
+.approval-risk {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #f0a020;
+}
+
+.approval-risk-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.approval-foot {
   display: flex;
   gap: 8px;
-  padding: 8px 16px;
-  border-top: 1px solid var(--ashell-border-soft);
-  flex-shrink: 0;
+}
+
+/* 等宽双按钮：一眼二选一 */
+.approval-foot .approval-btn {
+  flex: 1;
+}
+
+.approval-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.approval-status.ok {
+  color: #4fbf8b;
+}
+
+.approval-status.no {
+  color: #e5695f;
+}
+
+.approval-status.expired {
+  color: var(--ashell-text-subtle);
 }
 
 /* ── Markdown inside assistant bubbles ── */
@@ -2258,8 +2540,14 @@ defineExpose({
   margin: 6px 0;
   padding: 8px;
   border-radius: 4px;
-  overflow-x: auto;
   background: var(--ashell-terminal-bg);
+}
+
+/* 长命令/长 token 自动折行，避免横向滚动条 */
+.markdown-body :deep(pre code) {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body :deep(code) {
@@ -2385,10 +2673,6 @@ defineExpose({
   flex-shrink: 0;
 }
 
-.composer-bar.no-border {
-  border-top: none;
-}
-
 /* composer 工具栏 tiny 按钮（再生成/模型/常用语）：全局 8px 圆角
    落在近方形小按钮上呈椭圆感，统一收窄为 4px 的方正观感 */
 .composer-bar :deep(.n-button--tiny-type) {
@@ -2440,6 +2724,45 @@ defineExpose({
 }
 
 /* ── Quick phrases panel ── */
+
+/* 发送快捷键切换按钮与选项面板 */
+.sendkey-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ashell-text-muted);
+}
+
+.sendkey-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sendkey-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ashell-text);
+  text-align: left;
+}
+
+.sendkey-option:hover {
+  background: color-mix(in srgb, var(--ashell-primary) 12%, transparent);
+}
+
+.sendkey-option.active {
+  color: var(--ashell-primary);
+  font-weight: 600;
+}
 
 .phrases-panel {
   max-height: 300px;
