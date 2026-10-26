@@ -7,6 +7,9 @@
 //! 飞书走 interactive 卡片（schema 2.0，彩色 header + markdown 正文），
 //! 钉钉走 markdown 消息、企业微信走 markdown_v2 消息：三者均以 markdown
 //! 渲染正文，钉钉不支持行内代码（code 行退化为粗体），企业微信/飞书一致。
+//! 自定义平台：webhook 与消息体模板均可配，模板支持 {title}/{sid}/
+//! {content}/{markdown} 占位（合法 JSON 模板在字符串值内替换后按 JSON
+//! 发送，否则整体替换后按 text/plain 发送）。
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,6 +25,7 @@ use crate::errors::{AppError, AppResult};
 pub const PLATFORM_FEISHU: &str = "feishu";
 pub const PLATFORM_WECOM: &str = "wecom";
 pub const PLATFORM_DINGTALK: &str = "dingtalk";
+pub const PLATFORM_CUSTOM: &str = "custom";
 
 /// 正文长度基准（markdown 渲染按 2 倍截断）。企业微信 markdown_v2 content
 /// 上限 4096 字节，1200 全角字符 ≈ 3600 字节，留余量。
@@ -32,12 +36,15 @@ type HmacSha256 = Hmac<Sha256>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotifyConfig {
     pub enabled: bool,
-    /// `"feishu" | "wecom" | "dingtalk"`
+    /// `"feishu" | "wecom" | "dingtalk" | "custom"`
     pub platform: String,
     pub webhook: String,
     /// 钉钉「加签」/ 飞书「签名校验」密钥；企业微信机器人无密钥，留空
     #[serde(default)]
     pub secret: String,
+    /// 自定义平台的消息体模板（{title}/{sid}/{content}/{markdown} 占位）
+    #[serde(default)]
+    pub custom_template: String,
 }
 
 impl Default for NotifyConfig {
@@ -47,6 +54,7 @@ impl Default for NotifyConfig {
             platform: PLATFORM_FEISHU.to_string(),
             webhook: String::new(),
             secret: String::new(),
+            custom_template: String::new(),
         }
     }
 }
@@ -176,6 +184,7 @@ pub async fn send_message(cfg: &NotifyConfig, event: &NotifyEvent) -> Result<(),
             let url = dingtalk_signed_url(&cfg.webhook, cfg.secret.trim())?;
             post_json(&client, &url, &dingtalk_markdown_body(event)).await
         }
+        PLATFORM_CUSTOM => send_custom(&client, cfg, event).await,
         other => Err(format!("不支持的通知平台: {other}")),
     }
 }
@@ -217,19 +226,116 @@ fn dingtalk_markdown_body(event: &NotifyEvent) -> serde_json::Value {
     })
 }
 
-/// 钉钉/企业微信 markdown 正文：标题/会话置顶，行间空行分隔（单个换行
-/// 不折行）。`use_inline_code` 同 `markdown_line`
-fn markdown_body(event: &NotifyEvent, use_inline_code: bool) -> String {
-    let mut md = vec![
-        format!("#### 【ashell】{}", event.title),
-        format!("- 会话 {}", event.sid),
-    ];
-    let body_lines = event
+/// 事件正文行渲染为 markdown（不含标题/会话头部），行间空行分隔。
+/// `use_inline_code` 同 `markdown_line`
+fn markdown_lines(event: &NotifyEvent, use_inline_code: bool) -> String {
+    event
         .lines
         .iter()
-        .map(|l| markdown_line(l, use_inline_code));
-    md.extend(body_lines);
-    truncate_chars(&md.join("\n\n"), MAX_TEXT_CHARS * 2)
+        .map(|l| markdown_line(l, use_inline_code))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// 事件正文行渲染为纯文本（不含标题/会话头部）
+fn plain_lines(event: &NotifyEvent) -> String {
+    event
+        .lines
+        .iter()
+        .map(|l| {
+            if l.label.is_empty() {
+                l.text.clone()
+            } else {
+                format!("{}: {}", l.label, l.text)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 钉钉/企业微信 markdown 正文：标题/会话置顶（单个换行不折行）
+fn markdown_body(event: &NotifyEvent, use_inline_code: bool) -> String {
+    let md = format!(
+        "#### 【ashell】{}\n- 会话 {}\n\n{}",
+        event.title,
+        event.sid,
+        markdown_lines(event, use_inline_code)
+    );
+    truncate_chars(&md, MAX_TEXT_CHARS * 2)
+}
+
+// ── 自定义平台 ──
+
+/// 自定义平台变量取值
+fn custom_vars(event: &NotifyEvent) -> Vec<(&'static str, String)> {
+    vec![
+        ("title", event.title.clone()),
+        ("sid", event.sid.clone()),
+        ("content", plain_lines(event)),
+        ("markdown", markdown_lines(event, true)),
+    ]
+}
+
+/// 在 JSON 字符串值内递归替换 {var} 占位：只动字符串值，serde_json 重
+/// 序列化时自动转义，正文内容不会破坏 JSON 结构
+fn replace_vars_in_json(v: &mut serde_json::Value, vars: &[(&'static str, String)]) {
+    match v {
+        serde_json::Value::String(s) => {
+            for (k, val) in vars {
+                let ph = format!("{{{k}}}");
+                if s.contains(&ph) {
+                    *s = s.replace(&ph, val);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                replace_vars_in_json(item, vars);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for val in map.values_mut() {
+                replace_vars_in_json(val, vars);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 非 JSON 模板：整体字符串替换
+fn render_custom_text(template: &str, vars: &[(&'static str, String)]) -> String {
+    let mut text = template.to_string();
+    for (k, val) in vars {
+        text = text.replace(&format!("{{{k}}}"), val);
+    }
+    text
+}
+
+/// 自定义平台推送：模板为合法 JSON 时在字符串值内替换占位后按 JSON 发送，
+/// 否则整体替换后按 text/plain 发送
+async fn send_custom(
+    client: &reqwest::Client,
+    cfg: &NotifyConfig,
+    event: &NotifyEvent,
+) -> Result<(), String> {
+    let template = cfg.custom_template.trim();
+    if template.is_empty() {
+        return Err("消息体模板为空".into());
+    }
+    let vars = custom_vars(event);
+    match serde_json::from_str::<serde_json::Value>(template) {
+        Ok(mut body) => {
+            replace_vars_in_json(&mut body, &vars);
+            post_json(client, &cfg.webhook, &body).await
+        }
+        Err(_) => post_raw(
+            client,
+            &cfg.webhook,
+            "text/plain; charset=utf-8",
+            render_custom_text(template, &vars),
+        )
+        .await,
+    }
 }
 
 /// 飞书 interactive 卡片（schema 2.0）：彩色 header + markdown 正文
@@ -278,12 +384,34 @@ async fn post_json(
         .send()
         .await
         .map_err(|e| format!("请求失败: {e}"))?;
+    check_response(resp).await
+}
+
+/// 自定义平台的非 JSON 请求体（text/plain）
+async fn post_raw(
+    client: &reqwest::Client,
+    url: &str,
+    content_type: &str,
+    body: String,
+) -> Result<(), String> {
+    let resp = client
+        .post(url)
+        .header(reqwest::header::CONTENT_TYPE, content_type)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
+    check_response(resp).await
+}
+
+/// 各平台共用响应校验：HTTP 非 2xx 报错；2xx 时若响应 JSON 含
+/// errcode/code/StatusCode 且非 0 则视为业务失败（内置平台约定，字段名各异）
+async fn check_response(resp: reqwest::Response) -> Result<(), String> {
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
         return Err(format!("HTTP {status}: {}", truncate_chars(&text, 200)));
     }
-    // 三个平台都约定 HTTP 200 + 业务错误码（字段名各异）
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
         return Ok(());
     };
@@ -534,5 +662,61 @@ mod tests {
         assert_eq!(body["markdown"]["title"], "【ashell】AI 助手等待审批");
         let text = body["markdown"]["text"].as_str().unwrap();
         assert!(text.starts_with("#### 【ashell】AI 助手等待审批"));
+    }
+
+    #[test]
+    fn custom_vars_plain_and_markdown() {
+        let vars = custom_vars(&sample_event());
+        let get = |k: &str| {
+            vars.iter()
+                .find(|(name, _)| *name == k)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        assert_eq!(get("title"), "AI 助手等待审批");
+        assert_eq!(get("sid"), "sess-1");
+        assert!(get("content").contains("命令: rm -rf /tmp/x"));
+        assert!(get("markdown").contains("**命令**:\n`rm -rf /tmp/x`"));
+        // 正文变量不含标题/会话头部，由模板自行编排
+        assert!(!get("content").contains("AI 助手等待审批"));
+    }
+
+    #[test]
+    fn custom_json_template_substitutes_and_escapes() {
+        let mut event = sample_event();
+        event.lines[0].text = "echo \"hi\"\nrm -rf /".into();
+        let template = r#"{"msgtype":"text","text":{"content":"【ashell】{title}\n{content}"}}"#;
+        let mut body: serde_json::Value = serde_json::from_str(template).unwrap();
+        replace_vars_in_json(&mut body, &custom_vars(&event));
+        // 命令中的引号/换行经 serde 转义，替换后 JSON 结构不被破坏
+        let content = body["text"]["content"].as_str().unwrap();
+        assert!(content.contains("【ashell】AI 助手等待审批"));
+        assert!(content.contains("命令: echo \"hi\"\nrm -rf /"));
+        assert!(body.to_string().contains("\\n"));
+    }
+
+    #[test]
+    fn custom_json_template_replaces_nested_values() {
+        let template =
+            r#"{"a":{"b":["{title}","x{sid}y"]},"c":"{markdown}","d":123,"e":true}"#;
+        let mut body: serde_json::Value = serde_json::from_str(template).unwrap();
+        replace_vars_in_json(&mut body, &custom_vars(&sample_event()));
+        assert_eq!(body["a"]["b"][0], "AI 助手等待审批");
+        assert_eq!(body["a"]["b"][1], "xsess-1y");
+        assert!(body["c"].as_str().unwrap().contains("**命令**"));
+        // 非字符串值不受影响
+        assert_eq!(body["d"], 123);
+        assert_eq!(body["e"], true);
+    }
+
+    #[test]
+    fn custom_text_template_plain_substitution() {
+        let text = render_custom_text(
+            "ashell: {title} / {sid}\n{content}\n未知占位 {nope} 保留",
+            &custom_vars(&sample_event()),
+        );
+        assert!(text.starts_with("ashell: AI 助手等待审批 / sess-1"));
+        assert!(text.contains("命令: rm -rf /tmp/x"));
+        assert!(text.contains("未知占位 {nope} 保留"));
     }
 }

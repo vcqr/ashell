@@ -23,6 +23,8 @@ pub struct SaveConfigInput {
     pub webhook: String,
     #[serde(default)]
     pub secret: String,
+    #[serde(default)]
+    pub custom_template: String,
 }
 
 pub async fn save_config(
@@ -34,6 +36,7 @@ pub async fn save_config(
         platform: input.platform,
         webhook: input.webhook.trim().to_string(),
         secret: input.secret,
+        custom_template: input.custom_template,
     };
     notify::save_config(&cfg)?;
     Ok(ok_msg("saved"))
@@ -47,6 +50,8 @@ pub struct TestInput {
     pub webhook: String,
     #[serde(default)]
     pub secret: String,
+    #[serde(default)]
+    pub custom_template: String,
 }
 
 pub async fn test_connection(
@@ -58,6 +63,7 @@ pub async fn test_connection(
         platform: input.platform,
         webhook: input.webhook.trim().to_string(),
         secret: input.secret,
+        custom_template: input.custom_template,
     };
     let event = NotifyEvent {
         title: "通知测试".into(),

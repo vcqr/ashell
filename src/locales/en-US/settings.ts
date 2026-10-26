@@ -468,11 +468,18 @@ export default {
     platform_feishu: "Feishu (Lark)",
     platform_wecom: "WeCom (WeChat Work)",
     platform_dingtalk: "DingTalk",
+    platform_custom: "Custom",
     webhook: "Webhook URL",
     webhookHint:
       "The group robot's webhook URL (group settings → group robot → add robot)",
     webhookPlaceholder: "https://open.feishu.cn/open-apis/bot/v2/hook/…",
     webhookRequired: "Please enter the webhook URL first",
+    platformMismatch:
+      "The webhook URL doesn't match the selected platform (it belongs to another platform's bot)",
+    customTemplate: "Message Body Template",
+    customTemplateHint:
+      "Variables: {'{title}'} (event title), {'{sid}'} (session ID), {'{content}'} (plain-text body), {'{markdown}'} (Markdown body). If the template is valid JSON it is sent as JSON (variables are substituted inside string values with proper escaping); otherwise the whole body is sent as plain text",
+    templateRequired: "A message body template is required for the custom platform",
     secret: "Signing Secret",
     secretPlaceholder: "Leave empty if signature verification is off",
     secretHintDingtalk:
