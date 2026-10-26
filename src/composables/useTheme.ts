@@ -19,6 +19,14 @@ const sharedThemeOverrides: GlobalThemeOverrides = {
       "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     fontFamilyMono: "'Fira Code', 'JetBrains Mono', Menlo, Consolas, monospace",
   },
+  Button: {
+    // 品牌紫明度偏低，naive 暗色主题的实心主色按钮默认黑字（baseColor=#000，
+    // 为其亮薄荷绿设计），观感差；统一改为白字
+    textColorPrimary: "#fff",
+    textColorHoverPrimary: "#fff",
+    textColorPressedPrimary: "#fff",
+    textColorFocusPrimary: "#fff",
+  },
 };
 
 function loadThemeMode(): ThemeMode {
