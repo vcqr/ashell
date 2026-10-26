@@ -725,6 +725,23 @@ function handleSidecarOutput(ssid: string, line: string) {
     return;
   }
 
+  if (line.startsWith("[AI_USER_MSG]")) {
+    // 微信远程答复注入（[AI_USER_MSG] 由 Rust 侧 weixin 模块合成）：渲染为带来源标记的用户气泡
+    try {
+      const msg = JSON.parse(line.substring("[AI_USER_MSG]".length));
+      aiStore.pushMessage(ssid, {
+        role: "user",
+        content: String(msg.payload?.text ?? ""),
+        time: nowStr(),
+        source: msg.payload?.source ? String(msg.payload.source) : undefined,
+      });
+      scrollToBottom();
+    } catch {
+      // 格式异常的合成事件忽略
+    }
+    return;
+  }
+
   if (line.startsWith("[AIMSG]")) {
     const aiMsg = line.substring("[AIMSG]".length);
     const msg = JSON.parse(aiMsg);
@@ -1455,6 +1472,7 @@ defineExpose({
                     />
                   </template>
                   <template v-else-if="m.content">
+                    <span v-if="m.source" class="bubble-source">{{ t("ai.fromWeixin") }}</span>
                     <div class="bubble-content">{{ m.content }}</div>
                   </template>
                   <span v-else class="dot">…</span>
@@ -2017,6 +2035,18 @@ defineExpose({
 
 .msg.user .bubble-content {
   color: #fff;
+}
+
+/* 消息来源徽标（微信远程答复注入） */
+.bubble-source {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .bubble-footer {

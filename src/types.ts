@@ -317,6 +317,8 @@ export interface ChatMessage {
   approval?: MessageApproval
   /** 本轮 token 用量统计（仅 assistant 消息，轮末 [AI_USAGE] 帧附着） */
   usage?: AiUsageStats
+  /** 消息来源标记（"weixin" = 微信远程答复注入，[AI_USER_MSG] 帧携带） */
+  source?: string
 }
 
 /* ---------- 主机图标资源（/api/icons） ---------- */

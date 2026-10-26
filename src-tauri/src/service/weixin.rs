@@ -1054,6 +1054,12 @@ async fn handle_weixin_command(from: &str, sid: &str, content: &str) {
     match crate::sidecar::write_to_sidecar(sid.to_string(), content.to_string()) {
         Ok(()) => {
             tracing::info!("[WEIXIN] 微信答复已转发 ssid={sid} content=\"{}\"", truncate(content, 50));
+            // 合成 stdout 事件，让前端在对话里渲染这条来自微信的用户消息
+            let payload = serde_json::json!({
+                "type": "user",
+                "payload": { "text": content, "source": "weixin" },
+            });
+            crate::sidecar::push_session_event(sid, &format!("[AI_USER_MSG]{payload}"));
             let _ = send_text(Some(from), &format!("已转发至会话 {sid}")).await;
         }
         Err(e) => {

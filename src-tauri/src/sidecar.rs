@@ -347,6 +347,38 @@ fn handle_daemon_line(text: &str) {
 }
 
 /// 事件按 ssid 转发：桌面端 Tauri emit（事件名与旧版一致）+ Web 端广播通道
+/// 向指定会话广播一条合成 stdout 行：与 forward_event 同通道（Tauri emit +
+/// Web 广播），但不走 maybe_notify 钩子（避免合成事件再次触发通知推送）。
+/// 用于微信远程答复注入时让前端在对话里渲染用户消息气泡。
+pub fn push_session_event(sid: &str, line: &str) {
+    let guard = match DAEMON.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::error!("[DAEMON] lock poisoned: {}", e);
+            return;
+        }
+    };
+    let Some(state) = guard.as_ref() else {
+        tracing::debug!("[DAEMON sid={}] synthetic event after daemon gone, dropped", sid);
+        return;
+    };
+    let Some(entry) = state.sessions.get(sid) else {
+        tracing::debug!("[DAEMON sid={}] synthetic event for unknown session, dropped", sid);
+        return;
+    };
+    #[cfg(feature = "desktop")]
+    {
+        let _ = state
+            .handle
+            .app
+            .emit(&format!("sidecar-stdout-{}", sid), &line);
+    }
+    let _ = entry.events.send(SidecarEvent {
+        stream: "stdout",
+        line: line.to_string(),
+    });
+}
+
 fn forward_event(sid: &str, line: String) {
     maybe_notify_event(sid, &line);
     let guard = match DAEMON.lock() {

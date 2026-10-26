@@ -28,6 +28,7 @@ export default {
     denied: "已拒绝",
     expired: "已失效",
   },
+  fromWeixin: "来自微信",
   welcome: "嗨！我是{name}，有什么需要我帮助的吗？",
   stopped: "已中断本次回复",
   startFailed: "AI 会话启动失败，请稍后重试",
