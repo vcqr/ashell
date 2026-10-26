@@ -5,7 +5,8 @@
 //! 异步发送；发送失败仅记日志，不影响审批/提问交互链路。
 //!
 //! 飞书走 interactive 卡片（schema 2.0，彩色 header + markdown 正文），
-//! 企业微信/钉钉机器人无对应卡片协议，保持纯文本。
+//! 钉钉走 markdown 消息、企业微信走 markdown_v2 消息：三者均以 markdown
+//! 渲染正文，钉钉不支持行内代码（code 行退化为粗体），企业微信/飞书一致。
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,7 +23,8 @@ pub const PLATFORM_FEISHU: &str = "feishu";
 pub const PLATFORM_WECOM: &str = "wecom";
 pub const PLATFORM_DINGTALK: &str = "dingtalk";
 
-/// 文本长度上限。企业微信 text 最严格（2048 字节，中文约 680 字），留余量。
+/// 正文长度基准（markdown 渲染按 2 倍截断）。企业微信 markdown_v2 content
+/// 上限 4096 字节，1200 全角字符 ≈ 3600 字节，留余量。
 const MAX_TEXT_CHARS: usize = 600;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -145,8 +147,9 @@ pub fn spawn_event_notify(sid: &str, title: &str, template: &'static str, lines:
                 return;
             }
         };
-        if let Err(e) = rt.block_on(send_message(&cfg, &event)) {
-            tracing::warn!("[NOTIFY] {title} 通知发送失败: {e}");
+        match rt.block_on(send_message(&cfg, &event)) {
+            Ok(()) => tracing::info!("[NOTIFY] {title} 通知已发送（{}）", cfg.platform),
+            Err(e) => tracing::warn!("[NOTIFY] {title} 通知发送失败: {e}"),
         }
     });
 }
@@ -168,16 +171,10 @@ pub async fn send_message(cfg: &NotifyConfig, event: &NotifyEvent) -> Result<(),
             }
             post_json(&client, &cfg.webhook, &body).await
         }
-        PLATFORM_WECOM => {
-            let body =
-                serde_json::json!({ "msgtype": "text", "text": { "content": render_text(event) } });
-            post_json(&client, &cfg.webhook, &body).await
-        }
+        PLATFORM_WECOM => post_json(&client, &cfg.webhook, &wecom_markdown_body(event)).await,
         PLATFORM_DINGTALK => {
             let url = dingtalk_signed_url(&cfg.webhook, cfg.secret.trim())?;
-            let body =
-                serde_json::json!({ "msgtype": "text", "text": { "content": render_text(event) } });
-            post_json(&client, &url, &body).await
+            post_json(&client, &url, &dingtalk_markdown_body(event)).await
         }
         other => Err(format!("不支持的通知平台: {other}")),
     }
@@ -201,18 +198,38 @@ fn build_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("HTTP client 构建失败: {e}"))
 }
 
-/// 纯文本渲染（企业微信 / 钉钉）
-fn render_text(event: &NotifyEvent) -> String {
-    let mut lines = vec![format!("【ashell】{}", event.title)];
-    lines.push(format!("会话: {}", event.sid));
-    for line in &event.lines {
-        if line.label.is_empty() {
-            lines.push(line.text.clone());
-        } else {
-            lines.push(format!("{}: {}", line.label, line.text));
+/// 企业微信 markdown_v2 消息体（支持行内代码/代码块/表格，正文与飞书一致）
+fn wecom_markdown_body(event: &NotifyEvent) -> serde_json::Value {
+    serde_json::json!({
+        "msgtype": "markdown_v2",
+        "markdown_v2": { "content": markdown_body(event, true) },
+    })
+}
+
+/// 钉钉 markdown 消息体。`title` 字段用于聊天列表/通知栏预览，正文自带头部
+fn dingtalk_markdown_body(event: &NotifyEvent) -> serde_json::Value {
+    serde_json::json!({
+        "msgtype": "markdown",
+        "markdown": {
+            "title": format!("【ashell】{}", event.title),
+            "text": markdown_body(event, false),
         }
-    }
-    truncate_chars(&lines.join("\n"), MAX_TEXT_CHARS)
+    })
+}
+
+/// 钉钉/企业微信 markdown 正文：标题/会话置顶，行间空行分隔（单个换行
+/// 不折行）。`use_inline_code` 同 `markdown_line`
+fn markdown_body(event: &NotifyEvent, use_inline_code: bool) -> String {
+    let mut md = vec![
+        format!("#### 【ashell】{}", event.title),
+        format!("- 会话 {}", event.sid),
+    ];
+    let body_lines = event
+        .lines
+        .iter()
+        .map(|l| markdown_line(l, use_inline_code));
+    md.extend(body_lines);
+    truncate_chars(&md.join("\n\n"), MAX_TEXT_CHARS * 2)
 }
 
 /// 飞书 interactive 卡片（schema 2.0）：彩色 header + markdown 正文
@@ -220,12 +237,7 @@ fn feishu_card(event: &NotifyEvent) -> serde_json::Value {
     let markdown = event
         .lines
         .iter()
-        .map(|l| match (l.label.as_str(), l.code) {
-            ("", false) => l.text.clone(),
-            ("", true) => format!("`{}`", escape_inline_code(&l.text)),
-            (label, true) => format!("**{label}**:\n`{}`", escape_inline_code(&l.text)),
-            (label, false) => format!("**{label}**: {}", l.text),
-        })
+        .map(|l| markdown_line(l, true))
         .collect::<Vec<_>>()
         .join("\n");
     let markdown = truncate_chars(&markdown, MAX_TEXT_CHARS * 2);
@@ -297,12 +309,13 @@ async fn post_json(
 // ── Signing ──
 
 /// 钉钉加签：sign = base64(HMAC-SHA256(key=secret, msg="{ts}\n{secret}"))，
-/// URL 拼 `&timestamp={ts}&sign={urlencode(sign)}`
+/// URL 拼 `&timestamp={ts}&sign={urlencode(sign)}`。timestamp 为毫秒级
+/// （官方示例 System.currentTimeMillis()），服务端校验 1 小时有效期
 fn dingtalk_signed_url(webhook: &str, secret: &str) -> Result<String, String> {
     if secret.is_empty() {
         return Ok(webhook.to_string());
     }
-    let ts = unix_secs();
+    let ts = unix_millis();
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .map_err(|e| format!("加签密钥无效: {e}"))?;
     mac.update(format!("{ts}\n{secret}").as_bytes());
@@ -325,10 +338,19 @@ fn feishu_sign(secret: &str) -> Result<(String, String), String> {
     Ok((ts, sign))
 }
 
+/// 秒级时间戳（飞书签名校验用）
 fn unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// 毫秒级时间戳（钉钉加签用）
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
 
@@ -340,6 +362,26 @@ fn percent_encode_b64(b64: &str) -> String {
 /// 行内代码内容清洗：反引号会截断 code 片段，换行在行内代码中不合法
 fn escape_inline_code(s: &str) -> String {
     s.replace('`', "'").replace('\n', " ")
+}
+
+/// 单行渲染为 markdown。code 行的包裹方式按平台区分：飞书/企业微信支持
+/// 行内代码，钉钉 markdown 无该语法，退化为粗体
+fn markdown_line(l: &NotifyLine, use_inline_code: bool) -> String {
+    match (l.label.as_str(), l.code) {
+        ("", false) => l.text.clone(),
+        ("", true) => wrap_code(&l.text, use_inline_code),
+        (label, true) => format!("**{label}**:\n{}", wrap_code(&l.text, use_inline_code)),
+        (label, false) => format!("**{label}**: {}", l.text),
+    }
+}
+
+fn wrap_code(s: &str, use_inline_code: bool) -> String {
+    if use_inline_code {
+        format!("`{}`", escape_inline_code(s))
+    } else {
+        // 换行会截断粗体片段，折叠为空格
+        format!("**{}**", s.replace('\n', " "))
+    }
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -376,16 +418,22 @@ mod tests {
     }
 
     #[test]
-    fn dingtalk_url_signed_appends_query() {
+    fn dingtalk_url_signed_appends_millisecond_timestamp() {
         let url = dingtalk_signed_url(
             "https://oapi.dingtalk.com/robot/send?access_token=x",
             "SECsecret",
         )
         .unwrap();
-        assert!(url.starts_with(
-            "https://oapi.dingtalk.com/robot/send?access_token=x&timestamp="
-        ));
+        assert!(url.starts_with("https://oapi.dingtalk.com/robot/send?access_token=x&timestamp="));
         assert!(url.contains("&sign="));
+        // 官方要求毫秒级时间戳（13 位），秒级会被服务端判为签名过期
+        let ts = url
+            .split("&timestamp=")
+            .nth(1)
+            .and_then(|s| s.split('&').next())
+            .unwrap();
+        assert_eq!(ts.len(), 13);
+        assert!(ts.chars().all(|c| c.is_ascii_digit()));
     }
 
     #[test]
@@ -441,12 +489,50 @@ mod tests {
     }
 
     #[test]
-    fn text_render_ignores_code_flag() {
-        let text = render_text(&sample_event());
-        assert!(text.starts_with("【ashell】AI 助手等待审批"));
-        assert!(text.contains("会话: sess-1"));
-        assert!(text.contains("命令: rm -rf /tmp/x"));
-        assert!(text.contains("风险: 递归删除"));
-        assert!(!text.contains('`'));
+    fn markdown_body_wechat_style_uses_inline_code() {
+        let md = markdown_body(&sample_event(), true);
+        assert!(md.starts_with("#### 【ashell】AI 助手等待审批"));
+        assert!(md.contains("- 会话 sess-1"));
+        assert!(md.contains("**命令**:\n`rm -rf /tmp/x`"));
+        assert!(md.contains("**风险**: 递归删除"));
+        assert!(md.contains("请在 ashell 中处理该审批"));
+    }
+
+    #[test]
+    fn markdown_body_dingtalk_style_bold_code() {
+        let md = markdown_body(&sample_event(), false);
+        assert!(md.starts_with("#### 【ashell】AI 助手等待审批"));
+        assert!(md.contains("- 会话 sess-1"));
+        assert!(md.contains("**命令**:\n**rm -rf /tmp/x**"));
+        assert!(md.contains("**风险**: 递归删除"));
+        assert!(md.contains("请在 ashell 中处理该审批"));
+    }
+
+    #[test]
+    fn markdown_body_dingtalk_code_folds_newlines() {
+        let mut event = sample_event();
+        event.lines[0].text = "echo `whoami`\ncd /tmp".into();
+        let md = markdown_body(&event, false);
+        // 钉钉无行内代码语法：退化为粗体，换行折叠为空格，不残留反引号包裹
+        assert!(md.contains("**echo `whoami` cd /tmp**"));
+        assert!(!md.contains(":\n`"));
+    }
+
+    #[test]
+    fn wecom_markdown_body_shape() {
+        let body = wecom_markdown_body(&sample_event());
+        assert_eq!(body["msgtype"], "markdown_v2");
+        let content = body["markdown_v2"]["content"].as_str().unwrap();
+        assert!(content.starts_with("#### 【ashell】AI 助手等待审批"));
+        assert!(content.contains("`rm -rf /tmp/x`"));
+    }
+
+    #[test]
+    fn dingtalk_markdown_body_shape() {
+        let body = dingtalk_markdown_body(&sample_event());
+        assert_eq!(body["msgtype"], "markdown");
+        assert_eq!(body["markdown"]["title"], "【ashell】AI 助手等待审批");
+        let text = body["markdown"]["text"].as_str().unwrap();
+        assert!(text.starts_with("#### 【ashell】AI 助手等待审批"));
     }
 }
