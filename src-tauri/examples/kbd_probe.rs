@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use russh::client::{self, Handle, Handler, Session as ClientSession};
+use russh::client::{self, Handler, Session as ClientSession};
 use russh::keys::{decode_secret_key, PrivateKeyWithHashAlg};
 
 struct ProbeHandler;
@@ -51,7 +51,18 @@ async fn main() {
 
     let key_str = std::fs::read_to_string(&key_path).expect("read key");
     let key = decode_secret_key(&key_str, None).expect("decode key");
-    let key = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+    // 与主链路一致：RSA 按 server-sig-algs 选 rsa-sha2-*，避免落到 SHA-1 的
+    // ssh-rsa（OpenSSH ≥ 8.8 默认禁用）；非 RSA 忽略该参数
+    let hash_alg = if key.algorithm().is_rsa() {
+        handle
+            .best_supported_rsa_hash()
+            .await
+            .unwrap_or_default()
+            .flatten()
+    } else {
+        None
+    };
+    let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
 
     let res = handle
         .authenticate_publickey(&user, key)

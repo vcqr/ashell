@@ -529,7 +529,21 @@ impl Session {
                         return Err(AppError::KeyPassphraseRequired { host_id: host.id });
                     }
                 };
-                let key = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                // RSA：hash 传 None 会映射为 legacy ssh-rsa（SHA-1），OpenSSH ≥ 8.8
+                // 默认禁用该算法导致认证被拒，须按 server-sig-algs 选 rsa-sha2-*。
+                // 非 RSA 密钥忽略该参数，跳过探测以免白等 EXT_INFO（最多 1s）。
+                let hash_alg = if key.algorithm().is_rsa() {
+                    match handle.best_supported_rsa_hash().await {
+                        Ok(supported) => supported.flatten(),
+                        Err(e) => {
+                            log::debug!("probe server-sig-algs for host {}: {e}", host.id);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
                 let res = handle
                     .authenticate_publickey(&host.username, key)
                     .await
