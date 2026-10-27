@@ -259,6 +259,55 @@ function cancelAuthPrompt() {
   sendJson({ kind: "auth_cancel" })
 }
 
+// ===== SSH keyboard-interactive 认证（2FA/TOTP 等多因素逐条输入） =====
+const kbPromptVisible = ref(false)
+const kbLabel = ref("")
+/** 设备/方法名（如 pam_google_authenticator），可为空 */
+const kbName = ref("")
+/** 服务器附带的说明文字，可为空 */
+const kbInstructions = ref("")
+/** 待用户输入的提示 [{prompt, echo}]（已自动应答项不含在内） */
+const kbPrompts = ref<{ prompt: string; echo: boolean }[]>([])
+/** 与 kbPrompts 按序对应的用户输入 */
+const kbAnswers = ref<string[]>([])
+const kbSubmitting = ref(false)
+const kbRetry = ref(false)
+
+function showKbPrompt(info: {
+  label?: string
+  name?: string
+  instructions?: string
+  prompts?: { prompt: string; echo: boolean }[]
+}) {
+  // 提交后再次收到 auth_kb_request：说明上一次应答未通过
+  if (kbSubmitting.value) {
+    kbSubmitting.value = false
+    kbRetry.value = true
+  }
+  kbLabel.value = info.label ?? ""
+  kbName.value = info.name ?? ""
+  kbInstructions.value = info.instructions ?? ""
+  kbPrompts.value = info.prompts ?? []
+  kbAnswers.value = kbPrompts.value.map(() => "")
+  kbPromptVisible.value = true
+}
+
+function submitKbAnswers() {
+  if (!kbPromptVisible.value || kbPrompts.value.length === 0) return
+  if (kbAnswers.value.some((a) => !a)) return
+  kbSubmitting.value = true
+  kbPromptVisible.value = false
+  sendJson({ kind: "auth_kb_response", answers: kbAnswers.value })
+}
+
+function cancelKbPrompt() {
+  if (!kbPromptVisible.value && !kbSubmitting.value) return
+  kbPromptVisible.value = false
+  kbSubmitting.value = false
+  authCancelledByUser = true
+  sendJson({ kind: "auth_cancel" })
+}
+
 // ===== SSH 主机密钥指纹确认（TOFU：首次连接/指纹变更） =====
 const hostkeyVisible = ref(false)
 const hostkeyInfo = ref<HostKeyInfo>({
@@ -1270,6 +1319,8 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           // 认证重试成功：复位弹窗状态
           authSubmitting.value = false
           authPromptRetry.value = false
+          kbSubmitting.value = false
+          kbRetry.value = false
           authCancelledByUser = false
           hostkeyDeclinedByUser = false
           // 自动重连成功：清计数并提示（首次连接不计）
@@ -1303,6 +1354,17 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           const m = msg as { label?: string; message?: string }
           term?.writeln(`\x1b[36m[ashell] ${t("terminal.passphraseRequiredNotice")}\x1b[0m`)
           showPassphrasePrompt(m.label ?? "", m.message ?? "")
+          return
+        }
+        if (msg.kind === "auth_kb_request") {
+          const m = msg as {
+            label?: string
+            name?: string
+            instructions?: string
+            prompts?: { prompt: string; echo: boolean }[]
+          }
+          term?.writeln(`\x1b[36m[ashell] ${t("terminal.kbRequiredNotice")}\x1b[0m`)
+          showKbPrompt(m)
           return
         }
         if (msg.kind === "hostkey_confirm") {
@@ -2056,6 +2118,53 @@ onBeforeUnmount(() => {
       </template>
     </NModal>
 
+    <!-- SSH keyboard-interactive 认证：2FA/TOTP 等多因素按服务器提示逐条输入 -->
+    <NModal
+      v-model:show="kbPromptVisible"
+      preset="card"
+      :title="t('terminal.kbPromptTitle')"
+      class="auth-prompt-modal"
+      style="max-width: 440px; width: calc(100vw - 32px)"
+      :mask-closable="false"
+      :bordered="false"
+      size="small"
+      @update:show="(v) => { if (!v) cancelKbPrompt() }"
+    >
+      <div class="auth-prompt-desc">{{ t('terminal.kbPromptDesc', { label: kbLabel }) }}</div>
+      <div v-if="kbName || kbInstructions" class="auth-prompt-retry">
+        {{ [kbName, kbInstructions].filter(Boolean).join(' · ') }}
+      </div>
+      <div v-if="kbRetry" class="auth-prompt-retry">
+        {{ t('terminal.kbPromptRetry') }}
+      </div>
+      <div v-for="(p, i) in kbPrompts" :key="i" class="auth-kb-item">
+        <NInput
+          v-model:value="kbAnswers[i]"
+          :type="p.echo ? 'text' : 'password'"
+          :show-password-on="p.echo ? undefined : 'click'"
+          :placeholder="p.prompt"
+          :disabled="kbSubmitting"
+          @keydown.enter.prevent="submitKbAnswers"
+        />
+      </div>
+      <template #footer>
+        <div class="auth-prompt-actions">
+          <NButton size="small" :disabled="kbSubmitting" @click="cancelKbPrompt">
+            {{ t('common.cancel') }}
+          </NButton>
+          <NButton
+            size="small"
+            type="primary"
+            :loading="kbSubmitting"
+            :disabled="kbAnswers.some((a) => !a)"
+            @click="submitKbAnswers"
+          >
+            {{ t('terminal.authPromptConfirm') }}
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
     <!-- SSH 主机密钥指纹确认（首次连接/指纹变更，TOFU） -->
     <HostKeyConfirmModal
       v-model:show="hostkeyVisible"
@@ -2171,6 +2280,11 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: #e88080;
   margin-bottom: 8px;
+}
+
+/* keyboard-interactive 多提示输入：提示框之间留间隙 */
+.auth-kb-item {
+  margin-top: 8px;
 }
 
 .auth-prompt-remember {

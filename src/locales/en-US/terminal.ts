@@ -90,6 +90,12 @@ export default {
     "The private key for {label} is encrypted. Enter its passphrase to continue.",
   passphrasePromptPlaceholder: "Private key passphrase",
   passphrasePromptRemember: "Remember passphrase and update host config",
+  kbRequiredNotice:
+    "The server requires multi-factor authentication (2FA/TOTP). Enter the prompts in the dialog.",
+  kbPromptTitle: "Multi-Factor Authentication",
+  kbPromptDesc:
+    "{label} requires additional authentication. Fill in each prompt from the server.",
+  kbPromptRetry: "The previous answer was rejected by the server. Please try again.",
   hostKeyNotice: "Host key needs confirmation. Verify the fingerprint in the dialog.",
   hostKeyTitle: "Verify Host Fingerprint",
   hostKeyDesc: "First connection to {label}. Verify the host key fingerprint presented by the server.",

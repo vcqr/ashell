@@ -13,14 +13,14 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
-use russh::client::{self, Handle, Handler, Msg, Session as ClientSession};
+use russh::client::{self, Handle, Handler, KeyboardInteractiveAuthResponse, Msg, Session as ClientSession};
 use russh::keys::{decode_secret_key, PrivateKeyWithHashAlg};
 use russh::{Channel, ChannelMsg, ChannelOpenHandleInner, Disconnect};
 use russh_sftp::client::SftpSession;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, mpsc};
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::{AppError, AppResult, KbdPrompt};
 use crate::models::{DbPool, Host};
 use crate::service::forward as forward_svc;
 use crate::service::host as host_svc;
@@ -274,6 +274,15 @@ impl Handler for ClientHandler {
     }
 }
 
+/// 判断 keyboard-interactive 提示是否为"密码式"提示：配合已存密码自动应答，
+/// 覆盖 PasswordAuthentication=no、仅开放 keyboard-interactive 的服务器。
+/// 只在提示不回显时才调用，验证码（TOTP/验证码/verification code）等
+/// 提示均不匹配，不会误吞双因素输入。
+fn is_password_prompt(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    t.contains("password") || t.contains("passwd") || t.contains("密码") || t.contains("口令")
+}
+
 /// 已建立的 SSH 会话
 ///
 /// `handle` 包在 `AsyncMutex` 里是为了让 `tcpip_forward` / `cancel_tcpip_forward`
@@ -296,32 +305,45 @@ impl Session {
     /// 隧道到目标机，再在隧道上完成目标机的 SSH 握手（仅支持一级跳板）。
     pub async fn connect(pool: &DbPool, crypto_key: &[u8; 32], host: &Host) -> AppResult<Self> {
         let Some(jump_id) = host.jump_host_id else {
-            return Self::connect_direct(pool, host).await;
+            return Self::connect_direct(pool, host, &[]).await;
         };
 
         let jump_host = host_svc::get_with_credentials(pool, crypto_key, jump_id)
             .await
             .map_err(|e| AppError::Ssh(format!("load jump host {jump_id}: {e}")))?;
-        Self::connect_via(pool, &jump_host, host).await
+        Self::connect_via(pool, &jump_host, host, &[], &[]).await
     }
 
     /// 用调用方准备好的（已解密）跳板机配置连接目标主机。
     ///
     /// 终端 WS 在认证失败后的交互式重试中会缓存并原地修改主机凭证，
     /// 需要绕过 [`Session::connect`] 内部的重新加载，故单独暴露此入口。
+    /// `jump_kbd` / `kbd_answers` 分别是跳板机与目标机 keyboard-interactive
+    /// 提示的按位置应答序列（终端 WS 交互式收集后重连重放），
+    /// REST 等非交互调用方传空切片。
     pub async fn connect_prepared(
         pool: &DbPool,
         jump_host: Option<&Host>,
         host: &Host,
+        jump_kbd: &[String],
+        kbd_answers: &[String],
     ) -> AppResult<Self> {
         match jump_host {
-            Some(j) => Self::connect_via(pool, j, host).await,
-            None => Self::connect_direct(pool, host).await,
+            Some(j) => Self::connect_via(pool, j, host, jump_kbd, kbd_answers).await,
+            None => Self::connect_direct(pool, host, kbd_answers).await,
         }
     }
 
-    /// 经由已解密的跳板机配置连接目标主机（仅支持一级跳板）
-    async fn connect_via(pool: &DbPool, jump_host: &Host, host: &Host) -> AppResult<Self> {
+    /// 经由已解密的跳板机配置连接目标主机（仅支持一级跳板）。
+    /// 跳板机与目标机的 keyboard-interactive 应答序列分开传入：
+    /// 两台机器都可能要求 2FA/TOTP 交互
+    async fn connect_via(
+        pool: &DbPool,
+        jump_host: &Host,
+        host: &Host,
+        jump_kbd: &[String],
+        kbd_answers: &[String],
+    ) -> AppResult<Self> {
         if jump_host.protocol != "ssh" {
             return Err(AppError::Ssh("jump host must use SSH protocol".into()));
         }
@@ -330,19 +352,19 @@ impl Session {
             .port
             .parse()
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
-        let jump_sess = Self::connect_direct(pool, jump_host).await?;
+        let jump_sess = Self::connect_direct(pool, jump_host, jump_kbd).await?;
         let channel = jump_sess
             .channel_open_direct_tcpip(&host.addr, port, "127.0.0.1", 0)
             .await
             .map_err(|e| AppError::Ssh(format!("jump host direct_tcpip: {e}")))?;
 
-        let mut sess = Self::connect_stream(pool, host, channel.into_stream()).await?;
+        let mut sess = Self::connect_stream(pool, host, channel.into_stream(), kbd_answers).await?;
         sess.jump = Some(Box::new(jump_sess));
         Ok(sess)
     }
 
     /// 直接 TCP 连接目标主机
-    async fn connect_direct(pool: &DbPool, host: &Host) -> AppResult<Self> {
+    async fn connect_direct(pool: &DbPool, host: &Host, kbd_answers: &[String]) -> AppResult<Self> {
         let port: u16 = host
             .port
             .parse()
@@ -360,7 +382,7 @@ impl Session {
             }
         };
 
-        Self::authenticate(&mut handle, host).await?;
+        Self::authenticate(&mut handle, host, kbd_answers).await?;
 
         Ok(Self {
             handle: AsyncMutex::new(handle),
@@ -371,7 +393,12 @@ impl Session {
     }
 
     /// 在已有流上完成 SSH 握手（跳板机 direct-tcpip 通道）
-    async fn connect_stream<R>(pool: &DbPool, host: &Host, stream: R) -> AppResult<Self>
+    async fn connect_stream<R>(
+        pool: &DbPool,
+        host: &Host,
+        stream: R,
+        kbd_answers: &[String],
+    ) -> AppResult<Self>
     where
         R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
@@ -387,7 +414,7 @@ impl Session {
             Err(e) => return Err(Self::map_connect_err(e, &pending_key, host, port).await),
         };
 
-        Self::authenticate(&mut handle, host).await?;
+        Self::authenticate(&mut handle, host, kbd_answers).await?;
 
         Ok(Self {
             handle: AsyncMutex::new(handle),
@@ -435,8 +462,15 @@ impl Session {
         })
     }
 
-    /// 密码 / 私钥认证（先密码后私钥），失败返回错误
-    async fn authenticate(handle: &mut Handle<ClientHandler>, host: &Host) -> AppResult<()> {
+    /// 密码 / 私钥 / keyboard-interactive 认证（先密码后私钥后交互式），失败返回错误
+    ///
+    /// `kbd_answers` 是 keyboard-interactive 提示的按位置应答序列：终端 WS
+    /// 弹窗收集用户输入后带答案重连时重放；REST 等非交互调用方传空切片。
+    async fn authenticate(
+        handle: &mut Handle<ClientHandler>,
+        host: &Host,
+        kbd_answers: &[String],
+    ) -> AppResult<()> {
         // 优先使用密码认证（行为与 demo 保持一致）
         let mut authed = false;
         if let Some(pwd) = host.password.as_deref() {
@@ -499,11 +533,118 @@ impl Session {
         }
 
         if !authed {
+            // keyboard-interactive 阶段（RFC 4256）：2FA/TOTP 双因素，以及只开放
+            // 该方法的"密码式"服务器（PasswordAuthentication=no）。带重放应答
+            // 失败后（典型：TOTP 输错）在同一连接上重新发起一轮不带应答的，
+            // 重新收集用户输入；仍失败才回落 AuthFailed 走密码重输
+            for attempt in 0..2u8 {
+                let replay: &[String] = if attempt == 0 { kbd_answers } else { &[] };
+                match Self::try_keyboard_interactive(handle, host, replay).await {
+                    Ok(true) => {
+                        authed = true;
+                        break;
+                    }
+                    // 重放应答被拒且还有重试机会：清空应答重新发起
+                    Ok(false) if attempt == 0 && !kbd_answers.is_empty() => continue,
+                    _ => break,
+                }
+            }
+        }
+
+        if !authed {
             // 结构化错误：携带主机 id，终端 WS 据此发起交互式重新输入密码；
             // 其余调用方（如独立 SFTP 会话）经 IntoResponse 映射为 401。
             return Err(AppError::AuthFailed { host_id: host.id });
         }
         Ok(())
+    }
+
+    /// 发起 keyboard-interactive 认证（RFC 4256）。
+    ///
+    /// 返回 true = 认证成功；false = 服务器拒绝（可换应答重试）。遇到无法
+    /// 就地回答的提示时抛 [`AppError::KeyboardInteractiveRequired`]，由终端
+    /// WS 弹窗收集后带答案重连、按位置重放。
+    ///
+    /// 提示的应答来源按优先级：
+    /// 1. `replay` 按位置重放（交互式重试时收集的完整应答序列）
+    /// 2. 非回显的密码式提示（password/密码…）自动填已存密码——覆盖禁用
+    ///    password 方法、仅留 keyboard-interactive 的服务器
+    async fn try_keyboard_interactive(
+        handle: &mut Handle<ClientHandler>,
+        host: &Host,
+        replay: &[String],
+    ) -> AppResult<bool> {
+        let mut resp = handle
+            .authenticate_keyboard_interactive_start(&host.username, None::<String>)
+            .await
+            .map_err(|e| AppError::Ssh(format!("auth keyboard-interactive: {e}")))?;
+        let mut replay_idx = 0usize;
+        let mut seen: Vec<KbdPrompt> = Vec::new();
+        let mut given: Vec<String> = Vec::new();
+        loop {
+            match resp {
+                KeyboardInteractiveAuthResponse::Success => return Ok(true),
+                KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
+                KeyboardInteractiveAuthResponse::InfoRequest {
+                    name,
+                    instructions,
+                    prompts,
+                } => {
+                    let mut answers: Vec<String> = Vec::with_capacity(prompts.len());
+                    let mut unanswered = false;
+                    for p in prompts {
+                        let from_replay = replay.get(replay_idx).cloned();
+                        let answer = match from_replay {
+                            Some(a) => {
+                                replay_idx += 1;
+                                Some(a)
+                            }
+                            // 自动应答仅在无重放可用的位置兜底，避免干扰重放序列
+                            None if !p.echo && is_password_prompt(&p.prompt) => host
+                                .password
+                                .as_deref()
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string),
+                            None => None,
+                        };
+                        match answer {
+                            Some(a) => {
+                                seen.push(KbdPrompt {
+                                    prompt: p.prompt,
+                                    echo: p.echo,
+                                    answered: true,
+                                });
+                                given.push(a);
+                            }
+                            None => {
+                                seen.push(KbdPrompt {
+                                    prompt: p.prompt,
+                                    echo: p.echo,
+                                    answered: false,
+                                });
+                                answers.push(String::new());
+                                unanswered = true;
+                            }
+                        }
+                    }
+                    if unanswered {
+                        // 中止握手抛回终端 WS；given + 新收集的应答拼成下一轮
+                        // 重连的完整重放序列
+                        return Err(AppError::KeyboardInteractiveRequired {
+                            host_id: host.id,
+                            name,
+                            instructions,
+                            prompts: seen,
+                            given,
+                        });
+                    }
+                    resp = handle
+                        .authenticate_keyboard_interactive_respond(answers)
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("auth keyboard-interactive: {e}")))?;
+                }
+            }
+        }
     }
 
     /// 把 sid 写入 client handler，使后续远程转发回连能路由到本会话
@@ -978,5 +1119,27 @@ pub async fn remove(sid: &str) {
     SUDO_PASSWORD_MAP.write().await.remove(sid);
     if let Some(sess) = SSH_CLIENT_MAP.write().await.remove(sid) {
         sess.disconnect().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_password_prompt;
+
+    #[test]
+    fn matches_password_prompts() {
+        assert!(is_password_prompt("Password:"));
+        assert!(is_password_prompt("Please enter your password:"));
+        assert!(is_password_prompt("passwd:"));
+        assert!(is_password_prompt("请输入密码："));
+        assert!(is_password_prompt("口令:"));
+    }
+
+    #[test]
+    fn does_not_match_2fa_prompts() {
+        assert!(!is_password_prompt("Please enter the verification code(TOTP):"));
+        assert!(!is_password_prompt("Verification code:"));
+        assert!(!is_password_prompt("请输入验证码："));
+        assert!(!is_password_prompt("Token:"));
     }
 }

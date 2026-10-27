@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
-use crate::errors::AppError;
+use crate::errors::{AppError, KbdPrompt};
 use crate::handlers;
 use crate::models::Host;
 use crate::service::ssh::{self as ssh_svc, Session};
@@ -82,6 +82,10 @@ enum ClientMsg {
         #[serde(default)]
         remember: bool,
     },
+    /// 用户提交 keyboard-interactive（2FA/TOTP）逐条应答，
+    /// 与 auth_kb_request.prompts 中的提示按序对应
+    #[serde(rename = "auth_kb_response")]
+    KbdAuthResponse { answers: Vec<String> },
     /// 用户确认/拒绝信任主机密钥（TOFU 弹窗结果）
     #[serde(rename = "hostkey_response")]
     HostKeyResponse { trust: bool },
@@ -116,6 +120,22 @@ struct PassphraseRequiredMsg<'a> {
     label: &'a str,
     /// 解码失败的原始原因（口令错误 / 密钥损坏等），供弹窗展示提示
     message: &'a str,
+}
+
+/// 服务端消息：keyboard-interactive 认证需要用户应答（2FA/TOTP 等场景），
+/// 请求前端弹窗按提示逐条收集输入；前端用 auth_kb_response 帧应答
+#[derive(Debug, Serialize)]
+struct KbdAuthRequestMsg<'a> {
+    kind: &'a str,
+    host_id: i64,
+    /// user@addr:port 形式的目标描述，供弹窗展示
+    label: &'a str,
+    /// 设备/方法名（如 pam_google_authenticator），可为空
+    name: &'a str,
+    /// 服务器附带的说明文字，可为空
+    instructions: &'a str,
+    /// 待用户输入的提示 [{prompt, echo}]（已自动应答项不含在内）
+    prompts: serde_json::Value,
 }
 
 /// 服务端消息：主机密钥待确认（首次连接 / 指纹变更），请求前端弹窗核对指纹
@@ -245,6 +265,77 @@ async fn request_new_passphrase(
                         match serde_json::from_str::<ClientMsg>(s) {
                             Ok(ClientMsg::AuthResponse { password, remember }) => {
                                 return Some((password, remember));
+                            }
+                            Ok(ClientMsg::AuthCancel) => return None,
+                            Ok(ClientMsg::Ping) => send_pong(ws_tx).await,
+                            _ => {} // 建连阶段忽略其它输入帧
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => return None,
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => {
+                        log::warn!("ws recv error during auth: {e}");
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// keyboard-interactive（2FA/TOTP）需要用户应答时向前端请求逐条输入。
+///
+/// 返回 `Some(answers)` 表示用户提交，与待应答提示按序对应；`None` 表示
+/// 用户取消、输入超时或连接已断开。应答仅用于本次重连重放，不落库。
+async fn request_kbd_answers(
+    ws_tx: &mut SplitSink<WebSocket, Message>,
+    ws_rx: &mut SplitStream<WebSocket>,
+    host_id: i64,
+    label: &str,
+    name: &str,
+    instructions: &str,
+    prompts: &[KbdPrompt],
+) -> Option<Vec<String>> {
+    let pending: Vec<&KbdPrompt> = prompts.iter().filter(|p| !p.answered).collect();
+    let msg = serde_json::to_string(&KbdAuthRequestMsg {
+        kind: "auth_kb_request",
+        host_id,
+        label,
+        name,
+        instructions,
+        prompts: serde_json::Value::Array(
+            pending
+                .iter()
+                .map(|p| serde_json::json!({ "prompt": p.prompt, "echo": p.echo }))
+                .collect(),
+        ),
+    })
+    .ok()?;
+    if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+        return None;
+    }
+
+    let deadline = tokio::time::sleep(AUTH_INPUT_TIMEOUT);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => {
+                send_fatal(ws_tx, "等待输入认证信息超时").await;
+                return None;
+            }
+            frame = ws_rx.next() => {
+                match frame {
+                    Some(Ok(Message::Text(text))) => {
+                        let s = text.as_str();
+                        if !(s.starts_with('{') && s.ends_with('}')) {
+                            continue;
+                        }
+                        match serde_json::from_str::<ClientMsg>(s) {
+                            Ok(ClientMsg::KbdAuthResponse { answers }) => {
+                                if answers.len() != pending.len() {
+                                    continue; // 应答数与提示数不符，视为无效帧继续等待
+                                }
+                                return Some(answers);
                             }
                             Ok(ClientMsg::AuthCancel) => return None,
                             Ok(ClientMsg::Ping) => send_pong(ws_tx).await,
@@ -1015,8 +1106,26 @@ async fn run_terminal(
     // 服务器上改了密码，本地存的还是旧密码）时向前端弹窗请求新密码，可选记住。
     // attempts 只计认证重试（防暴力猜密码），主机密钥确认不消耗次数。
     let mut attempts: u32 = 0;
+    // keyboard-interactive（2FA/TOTP）提示的按位置应答序列：弹窗收集后随
+    // 重连重放。跳板机与目标机各自可能要求交互，kbd_for_jump 标记当前
+    // 应答归属；密码重输后旧应答序列失效，置空
+    let mut kbd_answers: Vec<String> = Vec::new();
+    let mut kbd_for_jump = false;
     let session_arc = loop {
-        match Session::connect_prepared(&state.db, jump_host.as_ref(), &host).await {
+        let (jump_kbd, target_kbd): (&[String], &[String]) = if kbd_for_jump {
+            (kbd_answers.as_slice(), &[])
+        } else {
+            (&[], kbd_answers.as_slice())
+        };
+        match Session::connect_prepared(
+            &state.db,
+            jump_host.as_ref(),
+            &host,
+            jump_kbd,
+            target_kbd,
+        )
+        .await
+        {
             Ok(s) => break Arc::new(s),
             Err(AppError::HostKeyVerify {
                 host_id: failed_id,
@@ -1088,10 +1197,56 @@ async fn run_terminal(
                             }
                         }
                         target.password = Some(pwd);
+                        // 密码已变更：此前收集的 keyboard-interactive 应答序列失效
+                        kbd_answers.clear();
                     }
                     None => {
                         send_fatal(&mut ws_tx, "认证已取消").await;
                         anyhow::bail!("auth cancelled by user");
+                    }
+                }
+            }
+            Err(AppError::KeyboardInteractiveRequired {
+                host_id: failed_id,
+                name,
+                instructions,
+                prompts,
+                given,
+            }) => {
+                attempts += 1;
+                if attempts >= MAX_AUTH_ATTEMPTS {
+                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试").await;
+                    anyhow::bail!("ssh keyboard-interactive failed after {attempts} attempts");
+                }
+                let is_jump = jump_host.as_ref().is_some_and(|j| j.id == failed_id);
+                let target: &mut Host = if is_jump {
+                    jump_host.as_mut().unwrap()
+                } else {
+                    &mut host
+                };
+                let label = format!("{}@{}:{}", target.username, target.addr, target.port);
+                match request_kbd_answers(
+                    &mut ws_tx,
+                    &mut ws_rx,
+                    failed_id,
+                    &label,
+                    &name,
+                    &instructions,
+                    &prompts,
+                )
+                .await
+                {
+                    Some(answers) => {
+                        // 完整重放序列 = 已自动应答项（密码式提示）+ 用户输入，
+                        // 与本次连接的提示出现顺序一一对应
+                        let mut full = given;
+                        full.extend(answers);
+                        kbd_answers = full;
+                        kbd_for_jump = is_jump;
+                    }
+                    None => {
+                        send_fatal(&mut ws_tx, "认证已取消").await;
+                        anyhow::bail!("keyboard-interactive auth cancelled by user");
                     }
                 }
             }
@@ -1312,6 +1467,7 @@ async fn run_terminal(
                                     }
                                     // 会话已建立后迟到的认证/主机密钥帧：忽略
                                     ClientMsg::AuthResponse { .. } | ClientMsg::AuthCancel => {}
+                                    ClientMsg::KbdAuthResponse { .. } => {}
                                     ClientMsg::HostKeyResponse { .. } => {}
                                 }
                             } else if channel.data(s.as_bytes()).await.is_err() {

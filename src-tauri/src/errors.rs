@@ -6,6 +6,17 @@ use serde_json::json;
 
 pub type AppResult<T> = std::result::Result<T, AppError>;
 
+/// keyboard-interactive 单条提示（RFC 4256，2FA/TOTP 等交互式认证）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KbdPrompt {
+    /// 提示文本（如 "Please enter the verification code(TOTP):"）
+    pub prompt: String,
+    /// 是否回显用户输入（验证码通常回显，密码不回显）
+    pub echo: bool,
+    /// 是否已被自动应答（密码式提示 + 已存密码）；前端弹窗只收集 false 项
+    pub answered: bool,
+}
+
 #[derive(Debug, Error)]
 #[allow(dead_code)]
 pub enum AppError {
@@ -26,6 +37,23 @@ pub enum AppError {
     /// 终端 WS 据此发起交互式 passphrase 输入；REST 调用方收到 401
     #[error("ssh private key passphrase required (host {host_id})")]
     KeyPassphraseRequired { host_id: i64 },
+
+    /// SSH keyboard-interactive 认证需要人工应答（2FA/TOTP，或仅开放该方法的
+    /// 密码式服务器）。终端 WS 据此弹窗收集逐条应答后带答案重连重放；
+    /// REST 调用方收到 401 + 结构化字段
+    #[error("ssh keyboard-interactive auth required (host {host_id})")]
+    KeyboardInteractiveRequired {
+        host_id: i64,
+        /// 设备/方法名（如 pam_google_authenticator）
+        name: String,
+        /// 服务器附带的说明文字
+        instructions: String,
+        /// 本次连接遇到过的全部提示（按出现顺序；answered=true 的项已自动应答）
+        prompts: Vec<KbdPrompt>,
+        /// 自动应答的答案（与 prompts 中 answered=true 的项按序对应）。
+        /// 重连时调用方把它拼在收集到的应答之前，还原完整的位置应答序列
+        given: Vec<String>,
+    },
 
     /// SSH 主机密钥待确认（首次连接或指纹变更）。终端 WS 走交互式确认；
     /// REST 调用方收到 409 + 结构化字段，做"确认 → 信任 → 重试"两段式流程
@@ -70,6 +98,7 @@ impl AppError {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::AuthFailed { .. } => StatusCode::UNAUTHORIZED,
             AppError::KeyPassphraseRequired { .. } => StatusCode::UNAUTHORIZED,
+            AppError::KeyboardInteractiveRequired { .. } => StatusCode::UNAUTHORIZED,
             AppError::HostKeyVerify { .. } => StatusCode::CONFLICT,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Sftp(msg) => {
@@ -116,6 +145,23 @@ impl IntoResponse for AppError {
                 "keyType": key_type,
                 "fingerprint": fingerprint,
                 "previous": previous,
+            })),
+            // KeyboardInteractiveRequired 附带提示列表，REST 调用方可据此做
+            // 交互式收集；given 含已存密码明文，不对外下发
+            AppError::KeyboardInteractiveRequired {
+                host_id,
+                name,
+                instructions,
+                prompts,
+                ..
+            } => Json(json!({
+                "code": status.as_u16(),
+                "kind": "keyboard_interactive",
+                "message": self.to_string(),
+                "hostId": host_id,
+                "name": name,
+                "instructions": instructions,
+                "prompts": prompts,
             })),
             _ => Json(json!({
                 "code": status.as_u16(),
