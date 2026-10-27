@@ -656,6 +656,11 @@ impl Session {
                                     echo: p.echo,
                                     answered: true,
                                 });
+                                // 发往服务器的应答必须与提示一一对应：自动填/
+                                // 重放的答案若只记入 given 不进 answers，
+                                // respond 会发出 num-prompts=0 的空应答，
+                                // OpenSSH 视为协议违规直接断开（RecvError）
+                                answers.push(a.clone());
                                 given.push(a);
                             }
                             None => {
