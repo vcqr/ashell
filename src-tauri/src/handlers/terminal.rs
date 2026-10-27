@@ -1107,16 +1107,13 @@ async fn run_terminal(
     // attempts 只计认证重试（防暴力猜密码），主机密钥确认不消耗次数。
     let mut attempts: u32 = 0;
     // keyboard-interactive（2FA/TOTP）提示的按位置应答序列：弹窗收集后随
-    // 重连重放。跳板机与目标机各自可能要求交互，kbd_for_jump 标记当前
-    // 应答归属；密码重输后旧应答序列失效，置空
-    let mut kbd_answers: Vec<String> = Vec::new();
-    let mut kbd_for_jump = false;
+    // 重连重放。跳板机与目标机各自可能要求交互，两序列独立累积——单槽
+    // 会互相覆盖，双端都要交互时永远无法收敛；密码重输后旧应答序列失效
+    let mut kbd_jump: Vec<String> = Vec::new();
+    let mut kbd_target: Vec<String> = Vec::new();
     let session_arc = loop {
-        let (jump_kbd, target_kbd): (&[String], &[String]) = if kbd_for_jump {
-            (kbd_answers.as_slice(), &[])
-        } else {
-            (&[], kbd_answers.as_slice())
-        };
+        let (jump_kbd, target_kbd): (&[String], &[String]) =
+            (kbd_jump.as_slice(), kbd_target.as_slice());
         match Session::connect_prepared(
             &state.db,
             jump_host.as_ref(),
@@ -1198,7 +1195,8 @@ async fn run_terminal(
                         }
                         target.password = Some(pwd);
                         // 密码已变更：此前收集的 keyboard-interactive 应答序列失效
-                        kbd_answers.clear();
+                        kbd_jump.clear();
+                        kbd_target.clear();
                     }
                     None => {
                         send_fatal(&mut ws_tx, "认证已取消").await;
@@ -1238,11 +1236,14 @@ async fn run_terminal(
                 {
                     Some(answers) => {
                         // 完整重放序列 = 已自动应答项（密码式提示）+ 用户输入，
-                        // 与本次连接的提示出现顺序一一对应
+                        // 与本次连接的提示出现顺序一一对应，按归属机器独立累积
                         let mut full = given;
                         full.extend(answers);
-                        kbd_answers = full;
-                        kbd_for_jump = is_jump;
+                        if is_jump {
+                            kbd_jump = full;
+                        } else {
+                            kbd_target = full;
+                        }
                     }
                     None => {
                         send_fatal(&mut ws_tx, "认证已取消").await;
