@@ -567,6 +567,10 @@ impl Session {
                     }
                     // 重放应答被拒且还有重试机会：清空应答重新发起
                     Ok(false) if attempt == 0 && !kbd_answers.is_empty() => continue,
+                    // KeyboardInteractiveRequired（验证码等需用户输入的提示）等
+                    // 结构化错误必须原样抛给终端 WS 弹窗收集，吞掉会被误报成
+                    // AuthFailed 密码错误
+                    Err(e) => return Err(e),
                     _ => break,
                 }
             }
