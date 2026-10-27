@@ -480,6 +480,12 @@ impl Session {
                     .await
                     .map_err(|e| AppError::Ssh(format!("auth password: {e}")))?;
                 authed = res.success();
+                if !authed {
+                    log::info!(
+                        "host {} password auth rejected (pending keyboard-interactive retry)",
+                        host.id
+                    );
+                }
             }
         }
 
@@ -529,6 +535,7 @@ impl Session {
                     .await
                     .map_err(|e| AppError::Ssh(format!("auth pubkey: {e}")))?;
                 authed = res.success();
+                log::info!("host {} pubkey auth success={authed}", host.id);
             }
         }
 
@@ -584,12 +591,29 @@ impl Session {
         loop {
             match resp {
                 KeyboardInteractiveAuthResponse::Success => return Ok(true),
-                KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
+                KeyboardInteractiveAuthResponse::Failure {
+                    remaining_methods,
+                    partial_success,
+                } => {
+                    log::info!(
+                        "host {} keyboard-interactive rejected: partial_success={partial_success}, remaining={remaining_methods:?}",
+                        host.id
+                    );
+                    return Ok(false);
+                }
                 KeyboardInteractiveAuthResponse::InfoRequest {
                     name,
                     instructions,
                     prompts,
                 } => {
+                    log::info!(
+                        "host {} keyboard-interactive InfoRequest name={name:?} instructions={instructions:?} prompts={:?}",
+                        host.id,
+                        prompts
+                            .iter()
+                            .map(|p| (p.prompt.as_str(), p.echo))
+                            .collect::<Vec<_>>()
+                    );
                     let mut answers: Vec<String> = Vec::with_capacity(prompts.len());
                     let mut unanswered = false;
                     for p in prompts {
@@ -630,6 +654,12 @@ impl Session {
                     if unanswered {
                         // 中止握手抛回终端 WS；given + 新收集的应答拼成下一轮
                         // 重连的完整重放序列
+                        log::info!(
+                            "host {} keyboard-interactive needs user input: {} answered, {} pending",
+                            host.id,
+                            given.len(),
+                            seen.iter().filter(|p| !p.answered).count()
+                        );
                         return Err(AppError::KeyboardInteractiveRequired {
                             host_id: host.id,
                             name,
