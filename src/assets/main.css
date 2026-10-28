@@ -15,7 +15,7 @@ body,
  * 圆角画在 body 上；阴影由 ::after 伪元素承担——不能直接在容器上写
  * box-shadow：阴影会超出圆角范围，亮色桌面下形成灰色矩形边框。 */
 body.window-rounded {
-  border-radius: 16px;
+  border-radius: 10px;
   /* body 上有 transform 后即成为 position:fixed 后代的包含块：
    * AI 面板 / 各停靠抽屉 / naive 弹层等 fixed 悬浮元素原本不受 body
    * 圆角裁剪，方角会盖住窗口圆角（典型：右下角直角）；纳入后统一被
