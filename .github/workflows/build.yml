@@ -125,6 +125,8 @@ jobs:
           $stage = "portable-staging/AShell"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "$dir\ashell.exe", "$dir\app-ai.exe", "$dir\OpenConsole.exe", "$dir\conpty.dll" -Destination $stage
+          $readme = (Get-Content .github/portable-readme.txt -Raw -Encoding utf8).Replace("{{VERSION}}", $version)
+          Set-Content -Path "$stage/使用说明.txt" -Value $readme -Encoding utf8
           Compress-Archive -Path "portable-staging\AShell" -DestinationPath $zip -Force
           "PORTABLE_ZIP=$zip" >> $env:GITHUB_ENV
 
