@@ -16,6 +16,11 @@ body,
  * box-shadow：阴影会超出圆角范围，亮色桌面下形成灰色矩形边框。 */
 body.window-rounded {
   border-radius: 16px;
+  /* body 上有 transform 后即成为 position:fixed 后代的包含块：
+   * AI 面板 / 各停靠抽屉 / naive 弹层等 fixed 悬浮元素原本不受 body
+   * 圆角裁剪，方角会盖住窗口圆角（典型：右下角直角）；纳入后统一被
+   * 圆角裁掉。body 占满视口，fixed 元素几何不变 */
+  transform: translateZ(0);
 }
 
 /* 阴影伪元素：继承圆角、置于内容层之下（文章原值两段式柔和投影） */
@@ -29,15 +34,6 @@ body.window-rounded::after {
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.22),
     0 2px 8px rgba(0, 0, 0, 0.14);
-}
-
-/* Teleport 到 body 的 naive 浮层是 position:fixed，不受 body 圆角裁剪，
- * 铺满全屏的遮罩类容器（模态/抽屉/图片预览）单独补圆角；
- * message/notification 等不铺背景的容器无需处理 */
-body.window-rounded
-  :is(.n-modal-container, .n-drawer-container, .n-image-preview-container) {
-  border-radius: 16px;
-  overflow: hidden;
 }
 
 :root {

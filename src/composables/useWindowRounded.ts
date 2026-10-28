@@ -6,8 +6,10 @@ import { isTauri } from "@/utils/platform"
  * newWindow.ts 独立窗），WebView 背景透明（lib.rs set_background_color），
  * 圆角与阴影由 CSS 承担（main.css body.window-rounded + ::after）。
  *
- * 本 composable 只负责一件事：最大化 / 全屏时摘掉 body.window-rounded——
- * CSS 圆角在最大化状态下会在屏幕四角露出透明缺口；还原 / 贴边分屏时恢复。
+ * 本 composable 只负责一件事：真全屏时摘掉 body.window-rounded——全屏下
+ * 窗口铺满整屏，CSS 圆角会在屏幕四角露出透明缺口（系统惯例此时也是方角）。
+ * 最大化 / 绿钮缩放保持圆角（与原生应用行为一致，用户明确要求）；
+ * 贴边分屏同理保留。
  */
 export function initWindowRounded(): void {
   if (!isTauri) return
@@ -16,11 +18,8 @@ export function initWindowRounded(): void {
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
     const win = getCurrentWindow()
     const apply = async () => {
-      const [maximized, fullscreen] = await Promise.all([
-        win.isMaximized(),
-        win.isFullscreen(),
-      ])
-      document.body.classList.toggle("window-rounded", !maximized && !fullscreen)
+      const fullscreen = await win.isFullscreen()
+      document.body.classList.toggle("window-rounded", !fullscreen)
     }
     await apply()
     await win.onResized(() => void apply())
