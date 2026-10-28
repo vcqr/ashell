@@ -1359,6 +1359,8 @@ async fn run_terminal(
     // 该 sid 此前是提权会话时，用主机密码重新提权（NOPASSWD 时
     // open_sftp_elevated 内部走免密分支）。失败仅降级为普通会话并记日志；
     // 提权链路依赖多条 exec，对 exec 不回应的设备由 SFTP_RE_ELEVATE_TIMEOUT 兜底。
+    // 堡垒机同样预热：GateShell 类网关的 sftp 根目录是主机列表，进入主机
+    // 目录即可代理目标机文件，面板按此手动导航（不随终端选中的主机联动）。
     {
         let warm_session = Arc::clone(&session_arc);
         let warm_sid = sid.to_string();
@@ -1402,40 +1404,46 @@ async fn run_terminal(
     let mut cwd_echo_strip: Option<CwdEchoStripper> = None;
     let mut loose_echo_filter: Option<LooseEchoFilter> = None;
     let mut marker_mode = false;
-    let probe = tokio::time::timeout(SHELL_PROBE_TIMEOUT, session_arc.execute(SHELL_PROBE)).await;
-    match probe {
-        Ok(Ok(res)) => {
-            let mut lines = res.stdout.trim().lines();
-            let shell = lines.next().unwrap_or("").trim();
-            let binsh = lines.next().unwrap_or("").trim();
-            let (line, mode) = resolve_completion(shell, binsh, q.cwd_report);
-            marker_mode = mode == ssh_svc::CompletionMode::Marker;
-            if mode != ssh_svc::CompletionMode::None {
-                ssh_svc::set_terminal_completion(sid, mode).await;
-            }
-            if let Some(line) = line {
-                match ssh_svc::get_terminal_sender(sid).await {
-                    Ok(sender) => {
-                        let _ = sender.send(line.clone());
-                        // 注入行会被回显进输出流：武装剥离器，转发前移除其首次出现
-                        let trimmed = line.trim_end_matches('\n');
-                        cwd_echo_strip = Some(CwdEchoStripper::new(trimmed).with_label(sid));
-                        // 宽松兜底：整行逐字节匹配在流被中继改写或回显迟到
-                        // 时会漏，按标记 token 盲吞兜住（见 LooseEchoFilter）
-                        loose_echo_filter = LooseEchoFilter::new(trimmed, sid);
-                    }
-                    Err(e) => log::debug!("terminal sender missing for telemetry hook: {e}"),
+    // 堡垒机会话跳过探测与遥测注入：exec 与注入行都落在堡垒机的菜单 shell 上
+    // （目标机 shell 在嵌套中继之内，钩子本就够不着），注入反而会往菜单 TUI
+    // 打垃圾输入。命令完成检测随之按无遥测降级（与 exec 不响应的设备同路径）。
+    if !host.bastion {
+        let probe =
+            tokio::time::timeout(SHELL_PROBE_TIMEOUT, session_arc.execute(SHELL_PROBE)).await;
+        match probe {
+            Ok(Ok(res)) => {
+                let mut lines = res.stdout.trim().lines();
+                let shell = lines.next().unwrap_or("").trim();
+                let binsh = lines.next().unwrap_or("").trim();
+                let (line, mode) = resolve_completion(shell, binsh, q.cwd_report);
+                marker_mode = mode == ssh_svc::CompletionMode::Marker;
+                if mode != ssh_svc::CompletionMode::None {
+                    ssh_svc::set_terminal_completion(sid, mode).await;
                 }
+                if let Some(line) = line {
+                    match ssh_svc::get_terminal_sender(sid).await {
+                        Ok(sender) => {
+                            let _ = sender.send(line.clone());
+                            // 注入行会被回显进输出流：武装剥离器，转发前移除其首次出现
+                            let trimmed = line.trim_end_matches('\n');
+                            cwd_echo_strip = Some(CwdEchoStripper::new(trimmed).with_label(sid));
+                            // 宽松兜底：整行逐字节匹配在流被中继改写或回显迟到
+                            // 时会漏，按标记 token 盲吞兜住（见 LooseEchoFilter）
+                            loose_echo_filter = LooseEchoFilter::new(trimmed, sid);
+                        }
+                        Err(e) => log::debug!("terminal sender missing for telemetry hook: {e}"),
+                    }
+                }
+                // marker 会话不在此处武装：剥离目标随每次注入形态不同（后缀
+                // 并入式/独立上报行退路），由 cmd_rx 写入时按需重置
             }
-            // marker 会话不在此处武装：剥离目标随每次注入形态不同（后缀
-            // 并入式/独立上报行退路），由 cmd_rx 写入时按需重置
-        }
-        Ok(Err(e)) => log::debug!("detect remote shell for telemetry hook failed: {e}"),
-        Err(_) => {
-            log::warn!(
-                "[{sid}] shell probe timed out after {SHELL_PROBE_TIMEOUT:?}; \
-                 telemetry hooks skipped (exec likely unsupported by server)"
-            );
+            Ok(Err(e)) => log::debug!("detect remote shell for telemetry hook failed: {e}"),
+            Err(_) => {
+                log::warn!(
+                    "[{sid}] shell probe timed out after {SHELL_PROBE_TIMEOUT:?}; \
+                     telemetry hooks skipped (exec likely unsupported by server)"
+                );
+            }
         }
     }
 

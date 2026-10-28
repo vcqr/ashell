@@ -65,6 +65,8 @@ export interface Host {
   jump_host_id?: number | null
   /** 连接建立后自动执行的命令（终端 ready 后注入；空/缺省不执行） */
   connect_command?: string | null
+  /** 堡垒机（交互网关）模式：登录后经菜单选择目标主机；跳过遥测钩子注入 */
+  bastion?: boolean
   created_at?: string | null
   updated_at?: string | null
 }
@@ -99,6 +101,8 @@ export interface HostCreate {
   inactivity_timeout?: number | null
   idle_send_interval?: number | null
   jump_host_id?: number | null
+  /** 堡垒机（交互网关）模式（仅 SSH；缺省 false） */
+  bastion?: boolean
   connect_command?: string | null
 }
 
@@ -127,6 +131,8 @@ export interface HostUpdate {
   idle_send_interval?: number | null
   /** 显式传 null 表示清除跳板机配置 */
   jump_host_id?: number | null
+  /** 堡垒机（交互网关）模式（仅 SSH；缺省 false） */
+  bastion?: boolean
   /** 缺省 = 不修改；显式传 null 表示清除 */
   connect_command?: string | null
 }

@@ -19,6 +19,7 @@ import {
   NGi,
   NTabs,
   NTabPane,
+  NSwitch,
   useMessage,
   type FormInst,
   type FormRules,
@@ -76,6 +77,8 @@ interface FormState {
   idle_send_interval: number | null
   jump_host_id: number | null
   connect_command: string
+  /** 堡垒机（交互网关）模式（仅 SSH） */
+  bastion: boolean
 }
 
 function makeInitial(): FormState {
@@ -104,6 +107,7 @@ function makeInitial(): FormState {
     idle_send_interval: init?.idle_send_interval ?? null,
     jump_host_id: init?.jump_host_id ?? null,
     connect_command: init?.connect_command ?? "",
+    bastion: init?.bastion ?? false,
   }
 }
 
@@ -302,6 +306,7 @@ async function submit() {
       inactivity_timeout: form.inactivity_timeout,
       idle_send_interval: form.idle_send_interval,
       jump_host_id: isSsh.value ? form.jump_host_id : null,
+      bastion: isSsh.value ? form.bastion : false,
       connect_command: emptyToNull(form.connect_command),
     }
     emit("submit", payload)
@@ -326,6 +331,7 @@ async function submit() {
       idle_send_interval: form.idle_send_interval,
       // 显式 null = 清除跳板机配置
       jump_host_id: isSsh.value ? form.jump_host_id : null,
+      bastion: isSsh.value ? form.bastion : false,
       // 编辑表单总是显式发送（null = 清除）；缺省键才表示不修改
       connect_command: emptyToNull(form.connect_command),
     }
@@ -709,6 +715,14 @@ function onOpPasswordDone() {
               />
             </NFormItem>
             <p class="form-field-hint">{{ t("hosts.form.jumpHostDesc") }}</p>
+            <NFormItem
+              :label="t('hosts.form.bastion')"
+              path="bastion"
+              style="margin-top: 12px"
+            >
+              <NSwitch v-model:value="form.bastion" />
+            </NFormItem>
+            <p class="form-field-hint">{{ t("hosts.form.bastionDesc") }}</p>
           </NTabPane>
         </NTabs>
       </div>

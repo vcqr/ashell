@@ -60,14 +60,16 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     if let Some(jump_id) = jump_host_id {
         validate_jump_host(pool, jump_id, None).await?;
     }
+    // 堡垒机标记仅对 SSH 协议有意义
+    let bastion = protocol == "ssh" && input.bastion;
 
     let password_enc = enc_opt(key, input.password.as_deref())?;
     let pk_enc = enc_opt(key, input.private_key.as_deref())?;
     let pp_enc = enc_opt(key, input.key_passphrase.as_deref())?;
 
     let res = sqlx::query(
-        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, key_passphrase, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval, jump_host_id, connect_command)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO hosts (gid, name, icon, color, addr, port, username, password, desc, private_key, private_key_path, key_passphrase, protocol, baud_rate, data_bits, stop_bits, parity, flow_control, keepalive_interval, inactivity_timeout, idle_send_interval, jump_host_id, connect_command, bastion)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(input.gid)
     .bind(&input.name)
@@ -92,6 +94,7 @@ pub async fn create(pool: &DbPool, key: &[u8; 32], input: HostCreate) -> AppResu
     .bind(input.idle_send_interval)
     .bind(jump_host_id)
     .bind(input.connect_command.as_deref().filter(|s| !s.is_empty()))
+    .bind(bastion)
     .execute(pool)
     .await?;
 
@@ -232,7 +235,7 @@ pub async fn list_with_group(
                h.password, h.desc, h.is_del, h.private_key, h.private_key_path, h.key_passphrase,
                h.protocol, h.baud_rate, h.data_bits, h.stop_bits, h.parity, h.flow_control,
                h.keepalive_interval, h.inactivity_timeout, h.idle_send_interval,
-               h.jump_host_id, h.connect_command,
+               h.jump_host_id, h.connect_command, h.bastion,
                h.created_at, h.updated_at,
                g.name AS group_name, g.parent_id AS parent_gid
         FROM hosts h
@@ -328,6 +331,8 @@ pub async fn update(
     } else {
         None
     };
+    // 堡垒机标记仅对 SSH 协议有意义；前端编辑表单总是发送当前值
+    let new_bastion = new_protocol == "ssh" && input.bastion.unwrap_or(cur.bastion);
 
     if let Some(path) = new_private_key_path.as_deref() {
         if !path.is_empty() {
@@ -341,7 +346,7 @@ pub async fn update(
                password = ?, desc = ?, private_key = ?, private_key_path = ?, key_passphrase = ?,
                protocol = ?, baud_rate = ?, data_bits = ?, stop_bits = ?, parity = ?, flow_control = ?,
                keepalive_interval = ?, inactivity_timeout = ?, idle_send_interval = ?,
-               jump_host_id = ?, connect_command = ?,
+               jump_host_id = ?, connect_command = ?, bastion = ?,
                updated_at = datetime('now')
            WHERE id = ?"#,
     )
@@ -372,6 +377,7 @@ pub async fn update(
         Some(cmd) => cmd.filter(|s| !s.is_empty()),
         None => cur.connect_command.clone(),
     })
+    .bind(new_bastion)
     .bind(id)
     .execute(pool)
     .await?;

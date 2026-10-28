@@ -126,6 +126,8 @@ export default {
     jumpHost: "跳板机",
     jumpHostPlaceholder: "可选；选择用于中转的 SSH 主机",
     jumpHostDesc: "连接时先连上跳板机，再经它隧道到目标主机（仅支持一级）",
+    bastion: "堡垒机模式",
+    bastionDesc: "连接的是堡垒机/交互网关（登录后经菜单选择目标主机）。标记后跳过遥测钩子注入，避免干扰堡垒机菜单；SFTP 面板显示堡垒机侧文件视图（根目录为主机列表，进入主机目录可浏览该机文件），不随终端目录跟随",
     icon: "图标",
     iconPlaceholder: "选择图标",
     color: "颜色",

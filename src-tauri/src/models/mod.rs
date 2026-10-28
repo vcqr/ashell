@@ -77,6 +77,8 @@ pub struct Host {
     pub jump_host_id: Option<i64>,
     /// 连接建立后自动执行的命令（终端 ready 后注入；空/None 不执行）
     pub connect_command: Option<String>,
+    /// 堡垒机（交互网关）模式：登录后经菜单选择目标主机；跳过遥测钩子注入
+    pub bastion: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -108,6 +110,9 @@ pub struct HostCreate {
     pub idle_send_interval: Option<i64>,
     pub jump_host_id: Option<i64>,
     pub connect_command: Option<String>,
+    /// 堡垒机（交互网关）模式（仅 SSH；缺省 false）
+    #[serde(default)]
+    pub bastion: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +148,9 @@ pub struct HostUpdate {
     /// 双层 Option：缺省 = 不修改（HostTree 拖拽等部分更新不误清）；显式 null = 清除
     #[serde(default, deserialize_with = "double_option::deserialize")]
     pub connect_command: Option<Option<String>>,
+    /// 堡垒机（交互网关）模式开关；None = 不修改
+    #[serde(default)]
+    pub bastion: Option<bool>,
 }
 
 /// 字段存在时（无论 null 还是值）都包成 Some(Option<T>)；
@@ -191,6 +199,8 @@ pub struct HostWithGroup {
     pub idle_send_interval: Option<i64>,
     pub jump_host_id: Option<i64>,
     pub connect_command: Option<String>,
+    /// 堡垒机（交互网关）模式
+    pub bastion: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub group_name: Option<String>,

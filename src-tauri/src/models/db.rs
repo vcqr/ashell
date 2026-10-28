@@ -383,6 +383,20 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v14: hosts 增加堡垒机（交互网关）标记。标记后连接跳过 shell 探测与
+    // 遥测注入（注入行会打进堡垒机菜单 TUI）；SFTP 面板保持可用——
+    // GateShell 类网关的 sftp 根目录即主机列表，进入主机目录可浏览该机文件
+    if current < 14 {
+        sqlx::query("ALTER TABLE hosts ADD COLUMN bastion INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (14)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -391,7 +405,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 13;
+    const LATEST_VERSION: i64 = 14;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")

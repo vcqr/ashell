@@ -122,6 +122,8 @@ export default {
     jumpHost: "Jump host",
     jumpHostPlaceholder: "Optional; pick an SSH host to tunnel through",
     jumpHostDesc: "Connects to the jump host first, then tunnels to the target (single hop only)",
+    bastion: "Bastion mode",
+    bastionDesc: "The host is a bastion / interactive gateway (pick the target host from its menu after login). Telemetry hooks are skipped to avoid disturbing the menu; the SFTP panel shows the gateway's own view (root lists hosts, enter a host folder to browse its files) and does not follow the terminal",
     selectFile: "Select file",
     clearFile: "Clear",
     keyPassphrase: "Key passphrase",
