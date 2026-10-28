@@ -9,6 +9,31 @@ body,
   background: transparent;
 }
 
+/* ---------- 无边框窗口圆角（由 useWindowRounded 驱动，见该文件说明） ----------
+ * 窗口本身透明，圆角画在 body 上；body 全局 overflow:hidden 裁出圆角。
+ * 仅 macOS（10px，对齐系统观感）/ Windows（8px，Win11 圆角规格）生效；
+ * 最大化/全屏时 useWindowRounded 摘掉 .window-rounded，圆角归零。 */
+:root {
+  --app-window-radius: 0px;
+}
+body.platform-mac {
+  --app-window-radius: 10px;
+}
+body.platform-windows {
+  --app-window-radius: 8px;
+}
+body.window-rounded {
+  border-radius: var(--app-window-radius);
+}
+/* Teleport 到 body 的 naive 浮层是 position:fixed，不受 body 圆角裁剪，
+ * 铺满全屏的遮罩类容器（模态/抽屉/图片预览）单独补圆角；
+ * message/notification 等不铺背景的容器无需处理 */
+body.window-rounded
+  :is(.n-modal-container, .n-drawer-container, .n-image-preview-container) {
+  border-radius: var(--app-window-radius);
+  overflow: hidden;
+}
+
 :root {
   --ashell-header-h: 44px;
   --ashell-activity-w: 0px;
