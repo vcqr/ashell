@@ -144,39 +144,6 @@ fn devtools_toggle(win: tauri::WebviewWindow) -> bool {
     }
 }
 
-/// macOS 窗口外观归一（其余平台 no-op），供 JS 创建的独立窗口按头部布局选择：
-/// - `native=true`：Borderless 转 Titled+Overlay——原生圆角/阴影/红绿灯归系统
-///   （终端新窗等与主窗口同壳，头部已按灯区留白）
-/// - `native=false`：仅关系统阴影——Borderless 透明窗口的系统阴影按窗口
-///   矩形画，会垫在 CSS 圆角外形成方角观感（SFTP/AI/主机信息等面板小窗，
-///   头部左侧是导航按钮，红绿灯会压住内容，故保持无边框走 CSS 圆角）
-#[cfg(feature = "desktop")]
-#[tauri::command]
-fn apply_native_window_frame(
-    app: tauri::AppHandle,
-    label: String,
-    native: bool,
-) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let Some(win) = app.get_webview_window(&label) else {
-            return Err(format!("window {label} not found"));
-        };
-        if native {
-            win.set_decorations(true).map_err(|e| e.to_string())?;
-            win.set_title_bar_style(tauri::TitleBarStyle::Overlay)
-                .map_err(|e| e.to_string())?;
-        } else {
-            win.set_shadow(false).map_err(|e| e.to_string())?;
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (app, label, native);
-    }
-    Ok(())
-}
-
 /// 返回 ~/.ashell/ai 目录的绝对路径（AI sidecar 工作目录）。
 /// 用于前端在 spawn_sidecar 时传入 workspace 参数。
 #[cfg(feature = "desktop")]
@@ -361,22 +328,6 @@ pub fn run() {
 
             // 前端正常情况下会在首帧后主动 show；这里兜底：前端异常时避免窗口一直隐藏。
             if let Some(win) = app.get_webview_window("main") {
-                // WebView 背景强制全透明：transparent 窗口下 WebView 默认底色
-                // 仍可能不透明，CSS 圆角的四角会露出色块（参考社区圆角方案）
-                let _ = win.set_background_color(Some(tauri::webview::Color(0, 0, 0, 0)));
-                // macOS：decorations:false 创建的是 Borderless 窗口——方角，且
-                // 系统阴影按窗口矩形画（WKWebView 透明内容取不到形状）。转回
-                // Titled + Overlay 后原生圆角/阴影/红绿灯全归系统，前端 CSS
-                // 圆角在 mac 上只用于独立面板小窗（见 useWindowRounded）
-                #[cfg(target_os = "macos")]
-                {
-                    if let Err(e) = win.set_decorations(true) {
-                        log::warn!("macos set_decorations: {e}");
-                    }
-                    if let Err(e) = win.set_title_bar_style(tauri::TitleBarStyle::Overlay) {
-                        log::warn!("macos set_title_bar_style: {e}");
-                    }
-                }
                 // 关闭 WebView2 浏览器快捷键（仅 Windows 生效，其它平台无此机制）
                 #[cfg(windows)]
                 disable_browser_accelerators(&win);
@@ -423,7 +374,6 @@ pub fn run() {
             get_ai_dir,
             devtools_set,
             devtools_toggle,
-            apply_native_window_frame,
             commands::dialog::save_text_file,
             commands::dialog::pick_image_file,
             commands::dialog::pick_private_key_file,

@@ -9,30 +9,6 @@ body,
   background: transparent;
 }
 
-/* ---------- 窗口圆角（由 useWindowRounded 驱动，见该文件说明） ----------
- * macOS 主壳窗口走原生 Titled+Overlay（lib.rs），不经过这里；CSS 圆角用于
- * macOS 独立面板小窗（12px）与 Windows 全部窗口（10px），Linux 不启用。 */
-:root {
-  --app-window-radius: 0px;
-}
-body.platform-mac {
-  --app-window-radius: 12px;
-}
-body.platform-windows {
-  --app-window-radius: 10px;
-}
-body.window-rounded {
-  border-radius: var(--app-window-radius);
-}
-/* Teleport 到 body 的 naive 浮层是 position:fixed，不受 body 圆角裁剪，
- * 铺满全屏的遮罩类容器（模态/抽屉/图片预览）单独补圆角；
- * message/notification 等不铺背景的容器无需处理 */
-body.window-rounded
-  :is(.n-modal-container, .n-drawer-container, .n-image-preview-container) {
-  border-radius: var(--app-window-radius);
-  overflow: hidden;
-}
-
 :root {
   --ashell-header-h: 44px;
   --ashell-activity-w: 0px;

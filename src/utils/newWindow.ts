@@ -1,26 +1,5 @@
-import { detectMac, detectWindows, isTauri } from "@/utils/platform"
+import { isTauri } from "@/utils/platform"
 import type { ChatMessage, TerminalTab } from "@/types"
-
-/**
- * 独立窗口是否透明：mac/Win 下与主窗口一致走「透明 + CSS 圆角」
- * （见 useWindowRounded / main.css）；Linux 不透明，保持直角。
- */
-const WINDOW_TRANSPARENT = detectMac() || detectWindows()
-
-/**
- * macOS 窗口外观归一（lib.rs apply_native_window_frame，其余平台 no-op）：
- * - native=true：全壳窗口（终端 tab 新窗，与主窗口同壳）转原生标题栏，
- *   圆角/阴影/红绿灯归系统
- * - native=false：面板小窗仅关系统方形阴影（透明窗口的系统阴影按窗口
- *   矩形画，会垫在 CSS 圆角外），保持无边框 + CSS 圆角
- */
-function applyNativeWindowFrame(label: string, native: boolean): void {
-  void import("@tauri-apps/api/core").then(({ invoke }) =>
-    invoke("apply_native_window_frame", { label, native }).catch(() => {
-      // 外观归一失败不致命：退化为无边框原样
-    }),
-  )
-}
 
 /** Web 端弹出新浏览器窗口；桌面端由 WebviewWindow 实现 */
 function openPopup(url: string, title: string, width: number, height: number): void {
@@ -69,16 +48,12 @@ export async function openTabInNewWindow(tab: TerminalTab): Promise<void> {
     width: 1000,
     height: 700,
     decorations: false,
-    transparent: WINDOW_TRANSPARENT,
     center: true,
     // 与主窗口（tauri.conf.json）保持一致：关闭 wry 原生拖放拦截，
     // 否则 Windows 下 DOM drop 事件的多文件数据会被吞成 1 个
     dragDropEnabled: false,
   })
 
-  webview.once("tauri://created", () => {
-    applyNativeWindowFrame(label, true)
-  })
   webview.once("tauri://error", (e) => {
     console.error("[ashell] failed to create new window:", e)
   })
@@ -128,15 +103,11 @@ export async function openSftpInNewWindow(opts: OpenSftpWindowOptions): Promise<
     minWidth: 860,
     minHeight: 480,
     decorations: false,
-    transparent: WINDOW_TRANSPARENT,
     center: true,
     // SFTP 独立窗口同样走 HTML5 dnd 接收 OS 文件拖放，必须关闭原生拦截
     dragDropEnabled: false,
   })
 
-  webview.once("tauri://created", () => {
-    applyNativeWindowFrame(label, false)
-  })
   webview.once("tauri://error", (e) => {
     console.error("[ashell] failed to create sftp window:", e)
   })
@@ -192,15 +163,11 @@ export async function openAiInNewWindow(opts: OpenAiWindowOptions): Promise<void
     minWidth: 360,
     minHeight: 480,
     decorations: false,
-    transparent: WINDOW_TRANSPARENT,
     center: true,
     // 统一与主窗口一致，避免 wry 原生拖放拦截干扰 DOM 事件
     dragDropEnabled: false,
   })
 
-  webview.once("tauri://created", () => {
-    applyNativeWindowFrame(label, false)
-  })
   webview.once("tauri://error", (e) => {
     console.error("[ashell] failed to create ai window:", e)
   })
@@ -247,15 +214,11 @@ export async function openHostInfoInNewWindow(opts: OpenHostInfoWindowOptions): 
     minWidth: 400,
     minHeight: 480,
     decorations: false,
-    transparent: WINDOW_TRANSPARENT,
     center: true,
     // 统一与主窗口一致，避免 wry 原生拖放拦截干扰 DOM 事件
     dragDropEnabled: false,
   })
 
-  webview.once("tauri://created", () => {
-    applyNativeWindowFrame(label, false)
-  })
   webview.once("tauri://error", (e) => {
     console.error("[ashell] failed to create hostinfo window:", e)
   })
