@@ -503,6 +503,11 @@ const SHELL_PROBE: &str = "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null";
 /// 保住后续中继循环的启动（见下方探测处的说明）
 const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 重连恢复 sftp 提权的硬超时：提权链路依赖多条 exec（sftp-server 路径探测 /
+/// NOPASSWD 探测），对 exec 不回应的设备会挂起。该恢复已在后台任务中执行，
+/// 不阻塞终端，但仍需上限避免任务永久悬挂；取值与 SFTP_OPEN_TIMEOUT 同量级
+const SFTP_RE_ELEVATE_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// sh 家族（dash/ash/ksh 等无 per-prompt 钩子机制的 POSIX shell）的完成
 /// 上报后缀：并入 AI 命令最后一个非空行执行，`$?` 即该命令的退出码。
 /// 不独立成行——独立行会多消耗一次提示符周期，用户终端每条 AI 命令后
@@ -1327,13 +1332,14 @@ async fn run_terminal(
         .await
         .map_err(|e| anyhow::anyhow!("request shell: {e}"))?;
 
-    // 4) 同步打开一个 sftp 子通道（终端之后；即便客户端不立刻用，后续 REST 也能用）
+    // 4) sftp 子通道预热：放后台任务执行。open_sftp 在堡垒机上可能很慢
+    //    （GateShell 的 sftp 是惰性仿真代理，后续会话初始化实测 >10s）甚至
+    //    挂死（对 subsystem 请求不回应的设备），同步执行会拖住 ready 与
+    //    中继循环；预热晚到期间 SFTP 面板列表报未开，比整条终端卡死好得多，
+    //    挂死场景由 open_sftp 内部的 SFTP_OPEN_TIMEOUT 兜底。
     // 重连复用同一 sid：先记住此前的提权状态，open_sftp 会把它覆盖成普通会话，
-    // 等 sudo 密码就绪后（下方）再自动恢复提权。
+    // 随后在后台任务里恢复提权。
     let sftp_was_elevated = ssh_svc::get_sftp_elevated(sid).await;
-    if let Err(e) = session_arc.open_sftp(sid).await {
-        log::warn!("open sftp for sid={sid} failed: {e}");
-    }
 
     // 创建终端命令注入 / 输出广播通道（供 POST /api/ssh/send/{sid} 使用）
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
@@ -1349,18 +1355,38 @@ async fn run_terminal(
     // 前端拦截回车发送 sudo_fill，后端注入已保存的密码。
     let sudo_password = host.password.clone();
 
-    // 重连恢复：该 sid 此前是提权会话时，用主机密码重新提权（NOPASSWD 时
-    // open_sftp_elevated 内部走免密分支）。失败仅降级为普通会话并记日志。
-    if sftp_was_elevated {
-        match session_arc
-            .open_sftp_elevated(sid, sudo_password.as_deref())
-            .await
-        {
-            Ok(_) => log::info!("sftp session {sid} re-elevated after reconnect"),
-            Err(e) => {
-                log::warn!("re-elevate sid={sid} failed: {e}; sftp stays non-elevated")
+    // sftp 预热 + 重连提权恢复（后台任务，见上方第 4 步说明）：
+    // 该 sid 此前是提权会话时，用主机密码重新提权（NOPASSWD 时
+    // open_sftp_elevated 内部走免密分支）。失败仅降级为普通会话并记日志；
+    // 提权链路依赖多条 exec，对 exec 不回应的设备由 SFTP_RE_ELEVATE_TIMEOUT 兜底。
+    {
+        let warm_session = Arc::clone(&session_arc);
+        let warm_sid = sid.to_string();
+        let warm_password = sudo_password.clone();
+        tokio::spawn(async move {
+            if let Err(e) = warm_session.open_sftp(&warm_sid).await {
+                log::warn!("open sftp for sid={warm_sid} failed: {e}");
             }
-        }
+            if sftp_was_elevated {
+                let re_elevate = tokio::time::timeout(
+                    SFTP_RE_ELEVATE_TIMEOUT,
+                    warm_session.open_sftp_elevated(&warm_sid, warm_password.as_deref()),
+                )
+                .await;
+                match re_elevate {
+                    Ok(Ok(_)) => {
+                        log::info!("sftp session {warm_sid} re-elevated after reconnect")
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("re-elevate sid={warm_sid} failed: {e}; sftp stays non-elevated")
+                    }
+                    Err(_) => log::warn!(
+                        "[{warm_sid}] sftp re-elevate timed out after {SFTP_RE_ELEVATE_TIMEOUT:?}; \
+                         sftp stays non-elevated"
+                    ),
+                }
+            }
+        });
     }
 
     // 每提示符遥测钩子 / 完成标记：探测远端登录 shell（exec 无 pty，不影响

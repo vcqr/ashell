@@ -53,6 +53,12 @@ const SFTP_SERVER_DETECT: &str = "p=$(command -v sftp-server 2>/dev/null); \
 /opt/homebrew/libexec/sftp-server /usr/local/sbin/sftp-server 2>/dev/null | head -n 1); \
     [ -n \"$p\" ] && [ -x \"$p\" ] && echo \"$p\" && exit 0; exit 3";
 
+/// sftp subsystem 应答 + INIT 握手的硬超时。必须给足余量：GateShell 等堡垒机
+/// 的 sftp 是惰性仿真代理（根目录=主机列表，进入主机才搭代理转发），同一连接
+/// 上的后续 sftp 会话初始化实测可超过 10s——超时只防"彻底不回应"的挂死，
+/// 不掐慢初始化，因此取 90s。
+const SFTP_OPEN_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// 把 sudo 拒绝时的 stderr 摘要整理成错误信息（空则退化为 exit code）
 fn stderr_detail(stderr: &[u8], exit_status: u32) -> String {
     let msg = String::from_utf8_lossy(stderr).trim().to_string();
@@ -843,15 +849,32 @@ impl Session {
     }
 
     /// 在该会话上打开 sftp 子通道并保存到 sid 映射
+    ///
+    /// subsystem 应答 + SFTP INIT 握手带硬超时（见 [`SFTP_OPEN_TIMEOUT`]）。
     pub async fn open_sftp(&self, sid: &str) -> AppResult<Arc<SftpSession>> {
         let channel = self.channel_open_session().await?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| sftp_svc::sftp_err("request subsystem", e))?;
-        let sftp = SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| sftp_svc::sftp_err("init", e))?;
+        let opened = tokio::time::timeout(SFTP_OPEN_TIMEOUT, async {
+            channel
+                .request_subsystem(true, "sftp")
+                .await
+                .map_err(|e| sftp_svc::sftp_err("request subsystem", e))?;
+            SftpSession::new(channel.into_stream())
+                .await
+                .map_err(|e| sftp_svc::sftp_err("init", e))
+        })
+        .await;
+        let sftp = match opened {
+            Ok(inner) => inner?,
+            Err(_) => {
+                return Err(sftp_svc::sftp_err(
+                    "subsystem/init",
+                    format!(
+                        "no response within {SFTP_OPEN_TIMEOUT:?}; \
+                         server may not support sftp (appliance?)"
+                    ),
+                ));
+            }
+        };
         let arc = Arc::new(sftp);
         SFTP_SESSION_MAP
             .write()
