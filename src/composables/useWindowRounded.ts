@@ -1,15 +1,15 @@
 import { detectMac, detectWindows, isTauri } from "@/utils/platform"
 
 /**
- * 无边框窗口圆角。decorations:false 的窗口拿不到系统圆角
- * （Win11 自动圆角只给标准标题栏窗口，macOS borderless NSWindow 是方角），
- * 统一用「窗口透明 + body CSS 圆角」实现：
- * - 仅 macOS / Windows 启用；Linux 的 GTK 透明窗口兼容性差，保持直角
- * - macOS 绿钮缩放（isMaximized）下原生窗口本就保留圆角，这里跟随系统
- *   行为不清圆角；仅真全屏关闭。Windows 最大化按系统约定去圆角，
- *   贴边分屏（Win+方向键）不算最大化，保留圆角
- * - 独立窗口（终端/SFTP/AI/主机信息）由 newWindow.ts 开 transparent，
- *   圆角样式同一套 body class 生效
+ * CSS 窗口圆角。macOS 的主壳窗口（主窗 / 终端 tab 新窗）经 lib.rs 转为原生
+ * Titled+Overlay，系统自带圆角与阴影，这里不处理；仍需 CSS 圆角的是——
+ * - macOS 独立面板小窗（sftp/ai/hostinfo）：无边框 + 透明 + CSS 圆角，
+ *   系统方形阴影由 apply_native_window_frame(native=false) 关闭
+ * - Windows 全部窗口：无边框拿不到系统圆角，统一 CSS 方案
+ * Linux 的 GTK 透明窗口兼容性差，保持直角。
+ *
+ * 最大化/全屏时关闭圆角（否则屏幕四角露出透明缺口）；Win11 贴边分屏
+ * 不算最大化，与系统行为一致保留圆角。
  *
  * 样式见 main.css 的 --app-window-radius / body.window-rounded。
  * 已知边界：Teleport 到 body 的 naive 浮层容器单独补了圆角；自绘的
@@ -18,13 +18,14 @@ import { detectMac, detectWindows, isTauri } from "@/utils/platform"
 export function initWindowRounded(): void {
   if (!isTauri) return
   const mac = detectMac()
-  if (mac) {
-    document.body.classList.add("platform-mac")
-  } else if (detectWindows()) {
-    document.body.classList.add("platform-windows")
-  } else {
-    return
-  }
+  if (!mac && !detectWindows()) return
+  document.body.classList.add(mac ? "platform-mac" : "platform-windows")
+
+  // mac 上仅独立面板小窗走 CSS 圆角；主壳窗口（无 newwin 参数或
+  // kind=host/local）由原生样式接管，CSS 圆角会造成双重圆角缝隙
+  const kind = new URLSearchParams(window.location.search).get("kind")
+  const soloPanel = kind === "sftp" || kind === "ai" || kind === "hostinfo"
+  if (mac && !soloPanel) return
 
   void (async () => {
     const { getCurrentWindow } = await import("@tauri-apps/api/window")

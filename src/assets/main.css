@@ -9,10 +9,9 @@ body,
   background: transparent;
 }
 
-/* ---------- 无边框窗口圆角（由 useWindowRounded 驱动，见该文件说明） ----------
- * 窗口本身透明（主窗口 conf + lib.rs set_background_color，独立窗口
- * newWindow.ts 开 transparent），圆角画在 body 上，全局 overflow:hidden 裁出。
- * macOS 12px / Windows 10px；Linux 不启用保持直角。 */
+/* ---------- 窗口圆角（由 useWindowRounded 驱动，见该文件说明） ----------
+ * macOS 主壳窗口走原生 Titled+Overlay（lib.rs），不经过这里；CSS 圆角用于
+ * macOS 独立面板小窗（12px）与 Windows 全部窗口（10px），Linux 不启用。 */
 :root {
   --app-window-radius: 0px;
 }
