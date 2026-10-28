@@ -328,6 +328,10 @@ pub fn run() {
 
             // 前端正常情况下会在首帧后主动 show；这里兜底：前端异常时避免窗口一直隐藏。
             if let Some(win) = app.get_webview_window("main") {
+                // WebView 背景强制全透明：transparent 窗口下 WebView 默认底色
+                // 仍可能不透明，圆角外四角会露出色块。注意透明色是
+                // Color(0, 0, 0, 0)，不是 (255, 255, 255, 0)
+                let _ = win.set_background_color(Some(tauri::webview::Color(0, 0, 0, 0)));
                 // 关闭 WebView2 浏览器快捷键（仅 Windows 生效，其它平台无此机制）
                 #[cfg(windows)]
                 disable_browser_accelerators(&win);
