@@ -499,6 +499,10 @@ fn telemetry_line_zsh(cwd_report: bool) -> String {
 /// 无 readlink 或非软链时该行为空/原样路径）
 const SHELL_PROBE: &str = "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null";
 
+/// shell 探测硬超时：堡垒机等对 exec 不回应的服务器上，超时即放弃遥测钩子，
+/// 保住后续中继循环的启动（见下方探测处的说明）
+const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// sh 家族（dash/ash/ksh 等无 per-prompt 钩子机制的 POSIX shell）的完成
 /// 上报后缀：并入 AI 命令最后一个非空行执行，`$?` 即该命令的退出码。
 /// 不独立成行——独立行会多消耗一次提示符周期，用户终端每条 AI 命令后
@@ -1300,6 +1304,7 @@ async fn run_terminal(
     // 把 sid 写入 client handler，使远程转发回连能路由到本会话
     session_arc.attach_sid(sid).await;
     ssh_svc::set_client(sid.to_string(), session_arc.clone()).await;
+    log::info!("[{sid}] ssh session established (host {host_id})");
 
     // 认证前服务器横幅（SSH_MSG_USERAUTH_BANNER）：转发给前端在终端展示，
     // 与 ssh CLI 在输密码前显示的行为对齐
@@ -1338,6 +1343,7 @@ async fn run_terminal(
     // 把 sid 通知客户端
     let ready = serde_json::to_string(&ReadyMsg { kind: "ready", sid })?;
     let _ = ws_tx.send(Message::Text(ready.into())).await;
+    log::debug!("[{sid}] terminal ready sent, probing shell before relay loop");
 
     // sudo 密码自动填充：检测到密码提示时通知前端，
     // 前端拦截回车发送 sudo_fill，后端注入已保存的密码。
@@ -1361,11 +1367,18 @@ async fn run_terminal(
     // 欢迎信息），按 shell 家族决定完成信号方案（见 resolve_completion）。
     // 经 cmd_tx 写入：中继循环启动后它是写进交互 channel 的第一笔数据，
     // 此时用户尚未来得及输入，不会与用户命令行交错。
+    //
+    // 探测必须带硬超时：部分堡垒机/appliance（GateShell 实测）对 exec 请求
+    // 既不回 channel_success 也不关通道，execute 会永久挂起——而探测位于
+    // 中继循环启动之前，挂起等于整条转发链路（shell 输出 + 键盘输入）从未
+    // 启动，表现为「认证成功但终端全空白」。超时即放弃遥测钩子（降级
+    // CompletionMode::None）；探针跑在独立通道上，弃置它不影响交互通道。
     let mut cwd_echo_strip: Option<CwdEchoStripper> = None;
     let mut loose_echo_filter: Option<LooseEchoFilter> = None;
     let mut marker_mode = false;
-    match session_arc.execute(SHELL_PROBE).await {
-        Ok(res) => {
+    let probe = tokio::time::timeout(SHELL_PROBE_TIMEOUT, session_arc.execute(SHELL_PROBE)).await;
+    match probe {
+        Ok(Ok(res)) => {
             let mut lines = res.stdout.trim().lines();
             let shell = lines.next().unwrap_or("").trim();
             let binsh = lines.next().unwrap_or("").trim();
@@ -1391,7 +1404,13 @@ async fn run_terminal(
             // marker 会话不在此处武装：剥离目标随每次注入形态不同（后缀
             // 并入式/独立上报行退路），由 cmd_rx 写入时按需重置
         }
-        Err(e) => log::debug!("detect remote shell for telemetry hook failed: {e}"),
+        Ok(Err(e)) => log::debug!("detect remote shell for telemetry hook failed: {e}"),
+        Err(_) => {
+            log::warn!(
+                "[{sid}] shell probe timed out after {SHELL_PROBE_TIMEOUT:?}; \
+                 telemetry hooks skipped (exec likely unsupported by server)"
+            );
+        }
     }
 
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
@@ -1497,6 +1516,7 @@ async fn run_terminal(
             ssh_msg = channel.wait() => {
                 match ssh_msg {
                     Some(ChannelMsg::Data { ref data }) => {
+                        log::debug!("[{sid}] ssh→ws {}B", data.len());
                         // cwd 注入行回显剥离：未武装时原样透传
                         let bytes = match cwd_echo_strip.as_mut() {
                             Some(s) => s.feed(data),
