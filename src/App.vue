@@ -59,6 +59,9 @@ import {
 import { usePanels } from "@/composables/usePanels";
 import { useWindowControls } from "@/composables/useWindowControls";
 import { useGlobalShortcuts } from "@/composables/useGlobalShortcuts";
+import { initWindowRounded } from "@/composables/useWindowRounded";
+
+initWindowRounded();
 
 const apiStore = useApiStore();
 apiStore.init();

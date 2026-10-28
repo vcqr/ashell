@@ -16,6 +16,17 @@ export function detectMac(): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(`${ua} ${platform}`)
 }
 
+export function detectWindows(): boolean {
+  if (typeof navigator === "undefined") return false
+  const ua = navigator.userAgent || ""
+  const platform =
+    (navigator as Navigator & { userAgentData?: { platform?: string } })
+      .userAgentData?.platform ||
+    navigator.platform ||
+    ""
+  return /Windows|Win32|Win64|WOW64/i.test(`${ua} ${platform}`)
+}
+
 /**
  * 用系统默认方式打开外部链接。
  * 桌面端走 plugin-opener（系统浏览器），Web 端开新标签页。
