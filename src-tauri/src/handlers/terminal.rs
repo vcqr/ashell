@@ -503,11 +503,6 @@ const SHELL_PROBE: &str = "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null";
 /// 保住后续中继循环的启动（见下方探测处的说明）
 const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// 重连恢复 sftp 提权的硬超时：提权链路依赖 exec（sftp-server 探测/NOPASSWD
-/// 探测），在 exec 不回应的堡垒机上会挂起，而此调用位于中继循环启动之前，
-/// 须限时降级为普通会话（与 SHELL_PROBE_TIMEOUT 同类）
-const SFTP_RE_ELEVATE_TIMEOUT: Duration = Duration::from_secs(15);
-
 /// sh 家族（dash/ash/ksh 等无 per-prompt 钩子机制的 POSIX shell）的完成
 /// 上报后缀：并入 AI 命令最后一个非空行执行，`$?` 即该命令的退出码。
 /// 不独立成行——独立行会多消耗一次提示符周期，用户终端每条 AI 命令后
@@ -1356,25 +1351,14 @@ async fn run_terminal(
 
     // 重连恢复：该 sid 此前是提权会话时，用主机密码重新提权（NOPASSWD 时
     // open_sftp_elevated 内部走免密分支）。失败仅降级为普通会话并记日志。
-    // 提权链路依赖多条 exec（探测 sftp-server 路径/NOPASSWD），在 exec 不
-    // 回应的堡垒机上会挂起，而此调用位于中继循环启动之前，须限时降级
-    //（与上方 shell 探测超时同类，见 SHELL_PROBE_TIMEOUT 处的说明）。
     if sftp_was_elevated {
-        let re_elevate = tokio::time::timeout(
-            SFTP_RE_ELEVATE_TIMEOUT,
-            session_arc.open_sftp_elevated(sid, sudo_password.as_deref()),
-        )
-        .await;
-        match re_elevate {
-            Ok(Ok(_)) => log::info!("sftp session {sid} re-elevated after reconnect"),
-            Ok(Err(e)) => {
+        match session_arc
+            .open_sftp_elevated(sid, sudo_password.as_deref())
+            .await
+        {
+            Ok(_) => log::info!("sftp session {sid} re-elevated after reconnect"),
+            Err(e) => {
                 log::warn!("re-elevate sid={sid} failed: {e}; sftp stays non-elevated")
-            }
-            Err(_) => {
-                log::warn!(
-                    "[{sid}] sftp re-elevate timed out after {SFTP_RE_ELEVATE_TIMEOUT:?}; \
-                     sftp stays non-elevated"
-                );
             }
         }
     }
