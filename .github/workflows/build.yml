@@ -107,3 +107,38 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Windows 便携版（免安装压缩包）：主程序 + AI sidecar + ConPTY 三件套，
+      # 与 NSIS 安装包同一批构建产物；WebView2 运行时依赖系统自带的 Evergreen
+      # （Win11 内置，Win10 缺失时需手动装），安装包会自动补装而便携包不会。
+      # Linux 便携等价物是 AppImage（当前未启用），macOS 用 .app/DMG 即可。
+      - name: build portable archive (windows)
+        if: startsWith(matrix.platform, 'windows')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dir = "src-tauri/target/${{ matrix.target }}/release"
+          if (-not (Test-Path "$dir/ashell.exe")) { throw "ashell.exe not found in $dir" }
+          $arch = if ("${{ matrix.target }}".StartsWith("x86_64")) { "x64" } else { "arm64" }
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $zip = "AShell_${version}_windows_${arch}_portable.zip"
+          $stage = "portable-staging/AShell"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "$dir\ashell.exe", "$dir\app-ai.exe", "$dir\OpenConsole.exe", "$dir\conpty.dll" -Destination $stage
+          Compress-Archive -Path "portable-staging\AShell" -DestinationPath $zip -Force
+          "PORTABLE_ZIP=$zip" >> $env:GITHUB_ENV
+
+      - name: upload portable archive (artifact)
+        if: startsWith(matrix.platform, 'windows')
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.target }}
+          path: AShell_*_portable.zip
+          if-no-files-found: error
+
+      - name: upload portable archive to release
+        if: startsWith(matrix.platform, 'windows') && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: gh release upload "$env:GITHUB_REF_NAME" "$env:PORTABLE_ZIP" --clobber
