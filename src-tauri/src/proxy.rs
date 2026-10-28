@@ -80,6 +80,8 @@ fn read_from_disk() -> ProxySettings {
         .unwrap_or_default()
 }
 
+/// 仅被桌面设置界面经 proxy_set_settings 使用
+#[cfg(feature = "desktop")]
 fn persist(s: &ProxySettings) -> Result<(), String> {
     let path = settings_path().map_err(|e| e.to_string())?;
     let raw = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
@@ -191,6 +193,7 @@ fn merge_rules(user: &str) -> String {
 }
 
 /// 校验代理地址能否被 reqwest 解析（http/https/socks5）。
+#[cfg(feature = "desktop")]
 pub fn validate_url(url: &str) -> Result<(), String> {
     reqwest::Proxy::all(url)
         .map(|_| ())
@@ -225,14 +228,16 @@ pub fn sidecar_env_unset() -> Vec<String> {
     }
 }
 
-// ---------- Tauri commands ----------
+// ---------- Tauri commands（仅桌面：代理设置管理在 Web 形态未暴露） ----------
 
-#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
+#[tauri::command]
 pub fn proxy_get_settings() -> ProxySettings {
     settings()
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
+#[tauri::command]
 pub fn proxy_set_settings(
     mode: String,
     url: String,
