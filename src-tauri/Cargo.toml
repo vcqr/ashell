@@ -132,14 +132,15 @@ font-kit = { version = "0.14", optional = true }
 # rustls-tls 进基础依赖：server 目标（--no-default-features，musl 容器）无 OpenSSL 可用，
 # 走纯 rust 的 rustls；desktop 追加 native-tls 后 reqwest 默认后端仍是 native-tls，行为不变
 # system-proxy：默认 builder 也读 OS 级代理设置（Windows 注册表等）；socks：支持 socks5 代理
-# 钉在 0.12：rust-s3 0.37 内部依赖 reqwest 0.12，Bucket::set_proxy 需要 Proxy 类型同源
+# 钉在 0.12：rust-s3 0.38 内部依赖 reqwest 0.12，Bucket::set_proxy 需要 Proxy 类型同源
+# （reqwest 0.13 尚无依赖方跟进，且 rustls-tls feature 在 0.13 改名为 rustls，勿贸然升）
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy", "socks"] }
 
 # 读取 OS 级系统代理设置（Windows 注册表 / macOS scutil / Linux gsettings）
 sysproxy = "0.3"
 
 # S3-compatible object storage (backup/restore)
-rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
+rust-s3 = { version = "0.38", default-features = false, features = ["tokio-rustls-tls"] }
 
 # Password-based key derivation for encrypted backups
 # 显式钉住生态代际：pbkdf2 0.13 走 digest 0.11，必须配 sha2 0.11；
