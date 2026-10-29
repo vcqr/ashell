@@ -419,9 +419,33 @@ impl Session {
         let channel = jump_sess
             .channel_open_direct_tcpip(&host.addr, port, "127.0.0.1", 0)
             .await
-            .map_err(|e| AppError::Ssh(format!("jump host direct_tcpip: {e}")))?;
+            .map_err(|e| {
+                // e 已是 AppError::Ssh（含 russh 的 ChannelOpenFailure Debug 文案）。
+                // 区分"网关策略拒绝/不认识直通"与"网关连不到目标机"：
+                // 前者是菜单式堡垒机的常态（改堡垒机模式），后者查网络与地址
+                let msg = e.to_string();
+                let hint = if msg.contains("ConnectFailed") {
+                    "跳板机无法连通目标机，请检查目标机地址/端口与网络可达性"
+                } else {
+                    "跳板机拒绝了直连通道请求：菜单式堡垒机通常不支持透明直通，请改用堡垒机模式连接"
+                };
+                AppError::Ssh(format!("{msg}；{hint}"))
+            })?;
 
-        let mut sess = Self::connect_stream(pool, host, channel.into_stream(), kbd_answers).await?;
+        let mut sess = Self::connect_stream(pool, host, channel.into_stream(), kbd_answers)
+            .await
+            .map_err(|e| match e {
+                // 结构化错误（主机密钥确认 / 交互认证 / 密码 / 密钥口令）由
+                // 前端按类型弹窗处理，必须原样透传，不能包进泛化文案
+                AppError::HostKeyVerify { .. }
+                | AppError::KeyboardInteractiveRequired { .. }
+                | AppError::AuthFailed { .. }
+                | AppError::KeyPassphraseRequired { .. } => e,
+                other => AppError::Ssh(format!(
+                    "jump tunnel: {other}；跳板机接受了通道但未能完成目标机握手，\
+                     多为堡垒机不支持透明直通（请改用堡垒机模式连接）"
+                )),
+            })?;
         sess.jump = Some(Box::new(jump_sess));
         Ok(sess)
     }
