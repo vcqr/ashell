@@ -97,11 +97,16 @@ fn sudo_user_opt(user: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-/// 组装 sftp 提权命令：sudo [-S -p ''] [-u user] '<sftp-server路径>'
+/// 组装 sftp 提权命令：sudo [-n] [-S -p ''] [-u user] '<sftp-server路径>'。
+/// 不喂密码的分支必须带 -n：sudoers 若对该命令要求密码，`sudo -n` 立即报
+/// "a password is required" 退出（交由上层转密码重试），否则 sudo 会在通道
+/// stderr 上等待输入，后续 SFTP 协议字节会被它当作密码行吞掉。
 fn sudo_sftp_cmd(path: &str, user: Option<&str>, feed_password: bool) -> String {
     let mut cmd = String::from("sudo");
     if feed_password {
         cmd.push_str(" -S -p ''");
+    } else {
+        cmd.push_str(" -n");
     }
     cmd.push_str(&sudo_user_opt(user));
     format!("{cmd} '{path}'")
@@ -1032,29 +1037,42 @@ impl Session {
         }
         // sudo 验证失败会往 stderr 写原因并退出（ExitStatus/Close 很快到达）；
         // 成功则静默放行进入 sftp-server，被动等 INIT、无输出 —— 超时即成功。
+        // 密码错误时 sudo -S 会再提示（"Sorry, try again"）并继续等下一行输入，
+        // 此时绝不能放行进 sftp 握手（协议字节会被 sudo 当密码吞掉，双方互等），
+        // 必须立即报错。拒绝类错误统一 BadRequest（400）：都是凭证/sudoers
+        // 层面用户可纠正的问题，tower_http 只对 5xx 记 ERROR。
         let mut stderr: Vec<u8> = Vec::new();
         loop {
             match tokio::time::timeout(Duration::from_millis(1500), channel.wait()).await {
                 Err(_) => break,
                 Ok(Some(ChannelMsg::ExtendedData { ref data, ext: 1 })) => {
                     stderr.extend_from_slice(data);
+                    let text = String::from_utf8_lossy(&stderr).to_ascii_lowercase();
+                    if text.contains("sorry, try again")
+                        || text.contains("incorrect password")
+                        || text.contains("no password was provided")
+                    {
+                        return Err(AppError::BadRequest(
+                            "sudo rejected: incorrect password".into(),
+                        ));
+                    }
                 }
                 Ok(Some(ChannelMsg::ExitStatus { exit_status })) => {
-                    return Err(AppError::Ssh(format!(
+                    return Err(AppError::BadRequest(format!(
                         "sudo rejected: {}",
                         stderr_detail(&stderr, exit_status)
                     )));
                 }
                 Ok(Some(ChannelMsg::Close)) | Ok(Some(ChannelMsg::Eof)) => {
-                    return Err(AppError::Ssh(format!(
+                    return Err(AppError::BadRequest(format!(
                         "sudo rejected: {}",
                         stderr_detail(&stderr, 0)
                     )));
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
-                    return Err(AppError::Ssh(
-                        "sftp channel closed during elevate".into(),
+                    return Err(AppError::BadRequest(
+                        "sudo rejected: sftp channel closed during elevate".into(),
                     ));
                 }
             }
@@ -1312,9 +1330,10 @@ mod tests {
 
     #[test]
     fn builds_sudo_sftp_commands() {
+        // 不喂密码的分支带 -n：sudoers 要求密码时立即失败而非等输入
         assert_eq!(
             sudo_sftp_cmd("/usr/lib/sftp-server", None, false),
-            "sudo '/usr/lib/sftp-server'"
+            "sudo -n '/usr/lib/sftp-server'"
         );
         // root 目标不带 -u，与历史命令保持一致
         assert_eq!(
@@ -1328,7 +1347,7 @@ mod tests {
         // 用户名整体单引号转义，防注入
         assert_eq!(
             sudo_sftp_cmd("/p", Some("a'; b"), false),
-            "sudo -u 'a'\\''; b' '/p'"
+            "sudo -n -u 'a'\\''; b' '/p'"
         );
     }
 }

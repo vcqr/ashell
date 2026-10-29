@@ -114,7 +114,26 @@ pub async fn elevate(
         Err(AppError::BadRequest(m)) if m.contains("ELEVATE_PASSWORD_REQUIRED") => {
             Err(AppError::BadRequest("ELEVATE_PASSWORD_REQUIRED".into()))
         }
-        other => other.map(|_| ok_msg("ok")),
+        // 提权失败原因透出：tower_http 只记 5xx 且不带消息，这里补一条带
+        // 上下文（目标用户 / 是否手填路径）的 warn 便于排查
+        Err(e) => {
+            log::warn!(
+                "[{}] sftp elevate failed (user={:?}, manual_path={}): {e}",
+                req.sid,
+                req.user,
+                req.sftp_server_path.is_some()
+            );
+            Err(e)
+        }
+        Ok(_) => {
+            log::info!(
+                "[{}] sftp elevated (user={:?}, manual_path={})",
+                req.sid,
+                req.user,
+                req.sftp_server_path.is_some()
+            );
+            Ok(ok_msg("ok"))
+        }
     }
 }
 
