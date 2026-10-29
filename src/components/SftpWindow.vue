@@ -69,7 +69,7 @@ async function toggleMaximize() {
       :host-name="hostName"
       :host-addr="hostAddr"
       :host-id="Number.isFinite(hostId) ? hostId : null"
-      :bastion="isBastion"
+      :bastion="isBastion || undefined"
     />
   </div>
 </template>
