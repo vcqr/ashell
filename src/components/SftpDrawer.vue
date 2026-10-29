@@ -104,6 +104,7 @@ import {
   uploadLocalToRemote,
 } from "@/api/local"
 import { openSftpInNewWindow } from "@/utils/newWindow"
+import { getHost } from "@/api/hosts"
 import { useFileDrag } from "@/composables/useFileDrag"
 import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import { usePanelSwitchClosed } from "@/composables/usePanels"
@@ -435,10 +436,29 @@ watch(
 )
 
 /** 堡垒机会话：提权/切换用户在服务端必被拒绝（sudo 够不到目标机），
- *  这里事前置灰按钮。优先取显式 prop（独立窗口经 URL 传入），缺省查主机 store */
+ *  这里事前置灰按钮。优先取显式 prop（独立窗口经 URL 传入）；否则按
+ *  hostId 拉取主机记录兜底——主机 store 仅在列表抽屉打开时刷新，
+ *  刚勾选堡垒机模式的旧数据里可能还没有该标志 */
 const hostStore = useHostStore()
+const fetchedBastion = ref<boolean | null>(null)
+watch(
+  () => props.hostId,
+  (id) => {
+    fetchedBastion.value = null
+    if (id == null || props.bastion != null) return
+    getHost(id)
+      .then((h) => {
+        fetchedBastion.value = h.bastion === true
+      })
+      .catch(() => {
+        // 拉取失败不阻塞：交由服务端拦截兜底
+      })
+  },
+  { immediate: true },
+)
 const bastionMode = computed(() => {
   if (props.bastion != null) return props.bastion
+  if (fetchedBastion.value != null) return fetchedBastion.value
   if (props.hostId == null) return false
   return hostStore.hosts.find((h) => h.id === props.hostId)?.bastion === true
 })
