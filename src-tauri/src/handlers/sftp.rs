@@ -70,7 +70,7 @@ pub struct ElevateReq {
     pub elevated: bool,
     /// 手动输入的 sudo 密码；缺省回退主机密码（NOPASSWD 时两者都不需要）
     pub password: Option<String>,
-    /// 提权目标用户（sudo -u）；缺省/空/root = root
+    /// 会话目标用户（sudo -u）：root=提权，其他=切换用户；缺省/空 = root
     pub user: Option<String>,
     /// 手动指定的远端 sftp-server 路径；缺省走自动探测（探测失败时前端
     /// 弹窗让用户填写非标准路径）
@@ -93,11 +93,11 @@ pub async fn elevate(
         service::host::get_with_credentials(&state.db, &state.config.crypto_key, req.host_id)
             .await?;
     // 堡垒机（交互网关）会话：exec 落在网关的菜单 shell 上而非目标机，sudo
-    // 无法作用到目标主机，提权必然失败——直接给明确错误，避免用户面对
-    // "Timeout" 这类无法理解的表象
+    // 无法作用到目标主机，提权/切换用户都必然失败——直接给明确错误，避免
+    // 用户面对 "Timeout" 这类无法理解的表象
     if host.bastion {
         return Err(AppError::BadRequest(
-            "堡垒机会话不支持 SFTP 提权：sudo 无法经网关作用到目标主机".into(),
+            "堡垒机会话不支持 SFTP 提权与用户切换：sudo 无法经网关作用到目标主机".into(),
         ));
     }
     let sudo_password = match req.password.as_deref().filter(|p| !p.is_empty()) {

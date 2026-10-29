@@ -408,15 +408,15 @@ const drawerTitle = computed(() => {
   return addr ? `${host} (${addr})` : host
 })
 
-/* ---------- 临时提权（sudo [-u 用户] sftp-server 会话） ---------- */
+/* ---------- 提权（root）/ 用户切换（sudo [-u 用户] 重建会话） ---------- */
 
 /** 当前 SFTP 会话是否为提权会话；切换主机 tab 时随 sid 重置 */
 const elevated = ref(false)
-/** 提权目标用户（"root"=常规提权；null=未提权） */
+/** 会话当前身份（"root"=提权；其他=切换到的用户；null=登录用户） */
 const elevatedUser = ref<string | null>(null)
 const elevating = ref(false)
 const sudoPasswordInput = ref("")
-/** 切换用户提权弹窗的输入 */
+/** 切换用户弹窗的输入 */
 const elevateUserInput = ref("")
 const elevateUserPwdInput = ref("")
 /** 手动指定 sftp-server 路径弹窗的输入 */
@@ -430,20 +430,20 @@ watch(
   },
 )
 
-/** 提权目标用户名（用于徽标/提示文案） */
+/** 会话当前身份名（用于徽标/提示文案） */
 const elevatedUserName = computed(() => elevatedUser.value || "root")
 
-/** 提权按钮 Tooltip：未提权说明用途，提权后说明当前身份与还原入口 */
+/** 提权按钮 Tooltip：未提权说明用途，提权/切换后说明当前身份与还原入口 */
 const elevatedTitle = computed(() =>
   elevated.value
     ? t("sftp.elevate.restoreTip", { user: elevatedUserName.value })
     : t("sftp.elevate.title"),
 )
 
-/** 提权徽标文案：root 显示固定徽标，切用户显示用户名 */
+/** 徽标文案：提权显示 "sudo root"，切换用户显示 "用户 xxx" */
 const elevatedBadgeLabel = computed(() =>
   elevated.value && elevatedUser.value !== "root"
-    ? `sudo ${elevatedUserName.value}`
+    ? t("sftp.elevate.badgeUser", { user: elevatedUserName.value })
     : t("sftp.elevate.badge"),
 )
 
@@ -453,9 +453,8 @@ const elevatedBadgeTip = computed(() =>
     : t("sftp.elevate.badgeTip"),
 )
 
-/** 提权 / 还原都是重建会话：成功后刷新列表；需要 sudo 密码或探测不到
- *  sftp-server 时弹窗收集后重试。user 非空 = 切换到指定用户提权（sudo -u）；
- *  sftpPath 非空 = 手动指定远端 sftp-server 路径（跳过自动探测）。 */
+/** 提权（root）/ 切换用户（sudo -u）都是重建会话：成功后刷新列表。
+ *  password 为 sudo 密码；sftpPath 手动指定远端 sftp-server 路径（跳过探测）。 */
 async function setElevated(
   next: boolean,
   password?: string,
@@ -504,7 +503,7 @@ function toggleElevate() {
   void setElevated(!elevated.value)
 }
 
-/** 提权下拉：root 提权保持一键直达，切换用户走弹窗收集 */
+/** 提权（root）与切换用户为两个并列操作；提权态下也可直接切换到其他用户 */
 const elevateMenuOptions = computed(() => [
   { key: "root", label: t("sftp.elevate.asRoot") },
   { key: "user", label: t("sftp.elevate.asUser") },
@@ -3339,7 +3338,6 @@ function openInStandaloneWindow() {
                 {{ elevated ? t("sftp.elevate.restore") : t("sftp.elevate.button") }}
               </NButton>
               <NDropdown
-                v-if="!elevated"
                 trigger="click"
                 :options="elevateMenuOptions"
                 @select="onElevateMenuSelect"

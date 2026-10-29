@@ -44,7 +44,7 @@ static SFTP_ELEVATED_MAP: Lazy<RwLock<HashMap<String, bool>>> =
 static SUDO_PASSWORD_MAP: Lazy<RwLock<HashMap<String, String>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// sid -> 提权目标用户（含 "root"）。切换用户提权（sudo -u）后，shell 类
+/// sid -> 提权目标用户（含 "root"）。切换用户（sudo -u）后，shell 类
 /// 操作与终端重连的提权恢复都按同一目标用户执行；还原普通会话时清除。
 static SFTP_ELEVATE_USER_MAP: Lazy<RwLock<HashMap<String, String>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
