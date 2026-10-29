@@ -89,17 +89,20 @@ pub async fn elevate(
         session.open_sftp(&req.sid).await?;
         return Ok(ok_msg("ok"));
     }
+    let host =
+        service::host::get_with_credentials(&state.db, &state.config.crypto_key, req.host_id)
+            .await?;
+    // 堡垒机（交互网关）会话：exec 落在网关的菜单 shell 上而非目标机，sudo
+    // 无法作用到目标主机，提权必然失败——直接给明确错误，避免用户面对
+    // "Timeout" 这类无法理解的表象
+    if host.bastion {
+        return Err(AppError::BadRequest(
+            "堡垒机会话不支持 SFTP 提权：sudo 无法经网关作用到目标主机".into(),
+        ));
+    }
     let sudo_password = match req.password.as_deref().filter(|p| !p.is_empty()) {
         Some(p) => Some(p.to_string()),
-        None => {
-            service::host::get_with_credentials(
-                &state.db,
-                &state.config.crypto_key,
-                req.host_id,
-            )
-            .await?
-            .password
-        }
+        None => host.password,
     };
     match session
         .open_sftp_elevated(

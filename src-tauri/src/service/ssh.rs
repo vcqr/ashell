@@ -79,6 +79,20 @@ const SFTP_SERVER_DETECT: &str = "p=$(command -v sftp-server 2>/dev/null); \
 /// 不掐慢初始化，因此取 90s。
 const SFTP_OPEN_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// sftp 会话构建配置：请求级超时与 SFTP_OPEN_TIMEOUT 同口径放宽到 90s。
+/// russh-sftp 默认每请求仅 10s——GateShell 类网关的惰性仿真代理实测可超过
+/// 10s，INIT 握手与会话内操作统一放宽，超时只防彻底无响应的挂死。
+fn sftp_client_config() -> russh_sftp::client::Config {
+    russh_sftp::client::Config {
+        request_timeout_secs: SFTP_OPEN_TIMEOUT.as_secs(),
+        ..Default::default()
+    }
+}
+
+/// 提权探测（exec 脚本）的硬超时。正常主机含 find 兜底也在数秒内完成；
+/// 堡垒机等对 exec 不回应的设备上 execute 会永久挂起，必须兜住。
+const SFTP_ELEVATE_DETECT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// 把 sudo 拒绝时的 stderr 摘要整理成错误信息（空则退化为 exit code）
 fn stderr_detail(stderr: &[u8], exit_status: u32) -> String {
     let msg = String::from_utf8_lossy(stderr).trim().to_string();
@@ -903,7 +917,7 @@ impl Session {
                 .request_subsystem(true, "sftp")
                 .await
                 .map_err(|e| sftp_svc::sftp_err("request subsystem", e))?;
-            SftpSession::new(channel.into_stream())
+            SftpSession::new_with_config(channel.into_stream(), sftp_client_config())
                 .await
                 .map_err(|e| sftp_svc::sftp_err("init", e))
         })
@@ -954,13 +968,26 @@ impl Session {
         let path = match path_override.map(str::trim).filter(|p| !p.is_empty()) {
             Some(p) => p.to_string(),
             None => {
-                let detect = self
-                    .execute(&format!(
+                // 探测带硬超时：堡垒机等对 exec 不回应的设备上 execute 会永久
+                // 挂起；超时按探测失败处理（复用同文案触发前端手动填路径弹窗）
+                let detect = tokio::time::timeout(
+                    SFTP_ELEVATE_DETECT_TIMEOUT,
+                    self.execute(&format!(
                         "sh -c {}",
                         sftp_svc::sh_quote(SFTP_SERVER_DETECT)
-                    ))
-                    .await
-                    .map_err(|e| AppError::Ssh(format!("elevate detect: {e}")))?;
+                    )),
+                )
+                .await;
+                let detect = match detect {
+                    Ok(r) => r.map_err(|e| AppError::Ssh(format!("elevate detect: {e}")))?,
+                    Err(_) => {
+                        return Err(AppError::BadRequest(
+                            "sftp-server binary not found on remote host \
+                             (detection timed out; the host may not respond to exec)"
+                                .into(),
+                        ));
+                    }
+                };
                 let path = detect.stdout.trim().to_string();
                 if detect.exit_status != 0 || path.is_empty() {
                     return Err(AppError::BadRequest(
@@ -979,6 +1006,10 @@ impl Session {
             .await
             .map(|r| r.exit_status == 0)
             .unwrap_or(false);
+        log::info!(
+            "[{sid}] sftp elevate: server={path} user={} nopasswd={nopasswd}",
+            user.unwrap_or("root")
+        );
 
         // NOPASSWD 时绝不走喂密码分支：sudo 不读 stdin，密码行会残留在
         // channel 里被 sftp-server 当作 SFTP 协议流的首字节，握手必然失败
@@ -1077,9 +1108,12 @@ impl Session {
                 }
             }
         }
-        let sftp = SftpSession::new(channel.into_stream())
+        let sftp = SftpSession::new_with_config(channel.into_stream(), sftp_client_config())
             .await
-            .map_err(|e| sftp_svc::sftp_err("elevated init", e))?;
+            .map_err(|e| {
+                log::warn!("[{sid}] sftp elevate: handshake failed after sudo: {e}");
+                sftp_svc::sftp_err("elevated init", e)
+            })?;
 
         // 提权自检。root 目标：应能以 READ 打开 /root（各发行版均为 700，仅
         // root 可读），报 permission denied 说明会话实际不是 root（提权未生效）；
