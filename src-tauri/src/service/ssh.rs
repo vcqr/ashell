@@ -44,6 +44,11 @@ static SFTP_ELEVATED_MAP: Lazy<RwLock<HashMap<String, bool>>> =
 static SUDO_PASSWORD_MAP: Lazy<RwLock<HashMap<String, String>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// sid -> 提权目标用户（含 "root"）。切换用户提权（sudo -u）后，shell 类
+/// 操作与终端重连的提权恢复都按同一目标用户执行；还原普通会话时清除。
+static SFTP_ELEVATE_USER_MAP: Lazy<RwLock<HashMap<String, String>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 /// 远端 sftp-server 二进制路径探测（POSIX sh，BusyBox 兼容）。
 /// 优先 PATH 内 `command -v`，再测各发行版常见固定路径；找不到 exit 3。
 const SFTP_SERVER_DETECT: &str = "p=$(command -v sftp-server 2>/dev/null); \
@@ -67,6 +72,24 @@ fn stderr_detail(stderr: &[u8], exit_status: u32) -> String {
     } else {
         msg
     }
+}
+
+/// sudo 的 -u 选项片段：None/空/root 时为空串（与历史命令完全一致）
+fn sudo_user_opt(user: Option<&str>) -> String {
+    user.map(str::trim)
+        .filter(|u| !u.is_empty() && *u != "root")
+        .map(|u| format!(" -u {}", sftp_svc::sh_quote(u)))
+        .unwrap_or_default()
+}
+
+/// 组装 sftp 提权命令：sudo [-S -p ''] [-u user] '<sftp-server路径>'
+fn sudo_sftp_cmd(path: &str, user: Option<&str>, feed_password: bool) -> String {
+    let mut cmd = String::from("sudo");
+    if feed_password {
+        cmd.push_str(" -S -p ''");
+    }
+    cmd.push_str(&sudo_user_opt(user));
+    format!("{cmd} '{path}'")
 }
 
 /// 终端会话的外部命令注入通道（POST /api/ssh/send/{sid} → SSH stdin）
@@ -795,17 +818,19 @@ impl Session {
         Self::read_channel_result(&mut ch).await
     }
 
-    /// 以 root 执行命令（sudo 提权）：exec `sudo -S -p '' <command>`，密码
+    /// 以提权身份执行命令：exec `sudo [-u user] -S -p '' <command>`，密码
     /// 先写一行到 stdin（`sudo -S` 从 stdin 读）。`command` 需已由调用方
-    /// 完成整体 shell 引用（通常为 `sh -c <脚本>`）。sudo 验证失败会往
-    /// stderr 写原因并以非零码退出，交由调用方按结果报错。
+    /// 完成整体 shell 引用（通常为 `sh -c <脚本>`）。`user` 非 None/root 时
+    /// 以 `sudo -u <user>` 切换到指定用户执行。sudo 验证失败会往 stderr
+    /// 写原因并以非零码退出，交由调用方按结果报错。
     pub async fn execute_sudo(
         &self,
         command: &str,
         password: &str,
+        user: Option<&str>,
     ) -> AppResult<CommandExecutedResult> {
         let mut ch = self.channel_open_session().await?;
-        let cmd = format!("sudo -S -p '' {command}");
+        let cmd = format!("sudo -S -p ''{} {command}", sudo_user_opt(user));
         ch.exec(true, cmd.as_str())
             .await
             .map_err(|e| AppError::Ssh(format!("exec sudo: {e}")))?;
@@ -881,25 +906,29 @@ impl Session {
             .await
             .insert(sid.to_string(), arc.clone());
         SFTP_ELEVATED_MAP.write().await.insert(sid.to_string(), false);
-        // 还原普通会话：提权密码缓存一并失效
+        // 还原普通会话：提权密码缓存与目标用户一并失效
         SUDO_PASSWORD_MAP.write().await.remove(sid);
+        SFTP_ELEVATE_USER_MAP.write().await.remove(sid);
         Ok(arc)
     }
 
     /// 以 sudo 提权打开 sftp 会话（临时提权）：不走 request_subsystem（sshd 会以
     /// 登录用户身份拉起 sftp-server，SFTP 协议本身无提权概念），改为 exec
     /// `sudo <sftp-server>` 让 sftp-server 以 root 运行，SFTP 协议流原样走
-    /// channel stdin/stdout。
+    /// channel stdin/stdout。`user` 非 None/root 时以 `sudo -u <user>` 切换到
+    /// 指定用户运行（以该用户身份浏览/操作文件）。
     ///
     /// 流程：探测远端 sftp-server 二进制路径 -> 探测 NOPASSWD（`sudo -n true`）
     /// -> 直接 exec，或 `sudo -S -p ''` 启动后从 stdin 喂一行密码。
-    /// sudo 拒绝（密码错 / 不在 sudoers）会在 stderr 输出原因并快速退出，
-    /// 据此报错；静默放行即进入 sftp 协议握手。
+    /// sudo 拒绝（密码错 / 不在 sudoers / 目标用户不存在或无权）会在 stderr
+    /// 输出原因并快速退出，据此报错；静默放行即进入 sftp 协议握手。
     pub async fn open_sftp_elevated(
         &self,
         sid: &str,
         password: Option<&str>,
+        user: Option<&str>,
     ) -> AppResult<Arc<SftpSession>> {
+        let user = user.map(str::trim).filter(|s| !s.is_empty());
         let detect = self
             .execute(SFTP_SERVER_DETECT)
             .await
@@ -917,22 +946,28 @@ impl Session {
             .map(|r| r.exit_status == 0)
             .unwrap_or(false);
 
-        let quoted = format!("'{path}'");
+        // NOPASSWD 时绝不走喂密码分支：sudo 不读 stdin，密码行会残留在
+        // channel 里被 sftp-server 当作 SFTP 协议流的首字节，握手必然失败
         let result = match (nopasswd, password.filter(|p| !p.is_empty())) {
-            (true, _) => self
-                .open_sftp_via(sid, &format!("sudo {quoted}"), None)
-                .await,
+            (true, _) => {
+                let cmd = sudo_sftp_cmd(&path, user, false);
+                self.open_sftp_via(sid, &cmd, None, user).await
+            }
             (false, Some(pwd)) => {
-                let cmd = format!("sudo -S -p '' {quoted}");
-                self.open_sftp_via(sid, &cmd, Some(pwd)).await
+                let cmd = sudo_sftp_cmd(&path, user, true);
+                self.open_sftp_via(sid, &cmd, Some(pwd), user).await
             }
             (false, None) => Err(AppError::BadRequest(
                 "ELEVATE_PASSWORD_REQUIRED".into(),
             )),
         };
-        // 提权成功：缓存密码供会话内后续 shell 操作（du/压缩/解压）复用，
-        // 免得每个操作都重新询问
+        // 提权成功：记录目标用户（shell 类操作与重连恢复跟随），并缓存密码
+        // 供会话内后续 shell 操作（du/压缩/解压）复用，免得每个操作都重新询问
         if result.is_ok() {
+            SFTP_ELEVATE_USER_MAP
+                .write()
+                .await
+                .insert(sid.to_string(), user.unwrap_or("root").to_string());
             if let Some(pwd) = password.filter(|p| !p.is_empty()) {
                 SUDO_PASSWORD_MAP
                     .write()
@@ -945,11 +980,13 @@ impl Session {
 
     /// exec 一条"最终 exec sftp-server"的命令并完成 SFTP 握手。
     /// `password` 非空时先写一行到 stdin（`sudo -S` 从 stdin 读密码）。
+    /// `user` 是提权目标用户，仅用于提权自检策略。
     async fn open_sftp_via(
         &self,
         sid: &str,
         cmd: &str,
         password: Option<&str>,
+        user: Option<&str>,
     ) -> AppResult<Arc<SftpSession>> {
         let mut channel = self.channel_open_session().await?;
         channel
@@ -997,21 +1034,34 @@ impl Session {
             .await
             .map_err(|e| sftp_svc::sftp_err("elevated init", e))?;
 
-        // root 自检：提权会话应能以 READ 打开 /root（各发行版均为 700，仅 root 可读）。
-        // 打开报 permission denied 说明会话实际不是 root（提权未生效）；目录不存在
-        // （macOS 为 /var/root 等非标准布局）则跳过判定不阻塞。
-        match sftp
-            .open_with_flags("/root", russh_sftp::protocol::OpenFlags::READ)
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                let msg = e.to_string().to_lowercase();
-                if msg.contains("permission") || msg.contains("denied") {
-                    return Err(AppError::Ssh(
-                        "elevation self-check failed: sftp session is not running as root".into(),
-                    ));
+        // 提权自检。root 目标：应能以 READ 打开 /root（各发行版均为 700，仅
+        // root 可读），报 permission denied 说明会话实际不是 root（提权未生效）；
+        // 目录不存在（macOS 为 /var/root 等非标准布局）则跳过判定不阻塞。
+        // 非 root 目标：以 /proc/self 的属主校验有效 uid 已离开 root（Linux；
+        // 无 /proc 的平台跳过判定不阻塞）。
+        if user.is_none() || user == Some("root") {
+            match sftp
+                .open_with_flags("/root", russh_sftp::protocol::OpenFlags::READ)
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string().to_lowercase();
+                    if msg.contains("permission") || msg.contains("denied") {
+                        return Err(AppError::Ssh(
+                            "elevation self-check failed: sftp session is not running as root"
+                                .into(),
+                        ));
+                    }
                 }
+            }
+        } else if let Ok(m) = sftp.metadata("/proc/self").await {
+            if m.uid == Some(0) {
+                return Err(AppError::Ssh(
+                    "elevation self-check failed: sftp session still runs as root, \
+                     target user switch did not take effect"
+                        .into(),
+                ));
             }
         }
 
@@ -1073,12 +1123,17 @@ pub async fn get_sftp_elevated(sid: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 该 sid 的 SFTP 提权目标用户（"root"=常规提权；None=未提权或未知 sid）
+pub async fn get_sftp_elevate_user(sid: &str) -> Option<String> {
+    SFTP_ELEVATE_USER_MAP.read().await.get(sid).cloned()
+}
+
 /// SFTP 面板的 shell 类操作（du / 压缩 / 解压）统一入口：按 sid 的 SFTP
-/// 提权状态决定是否以 root 执行。
+/// 提权状态决定是否提权执行；提权会话跟随其目标用户（root 或 sudo -u 用户）。
 ///
 /// - 普通会话：以登录用户直接执行。
-/// - 提权会话：优先用缓存的 / 调用方带来的 sudo 密码（`sudo -S sh -c`）；
-///   无密码时先探 NOPASSWD（`sudo -n true`），可免密则 `sudo -n sh -c`，
+/// - 提权会话：优先用缓存的 / 调用方带来的 sudo 密码（`sudo [-u user] -S sh -c`）；
+///   无密码时先探 NOPASSWD（`sudo -n true`），可免密则 `sudo [-u user] -n sh -c`，
 ///   否则返回 `ELEVATE_PASSWORD_REQUIRED`，由前端弹窗收集后带密码重试。
 pub async fn execute_for_sftp(
     sid: &str,
@@ -1090,6 +1145,10 @@ pub async fn execute_for_sftp(
         return client.execute(command).await;
     }
 
+    let elevate_user = get_sftp_elevate_user(sid)
+        .await
+        .filter(|u| u != "root");
+    let user = elevate_user.as_deref();
     let wrapped = format!("sh -c {}", sftp_svc::sh_quote(command));
     if let Some(pwd) = password.filter(|p| !p.is_empty()) {
         // 输入过的密码留给本次会话后续操作复用（提权语义：问一次就够）
@@ -1097,12 +1156,12 @@ pub async fn execute_for_sftp(
             .write()
             .await
             .insert(sid.to_string(), pwd.to_string());
-        return client.execute_sudo(&wrapped, pwd).await;
+        return client.execute_sudo(&wrapped, pwd, user).await;
     }
     // 克隆后立刻放锁：execute_sudo 可能耗时很长，不能跨 await 持读锁
     let cached = SUDO_PASSWORD_MAP.read().await.get(sid).cloned();
     if let Some(pwd) = cached {
-        return client.execute_sudo(&wrapped, &pwd).await;
+        return client.execute_sudo(&wrapped, &pwd, user).await;
     }
     let nopasswd = client
         .execute("sudo -n true 2>/dev/null")
@@ -1110,7 +1169,9 @@ pub async fn execute_for_sftp(
         .map(|r| r.exit_status == 0)
         .unwrap_or(false);
     if nopasswd {
-        client.execute(&format!("sudo -n {wrapped}")).await
+        client
+            .execute(&format!("sudo -n{} {wrapped}", sudo_user_opt(user)))
+            .await
     } else {
         Err(AppError::BadRequest("ELEVATE_PASSWORD_REQUIRED".into()))
     }
@@ -1193,6 +1254,7 @@ pub async fn remove(sid: &str) {
     drop(sftp);
     SFTP_ELEVATED_MAP.write().await.remove(sid);
     SUDO_PASSWORD_MAP.write().await.remove(sid);
+    SFTP_ELEVATE_USER_MAP.write().await.remove(sid);
     if let Some(sess) = SSH_CLIENT_MAP.write().await.remove(sid) {
         sess.disconnect().await;
     }
@@ -1200,7 +1262,7 @@ pub async fn remove(sid: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_password_prompt;
+    use super::{is_password_prompt, sudo_sftp_cmd};
 
     #[test]
     fn matches_password_prompts() {
@@ -1217,5 +1279,27 @@ mod tests {
         assert!(!is_password_prompt("Verification code:"));
         assert!(!is_password_prompt("请输入验证码："));
         assert!(!is_password_prompt("Token:"));
+    }
+
+    #[test]
+    fn builds_sudo_sftp_commands() {
+        assert_eq!(
+            sudo_sftp_cmd("/usr/lib/sftp-server", None, false),
+            "sudo '/usr/lib/sftp-server'"
+        );
+        // root 目标不带 -u，与历史命令保持一致
+        assert_eq!(
+            sudo_sftp_cmd("/usr/lib/sftp-server", Some("root"), true),
+            "sudo -S -p '' '/usr/lib/sftp-server'"
+        );
+        assert_eq!(
+            sudo_sftp_cmd("/usr/lib/openssh/sftp-server", Some("www-data"), true),
+            "sudo -S -p '' -u 'www-data' '/usr/lib/openssh/sftp-server'"
+        );
+        // 用户名整体单引号转义，防注入
+        assert_eq!(
+            sudo_sftp_cmd("/p", Some("a'; b"), false),
+            "sudo -u 'a'\\''; b' '/p'"
+        );
     }
 }

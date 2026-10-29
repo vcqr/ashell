@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   RiArchiveLine,
+  RiArrowDownSLine,
   RiArrowLeftSLine,
   RiArrowRightSLine,
   RiArrowUpLine,
@@ -407,22 +408,52 @@ const drawerTitle = computed(() => {
   return addr ? `${host} (${addr})` : host
 })
 
-/* ---------- 临时提权（sudo sftp-server 会话） ---------- */
+/* ---------- 临时提权（sudo [-u 用户] sftp-server 会话） ---------- */
 
-/** 当前 SFTP 会话是否为提权（root）会话；切换主机 tab 时随 sid 重置 */
+/** 当前 SFTP 会话是否为提权会话；切换主机 tab 时随 sid 重置 */
 const elevated = ref(false)
+/** 提权目标用户（"root"=常规提权；null=未提权） */
+const elevatedUser = ref<string | null>(null)
 const elevating = ref(false)
 const sudoPasswordInput = ref("")
+/** 切换用户提权弹窗的输入 */
+const elevateUserInput = ref("")
+const elevateUserPwdInput = ref("")
 
 watch(
   () => props.sid,
   () => {
     elevated.value = false
+    elevatedUser.value = null
   },
 )
 
-/** 提权 / 还原都是重建会话：成功后刷新列表；需要 sudo 密码时弹输入框重试 */
-async function setElevated(next: boolean, password?: string) {
+/** 提权目标用户名（用于徽标/提示文案） */
+const elevatedUserName = computed(() => elevatedUser.value || "root")
+
+/** 提权按钮 Tooltip：未提权说明用途，提权后说明当前身份与还原入口 */
+const elevatedTitle = computed(() =>
+  elevated.value
+    ? t("sftp.elevate.restoreTip", { user: elevatedUserName.value })
+    : t("sftp.elevate.title"),
+)
+
+/** 提权徽标文案：root 显示固定徽标，切用户显示用户名 */
+const elevatedBadgeLabel = computed(() =>
+  elevated.value && elevatedUser.value !== "root"
+    ? `sudo ${elevatedUserName.value}`
+    : t("sftp.elevate.badge"),
+)
+
+const elevatedBadgeTip = computed(() =>
+  elevated.value && elevatedUser.value !== "root"
+    ? t("sftp.elevate.badgeTipUser", { user: elevatedUserName.value })
+    : t("sftp.elevate.badgeTip"),
+)
+
+/** 提权 / 还原都是重建会话：成功后刷新列表；需要 sudo 密码时弹输入框重试。
+ *  user 非空 = 切换到指定用户提权（sudo -u）。 */
+async function setElevated(next: boolean, password?: string, user?: string) {
   if (!props.sid || elevating.value) return
   if (props.hostId == null) {
     message.error(t("sftp.elevate.noHost"))
@@ -435,14 +466,20 @@ async function setElevated(next: boolean, password?: string) {
       hostId: props.hostId,
       elevated: next,
       password,
+      user,
     })
     elevated.value = next
-    message.success(next ? t("sftp.elevate.on") : t("sftp.elevate.off"))
+    elevatedUser.value = next ? (user?.trim() || "root") : null
+    if (next && elevatedUser.value !== "root") {
+      message.success(t("sftp.elevate.onAsUser", { user: elevatedUser.value }))
+    } else {
+      message.success(next ? t("sftp.elevate.on") : t("sftp.elevate.off"))
+    }
     await load()
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e)
-    if (/ELEVATE_PASSWORD_REQUIRED|incorrect password/i.test(msg)) {
-      askSudoPassword(next, msg)
+    if (/ELEVATE_PASSWORD_REQUIRED|incorrect password|password is required/i.test(msg)) {
+      askSudoPassword(next, msg, user)
     } else {
       message.error(t("sftp.elevate.failed", { error: msg }))
     }
@@ -453,6 +490,61 @@ async function setElevated(next: boolean, password?: string) {
 
 function toggleElevate() {
   void setElevated(!elevated.value)
+}
+
+/** 提权下拉：root 提权保持一键直达，切换用户走弹窗收集 */
+const elevateMenuOptions = computed(() => [
+  { key: "root", label: t("sftp.elevate.asRoot") },
+  { key: "user", label: t("sftp.elevate.asUser") },
+])
+
+function onElevateMenuSelect(key: string | number) {
+  if (key === "user") void promptElevateUser()
+  else void setElevated(true)
+}
+
+/** 弹窗收集目标用户 + sudo 密码（密码可空，空则尝试 NOPASSWD） */
+function promptElevateUser(): Promise<void> {
+  elevateUserInput.value = ""
+  elevateUserPwdInput.value = ""
+  return new Promise((resolve) => {
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    dialog.warning({
+      title: t("sftp.elevate.userTitle"),
+      content: () =>
+        h("div", { class: "sudo-pwd-dialog" }, [
+          h(NInput, {
+            value: elevateUserInput.value,
+            "onUpdate:value": (v: string) => (elevateUserInput.value = v),
+            placeholder: t("sftp.elevate.userPlaceholder"),
+            autofocus: true,
+          }),
+          h(NInput, {
+            value: elevateUserPwdInput.value,
+            "onUpdate:value": (v: string) => (elevateUserPwdInput.value = v),
+            type: "password",
+            showPasswordOn: "click",
+            placeholder: t("sftp.elevate.userPasswordPlaceholder"),
+            style: { marginTop: "8px" },
+          }),
+        ]),
+      positiveText: t("common.confirm"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => {
+        const u = elevateUserInput.value.trim()
+        if (!u) return false
+        void setElevated(true, elevateUserPwdInput.value || undefined, u)
+        done()
+      },
+      onNegativeClick: () => done(),
+      onClose: () => done(),
+    })
+  })
 }
 
 /** 弹窗收集 sudo 密码：确认 resolve 密码，取消/关闭 resolve null */
@@ -503,10 +595,10 @@ function promptSudoPassword(errMsg: string): Promise<string | null> {
   })
 }
 
-/** 提权 / 还原流程弹窗：收集 sudo 密码后带密码重试 */
-async function askSudoPassword(next: boolean, errMsg: string) {
+/** 提权 / 还原流程弹窗：收集 sudo 密码后带密码重试（保持原目标用户） */
+async function askSudoPassword(next: boolean, errMsg: string, user?: string) {
   const pwd = await promptSudoPassword(errMsg)
-  if (pwd) void setElevated(next, pwd)
+  if (pwd) void setElevated(next, pwd, user)
 }
 
 /* ---------- data loading ---------- */
@@ -2870,10 +2962,10 @@ function openInStandaloneWindow() {
                 <template #icon>
                   <NIcon :size="12"><RiShieldCheckLine /></NIcon>
                 </template>
-                {{ t("sftp.elevate.badge") }}
+                {{ elevatedBadgeLabel }}
               </NTag>
             </template>
-            {{ t("sftp.elevate.badgeTip") }}
+            {{ elevatedBadgeTip }}
           </NTooltip>
         </div>
         <NSpace :size="6" align="center" :wrap="false">
@@ -3175,14 +3267,31 @@ function openInStandaloneWindow() {
                 :type="elevated ? 'warning' : 'default'"
                 :loading="elevating"
                 :disabled="!props.sid"
-                :title="t('sftp.elevate.title')"
+                :title="elevatedTitle"
                 @click="toggleElevate"
               >
                 <template #icon>
                   <NIcon><RiShieldCheckLine /></NIcon>
                 </template>
-                {{ t("sftp.elevate.button") }}
+                {{ elevated ? t("sftp.elevate.restore") : t("sftp.elevate.button") }}
               </NButton>
+              <NDropdown
+                v-if="!elevated"
+                trigger="click"
+                :options="elevateMenuOptions"
+                @select="onElevateMenuSelect"
+              >
+                <NButton
+                  size="small"
+                  secondary
+                  :disabled="!props.sid || elevating"
+                  :title="t('sftp.elevate.asUserTitle')"
+                >
+                  <template #icon>
+                    <NIcon><RiArrowDownSLine /></NIcon>
+                  </template>
+                </NButton>
+              </NDropdown>
               <input
                 ref="folderInputRef"
                 type="file"

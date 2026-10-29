@@ -70,10 +70,12 @@ pub struct ElevateReq {
     pub elevated: bool,
     /// 手动输入的 sudo 密码；缺省回退主机密码（NOPASSWD 时两者都不需要）
     pub password: Option<String>,
+    /// 提权目标用户（sudo -u）；缺省/空/root = root
+    pub user: Option<String>,
 }
 
 /// 临时提权 / 还原：重建 sid 关联的 SFTP 会话。
-/// 提权 = exec `sudo <sftp-server>`（root 身份），还原 = 普通 sftp 子系统。
+/// 提权 = exec `sudo [-u 用户] <sftp-server>`，还原 = 普通 sftp 子系统。
 /// 注意会中断该 sid 上进行中的传输。
 pub async fn elevate(
     State(state): State<AppState>,
@@ -97,7 +99,7 @@ pub async fn elevate(
         }
     };
     match session
-        .open_sftp_elevated(&req.sid, sudo_password.as_deref())
+        .open_sftp_elevated(&req.sid, sudo_password.as_deref(), req.user.as_deref())
         .await
     {
         // 需要密码且无可用的（主机密钥登录 / 未输入）：转 400 让前端弹输入框

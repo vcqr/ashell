@@ -1366,13 +1366,19 @@ async fn run_terminal(
         let warm_sid = sid.to_string();
         let warm_password = sudo_password.clone();
         tokio::spawn(async move {
+            // 先取提权目标用户：open_sftp 会清掉映射，恢复须在清除前捕获
+            let elevate_user = ssh_svc::get_sftp_elevate_user(&warm_sid).await;
             if let Err(e) = warm_session.open_sftp(&warm_sid).await {
                 log::warn!("open sftp for sid={warm_sid} failed: {e}");
             }
             if sftp_was_elevated {
                 let re_elevate = tokio::time::timeout(
                     SFTP_RE_ELEVATE_TIMEOUT,
-                    warm_session.open_sftp_elevated(&warm_sid, warm_password.as_deref()),
+                    warm_session.open_sftp_elevated(
+                        &warm_sid,
+                        warm_password.as_deref(),
+                        elevate_user.as_deref(),
+                    ),
                 )
                 .await;
                 match re_elevate {
