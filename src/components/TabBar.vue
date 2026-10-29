@@ -17,7 +17,7 @@ import {
   RiShutDownLine,
   RiTerminalBoxLine,
 } from '@remixicon/vue'
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { saveTextFile } from '@/utils/fileInterop'
 import { useI18n } from 'vue-i18n'
 import {
@@ -237,8 +237,28 @@ function onItemClick(e: MouseEvent, key: string) {
     e.stopPropagation()
     return
   }
+  if (key !== props.activeKey) pointerActivated.value = true
   emit('update:active-key', key)
 }
+
+/* 激活态形变动画（胶囊 → 连通面板）只跟随指针点击：键盘快捷键、恢复会话等
+   程序化切换跳过过渡，避免快速循环切标签时面板反复伸缩。 */
+const pointerActivated = ref(false)
+watch(
+  () => props.activeKey,
+  () => {
+    if (pointerActivated.value) {
+      pointerActivated.value = false
+      return
+    }
+    const strip = scrollEl.value
+    if (!strip) return
+    strip.classList.add('anim-off')
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => strip.classList.remove('anim-off'))
+    })
+  },
+)
 
 /* ---- Right-click context menu ---- */
 const ctxMenuShow = ref(false)
@@ -652,7 +672,7 @@ onBeforeUnmount(() => {
             tab.color
               ? ({
                   '--tab-color': tab.color,
-                  '--tab-color-bg': `color-mix(in srgb, ${tab.color} 18%, transparent)`,
+                  '--tab-color-bg': `color-mix(in srgb, ${tab.color} 12%, transparent)`,
                 } as Record<string, string>)
               : undefined
           "
@@ -735,7 +755,7 @@ onBeforeUnmount(() => {
     >
       <NButton text size="small" class="add-tab-btn">
         <template #icon>
-          <NIcon :size="18"><RiAddLine /></NIcon>
+          <NIcon :size="16"><RiAddLine /></NIcon>
         </template>
       </NButton>
     </NDropdown>
@@ -763,7 +783,7 @@ onBeforeUnmount(() => {
           ...(preview.color
             ? {
                 '--tab-color': preview.color,
-                '--tab-color-bg': `color-mix(in srgb, ${preview.color} 18%, transparent)`,
+                '--tab-color-bg': `color-mix(in srgb, ${preview.color} 12%, transparent)`,
               }
             : {}),
         }"
@@ -775,11 +795,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 标签条：无内边距、拉伸铺满头部内容区；+1px 让激活标签的连通面板
+   盖过头部下边框，与终端区无缝衔接（滚动容器不裁这 1px） */
 .tab-bar {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 0;
+  align-items: stretch;
+  gap: 2px;
   width: 100%;
   min-width: 0;
 }
@@ -787,9 +808,10 @@ onBeforeUnmount(() => {
 .tab-strip {
   flex: 1;
   min-width: 0;
+  height: calc(100% + 1px);
   display: flex;
-  align-items: center;
-  gap: 0;
+  align-items: stretch;
+  gap: 2px;
   overflow-x: auto;
   overflow-y: hidden;
   flex-wrap: nowrap;
@@ -804,44 +826,93 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
   padding: 0 12px;
-  margin: 0 2px;
-  border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
   color: var(--ashell-text-muted);
-  background: transparent;
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease,
-    transform 0.15s ease;
+  transition: color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
   position: relative;
-  flex: 0 0 auto;
-  max-width: 200px;
-  min-width: 90px;
+  z-index: 0;
+  flex: 0 1 auto;
+  max-width: 190px;
+  min-width: 0;
   white-space: nowrap;
   touch-action: none;
   --tab-bg: transparent;
 }
 
+/* 两态形变的统一视觉层：悬停 = 胶囊浮起，激活 = 直角连通面板（中性微亮底，
+   标签色只出现在顶部彩条——低透明度的彩色大面积铺底会发闷）；::before 是
+   激活标签顶部通宽彩条。::after 的 z-index: -1 依赖 .tab-item 的 z-index: 0
+   建立层叠上下文，否则会沉到头部背景之后 */
+.tab-item::after {
+  content: '';
+  position: absolute;
+  inset: 6px 0;
+  border-radius: 8px;
+  background: transparent;
+  z-index: -1;
+  /* 两态间只有 top/bottom 变化（6px → 0），显式长手属性保证 WKWebView 稳定过渡 */
+  transition: top 0.16s ease, bottom 0.16s ease, border-radius 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.tab-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
+  transition: background-color 0.16s ease;
+}
+
 .tab-item:hover {
-  background: var(--hover-bg, var(--ashell-hover));
   color: var(--ashell-text);
   --tab-bg: var(--hover-bg, var(--ashell-hover));
 }
 
+.tab-item:hover::after {
+  background: var(--hover-bg, var(--ashell-hover));
+}
+
 .tab-item.active {
   color: var(--ashell-text-strong);
-  background: var(--tab-color-bg, var(--ashell-active));
-  box-shadow: inset 0 -2px 0 var(--tab-color, var(--ashell-primary));
-  --tab-bg: var(--tab-color-bg, var(--ashell-active));
+  /* 连通面板 = 标签色向白混成粉彩后，纵向渐变铺底（顶部浓、向下渐隐）：
+     玻璃受光的透感，同时消除彩条与面板之间的明度断层。悬停胶囊保持中性 */
+  --panel-tint: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--tab-color, var(--ashell-primary)) 55%, white) 26%,
+    transparent
+  );
+  --panel-bg: linear-gradient(
+    180deg,
+    var(--panel-tint) 0%,
+    color-mix(in srgb, var(--panel-tint) 45%, transparent) 100%
+  );
+  --tab-bg: var(--panel-tint);
+}
+
+.tab-item.active::after {
+  inset: 0;
+  border-radius: 0;
+  background: var(--panel-bg);
+}
+
+.tab-item.active::before {
+  background: var(--tab-color, var(--ashell-primary));
 }
 
 .tab-item.is-dragging {
   opacity: 0.35;
   filter: grayscale(0.4);
   transform: scale(0.97);
+}
+
+.tab-item.is-dragging::after {
   background: var(--ashell-hover);
 }
 
@@ -849,13 +920,26 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 
-/* Slot between two tabs. Always present (so a thin separator can render);
- * becomes a glowing insertion bar while dragging.
- * Wrapper handles spacing/hit-testing; ::after draws the visible line. */
+/* 键盘/程序化切换激活标签时禁用形变（见 script 中 anim-off 的挂载逻辑） */
+.tab-strip.anim-off .tab-item::after,
+.tab-strip.anim-off .tab-item::before {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-item::after,
+  .tab-item::before {
+    transition: none;
+  }
+}
+
+/* 拖拽插入位指示条：平时不可见、宽度为 0 不占布局，
+ * 仅在拖拽排序时出现在目标插入位（::after 悬浮绘制，不受宽度限制） */
 .insert-marker {
   flex: 0 0 auto;
-  width: 6px;
+  width: 0;
   height: 26px;
+  align-self: center;
   position: relative;
   pointer-events: none;
 }
@@ -866,34 +950,18 @@ onBeforeUnmount(() => {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%) scaleY(0.62);
-  width: 1px;
-  height: 16px;
+  width: 3px;
+  height: 26px;
   border-radius: 2px;
-  background: var(--ashell-border, rgba(127, 127, 127, 0.28));
-  box-shadow: none;
-  transition: width 0.12s ease, height 0.12s ease, background 0.12s ease,
-    box-shadow 0.12s ease, opacity 0.12s ease, transform 0.12s ease;
-}
-
-/* Hide separator at the strip ends and next to hover/active/dragging tabs. */
-.insert-marker:first-child::after,
-.insert-marker:last-child::after,
-.tab-item:hover + .insert-marker::after,
-.tab-item.active + .insert-marker::after,
-.tab-item.is-dragging + .insert-marker::after,
-.insert-marker:has(+ .tab-item:hover)::after,
-.insert-marker:has(+ .tab-item.active)::after,
-.insert-marker:has(+ .tab-item.is-dragging)::after {
+  background: var(--ashell-primary);
+  box-shadow: 0 0 8px var(--ashell-primary);
   opacity: 0;
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
 /* Active insertion bar during drag. */
 .insert-marker.visible::after {
-  opacity: 1 !important;
-  width: 3px;
-  height: 26px;
-  background: var(--ashell-primary);
-  box-shadow: 0 0 8px var(--ashell-primary);
+  opacity: 1;
   transform: translate(-50%, -50%) scaleY(1);
 }
 
@@ -998,8 +1066,9 @@ onBeforeUnmount(() => {
 
 .add-tab-btn {
   color: var(--ashell-text-subtle);
-  margin-left: 4px;
+  margin-left: 2px;
   flex-shrink: 0;
+  align-self: center;
 }
 
 .add-tab-btn:hover {

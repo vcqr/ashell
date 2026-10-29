@@ -115,11 +115,7 @@ async function toggleMaximize() {
   gap: 8px;
   position: relative;
   z-index: 10;
-  background: linear-gradient(
-    180deg,
-    var(--ashell-header-start) 0%,
-    var(--ashell-header-end) 100%
-  );
+  background: var(--ashell-bg);
   border-bottom: 1px solid var(--ashell-border);
 }
 

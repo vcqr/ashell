@@ -37,7 +37,7 @@ body.window-rounded::after {
 }
 
 :root {
-  --ashell-header-h: 44px;
+  --ashell-header-h: 40px;
   --ashell-activity-w: 0px;
   --ashell-bg-alpha: 1;
   --ashell-wallpaper-opacity: 1;
@@ -46,8 +46,6 @@ body.window-rounded::after {
   --ashell-terminal-bg: var(--ashell-bg);
   --ashell-panel-bg: rgba(19, 22, 28, var(--ashell-bg-alpha));
   --ashell-panel-bg-soft: rgba(28, 32, 39, var(--ashell-bg-alpha));
-  --ashell-header-start: rgba(26, 30, 38, var(--ashell-bg-alpha));
-  --ashell-header-end: rgba(19, 22, 28, var(--ashell-bg-alpha));
   --ashell-border: rgba(255, 255, 255, 0.08);
   --ashell-border-soft: rgba(255, 255, 255, 0.06);
   --ashell-text: rgba(255, 255, 255, 0.92);
@@ -75,8 +73,6 @@ body.window-rounded::after {
   --ashell-bg-solid: #f4f6fb;
   --ashell-panel-bg: rgba(255, 255, 255, var(--ashell-bg-alpha));
   --ashell-panel-bg-soft: rgba(243, 245, 250, var(--ashell-bg-alpha));
-  --ashell-header-start: rgba(255, 255, 255, var(--ashell-bg-alpha));
-  --ashell-header-end: rgba(244, 246, 251, var(--ashell-bg-alpha));
   --ashell-border: rgba(20, 24, 33, 0.12);
   --ashell-border-soft: rgba(20, 24, 33, 0.08);
   --ashell-text: rgba(20, 24, 33, 0.86);

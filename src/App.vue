@@ -549,16 +549,16 @@ if (!isTauri) {
                 <NButton
                   quaternary
                   circle
+                  size="small"
                   class="collapse-btn"
                   data-tauri-drag-region="false"
                   :title="hostsOpen ? t('app.hideHosts') : t('app.showHosts')"
                   @click="hostsOpen = !hostsOpen"
                 >
                   <template #icon>
-                    <NIcon :size="18"><RiMenuLine /></NIcon>
+                    <NIcon :size="16"><RiMenuLine /></NIcon>
                   </template>
                 </NButton>
-                <div class="header-divider" />
                 <div class="tabs-wrap" data-tauri-drag-region="false">
                   <TabBar
                     :tabs="tabs"
@@ -595,11 +595,12 @@ if (!isTauri) {
                       <NButton
                         circle
                         quaternary
+                        size="small"
                         :type="activityBarVisible ? 'primary' : 'default'"
                         @click="activityBarVisible = !activityBarVisible"
                       >
                         <template #icon>
-                          <NIcon :size="18"><RiSideBarLine /></NIcon>
+                          <NIcon :size="16"><RiSideBarLine /></NIcon>
                         </template>
                       </NButton>
                     </template>
@@ -607,9 +608,9 @@ if (!isTauri) {
                   </NTooltip>
                   <NTooltip>
                     <template #trigger>
-                      <NButton circle quaternary @click="settingsOpen = true">
+                      <NButton circle quaternary size="small" @click="settingsOpen = true">
                         <template #icon>
-                          <NIcon :size="18"><RiSettings2Line /></NIcon>
+                          <NIcon :size="16"><RiSettings2Line /></NIcon>
                         </template>
                       </NButton>
                     </template>
@@ -821,6 +822,8 @@ if (!isTauri) {
   pointer-events: none;
 }
 
+/* 头部与终端内容区同色（--ashell-bg）：激活标签的连通面板需要与下方
+   画布无缝衔接，渐变分隔的"色带感"已随标签栏重构一并移除 */
 .app-header {
   height: var(--ashell-header-h);
   display: flex;
@@ -828,12 +831,7 @@ if (!isTauri) {
   padding: 0 12px;
   gap: 8px;
   position: relative;
-  z-index: 1;
-  background: linear-gradient(
-    180deg,
-    var(--ashell-header-start) 0%,
-    var(--ashell-header-end) 100%
-  );
+  background: var(--ashell-bg);
   border-bottom: 1px solid var(--ashell-border);
   z-index: 10;
 }
@@ -873,20 +871,12 @@ if (!isTauri) {
   letter-spacing: 0.5px;
 }
 
-.header-divider {
-  width: 1px;
-  height: 20px;
-  background: var(--ashell-border);
-  flex-shrink: 0;
-  margin: 0 4px;
-}
-
 .tabs-wrap {
   flex: 0 1 auto;
   min-width: 0;
+  align-self: stretch;
   display: flex;
-  align-items: center;
-  overflow: hidden;
+  align-items: stretch;
 }
 
 .drag-spacer {
