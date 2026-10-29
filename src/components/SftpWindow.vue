@@ -22,6 +22,7 @@ const hostName = launch.get("title") ?? undefined
 const hostAddr = launch.get("addr") ?? undefined
 const hostIdRaw = launch.get("hostId")
 const hostId = hostIdRaw ? Number(hostIdRaw) : null
+const isBastion = launch.get("bastion") === "1"
 
 const isMac = detectMac()
 
@@ -68,6 +69,7 @@ async function toggleMaximize() {
       :host-name="hostName"
       :host-addr="hostAddr"
       :host-id="Number.isFinite(hostId) ? hostId : null"
+      :bastion="isBastion"
     />
   </div>
 </template>

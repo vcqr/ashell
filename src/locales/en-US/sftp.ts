@@ -99,6 +99,7 @@ export default {
     off: "Restored to a normal SFTP session",
     failed: "Operation failed: {error}",
     noHost: "Associated host info is missing; cannot proceed",
+    bastionDisabled: "Bastion sessions do not support SFTP elevation or user switching",
     passwordTitle: "Sudo password required",
     passwordPlaceholder: "Enter the sudo password of the remote user",
     sudoPrompt: "This operation needs the sudo password in the elevated/switched session",

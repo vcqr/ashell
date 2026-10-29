@@ -94,6 +94,7 @@ export default {
     off: "已还原为普通 SFTP 会话",
     failed: "操作失败：{error}",
     noHost: "缺少关联主机信息，无法操作",
+    bastionDisabled: "堡垒机会话不支持 SFTP 提权与用户切换",
     passwordTitle: "需要 sudo 密码",
     passwordPlaceholder: "输入远端当前用户的 sudo 密码",
     sudoPrompt: "提权/切换用户会话下执行此操作需要 sudo 密码",

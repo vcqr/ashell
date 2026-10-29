@@ -81,6 +81,7 @@ import {
 } from "@/api/sftp"
 import { useI18n } from "vue-i18n"
 import { useSftpStore } from "@/stores/sftp"
+import { useHostStore } from "@/stores/hosts"
 import { useStartupStore } from "@/stores/startup"
 import type { OsDropEntry, OsDropFolder, SftpFile, TransferTask } from "@/types"
 import { humanSize } from "@/utils/humanSize"
@@ -115,6 +116,9 @@ interface Props {
   hostAddr?: string
   /** 关联主机 id（提权时后端凭此取主机密码作为 sudo 密码回退） */
   hostId?: number | null
+  /** 堡垒机（交互网关）模式：事前置灰提权/切换用户（exec 够不到目标机）。
+   *  缺省时回退按 hostId 从主机 store 查（独立窗口 store 为空，由 URL 传入） */
+  bastion?: boolean
   /** 绑定终端上报的工作目录（OSC 9;9 / OSC 7）：目录跟随开启时远程栏随之跳转 */
   cwd?: string
   /** 独立窗口模式：面板铺满窗口、无宽度拖拽，关闭按钮直接关窗口 */
@@ -429,6 +433,15 @@ watch(
     elevatedUser.value = null
   },
 )
+
+/** 堡垒机会话：提权/切换用户在服务端必被拒绝（sudo 够不到目标机），
+ *  这里事前置灰按钮。优先取显式 prop（独立窗口经 URL 传入），缺省查主机 store */
+const hostStore = useHostStore()
+const bastionMode = computed(() => {
+  if (props.bastion != null) return props.bastion
+  if (props.hostId == null) return false
+  return hostStore.hosts.find((h) => h.id === props.hostId)?.bastion === true
+})
 
 /** 会话当前身份名（用于徽标/提示文案） */
 const elevatedUserName = computed(() => elevatedUser.value || "root")
@@ -2971,6 +2984,7 @@ function openInStandaloneWindow() {
     title: props.hostName ?? "SFTP",
     addr: props.hostAddr,
     hostId: props.hostId,
+    bastion: bastionMode.value || undefined,
   })
   emit("update:open", false)
 }
@@ -3328,8 +3342,8 @@ function openInStandaloneWindow() {
                 secondary
                 :type="elevated ? 'warning' : 'default'"
                 :loading="elevating"
-                :disabled="!props.sid"
-                :title="elevatedTitle"
+                :disabled="!props.sid || bastionMode"
+                :title="bastionMode ? t('sftp.elevate.bastionDisabled') : elevatedTitle"
                 @click="toggleElevate"
               >
                 <template #icon>
@@ -3345,8 +3359,12 @@ function openInStandaloneWindow() {
                 <NButton
                   size="small"
                   secondary
-                  :disabled="!props.sid || elevating"
-                  :title="t('sftp.elevate.asUserTitle')"
+                  :disabled="!props.sid || elevating || bastionMode"
+                  :title="
+                    bastionMode
+                      ? t('sftp.elevate.bastionDisabled')
+                      : t('sftp.elevate.asUserTitle')
+                  "
                 >
                   <template #icon>
                     <NIcon><RiArrowDownSLine /></NIcon>

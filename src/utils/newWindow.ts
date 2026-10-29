@@ -73,6 +73,8 @@ export interface OpenSftpWindowOptions {
   addr?: string
   /** 关联主机 id（SFTP 面板"提权"等需要主机凭证上下文的功能依赖它） */
   hostId?: number | null
+  /** 堡垒机（交互网关）模式：独立窗口内置灰提权/切换用户（store 为空须显式传入） */
+  bastion?: boolean
 }
 
 /**
@@ -94,6 +96,7 @@ export async function openSftpInNewWindow(opts: OpenSftpWindowOptions): Promise<
   params.set("sid", opts.sid)
   if (opts.addr) params.set("addr", opts.addr)
   if (opts.hostId != null) params.set("hostId", String(opts.hostId))
+  if (opts.bastion) params.set("bastion", "1")
   params.set("title", opts.title)
   const url = `${base}?${params.toString()}`
 
