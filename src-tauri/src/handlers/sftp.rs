@@ -72,6 +72,9 @@ pub struct ElevateReq {
     pub password: Option<String>,
     /// 提权目标用户（sudo -u）；缺省/空/root = root
     pub user: Option<String>,
+    /// 手动指定的远端 sftp-server 路径；缺省走自动探测（探测失败时前端
+    /// 弹窗让用户填写非标准路径）
+    pub sftp_server_path: Option<String>,
 }
 
 /// 临时提权 / 还原：重建 sid 关联的 SFTP 会话。
@@ -99,7 +102,12 @@ pub async fn elevate(
         }
     };
     match session
-        .open_sftp_elevated(&req.sid, sudo_password.as_deref(), req.user.as_deref())
+        .open_sftp_elevated(
+            &req.sid,
+            sudo_password.as_deref(),
+            req.user.as_deref(),
+            req.sftp_server_path.as_deref(),
+        )
         .await
     {
         // 需要密码且无可用的（主机密钥登录 / 未输入）：转 400 让前端弹输入框

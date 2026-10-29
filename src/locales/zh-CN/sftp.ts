@@ -82,6 +82,8 @@ export default {
     userTitle: "切换用户提权",
     userPlaceholder: "目标用户名（如 www-data）",
     userPasswordPlaceholder: "sudo 密码（留空尝试免密）",
+    pathTitle: "需要 sftp-server 路径",
+    pathPlaceholder: "远端 sftp-server 路径（如 /usr/lib/openssh/sftp-server）",
     badge: "sudo root",
     badgeTip: "当前 SFTP 会话已通过 sudo 提权，所有操作以 root 身份执行",
     badgeTipUser: "当前 SFTP 会话已切换到 {user}，所有操作以 {user} 身份执行",

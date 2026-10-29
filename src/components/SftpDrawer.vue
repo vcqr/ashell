@@ -419,6 +419,8 @@ const sudoPasswordInput = ref("")
 /** 切换用户提权弹窗的输入 */
 const elevateUserInput = ref("")
 const elevateUserPwdInput = ref("")
+/** 手动指定 sftp-server 路径弹窗的输入 */
+const sftpPathInput = ref("")
 
 watch(
   () => props.sid,
@@ -451,9 +453,15 @@ const elevatedBadgeTip = computed(() =>
     : t("sftp.elevate.badgeTip"),
 )
 
-/** 提权 / 还原都是重建会话：成功后刷新列表；需要 sudo 密码时弹输入框重试。
- *  user 非空 = 切换到指定用户提权（sudo -u）。 */
-async function setElevated(next: boolean, password?: string, user?: string) {
+/** 提权 / 还原都是重建会话：成功后刷新列表；需要 sudo 密码或探测不到
+ *  sftp-server 时弹窗收集后重试。user 非空 = 切换到指定用户提权（sudo -u）；
+ *  sftpPath 非空 = 手动指定远端 sftp-server 路径（跳过自动探测）。 */
+async function setElevated(
+  next: boolean,
+  password?: string,
+  user?: string,
+  sftpPath?: string,
+) {
   if (!props.sid || elevating.value) return
   if (props.hostId == null) {
     message.error(t("sftp.elevate.noHost"))
@@ -467,6 +475,7 @@ async function setElevated(next: boolean, password?: string, user?: string) {
       elevated: next,
       password,
       user,
+      sftpServerPath: sftpPath,
     })
     elevated.value = next
     elevatedUser.value = next ? (user?.trim() || "root") : null
@@ -478,7 +487,10 @@ async function setElevated(next: boolean, password?: string, user?: string) {
     await load()
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e)
-    if (/ELEVATE_PASSWORD_REQUIRED|incorrect password|password is required/i.test(msg)) {
+    if (/binary not found/i.test(msg)) {
+      // 自动探测失败：非标准安装位置可手动填写路径重试
+      void promptSftpServerPath(msg, { next, password, user })
+    } else if (/ELEVATE_PASSWORD_REQUIRED|incorrect password|password is required/i.test(msg)) {
       askSudoPassword(next, msg, user)
     } else {
       message.error(t("sftp.elevate.failed", { error: msg }))
@@ -539,6 +551,57 @@ function promptElevateUser(): Promise<void> {
         const u = elevateUserInput.value.trim()
         if (!u) return false
         void setElevated(true, elevateUserPwdInput.value || undefined, u)
+        done()
+      },
+      onNegativeClick: () => done(),
+      onClose: () => done(),
+    })
+  })
+}
+
+/** 探测不到 sftp-server 时弹窗手动填写路径（非标准安装位置），确认后带路径重试 */
+function promptSftpServerPath(
+  errMsg: string,
+  ctx: { next: boolean; password?: string; user?: string },
+): Promise<void> {
+  sftpPathInput.value = ""
+  return new Promise((resolve) => {
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    dialog.warning({
+      title: t("sftp.elevate.pathTitle"),
+      content: () =>
+        h("div", { class: "sudo-pwd-dialog" }, [
+          h(
+            "p",
+            {
+              class: "sudo-pwd-err",
+              style: {
+                margin: "0 0 8px",
+                fontSize: "12px",
+                color: "var(--ashell-text-3, #999)",
+                wordBreak: "break-all",
+              },
+            },
+            errMsg,
+          ),
+          h(NInput, {
+            value: sftpPathInput.value,
+            "onUpdate:value": (v: string) => (sftpPathInput.value = v),
+            placeholder: t("sftp.elevate.pathPlaceholder"),
+            autofocus: true,
+          }),
+        ]),
+      positiveText: t("common.confirm"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: () => {
+        const p = sftpPathInput.value.trim()
+        if (!p) return false
+        void setElevated(ctx.next, ctx.password, ctx.user, p)
         done()
       },
       onNegativeClick: () => done(),

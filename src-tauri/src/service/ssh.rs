@@ -49,13 +49,28 @@ static SUDO_PASSWORD_MAP: Lazy<RwLock<HashMap<String, String>>> =
 static SFTP_ELEVATE_USER_MAP: Lazy<RwLock<HashMap<String, String>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// 远端 sftp-server 二进制路径探测（POSIX sh，BusyBox 兼容）。
-/// 优先 PATH 内 `command -v`，再测各发行版常见固定路径；找不到 exit 3。
+/// 远端 sftp-server 二进制路径探测（POSIX sh，BusyBox 兼容）。依次：
+/// 1. PATH 内 `command -v`；2. 各发行版常见固定路径；3. sshd_config 的
+/// `Subsystem sftp` 显式路径（internal-sftp 关键字除外——该形态无独立二进制，
+/// 本身无法 sudo 提权）；4. 常见前缀下的 find 兜底（NixOS / 自编译等非标准布局）。
+/// 找不到 exit 3。
+///
+/// 整段脚本必须经 `sh -c` 执行：sshd 会用登录用户的 shell 跑 exec 命令，
+/// fish/csh 等非 POSIX shell 会直接语法报错（原脚本裸发时实测触发
+/// "sftp-server binary not found"），包一层后与登录 shell 无关。
 const SFTP_SERVER_DETECT: &str = "p=$(command -v sftp-server 2>/dev/null); \
     [ -z \"$p\" ] && p=$(ls /usr/lib/openssh/sftp-server /usr/libexec/openssh/sftp-server \
 /usr/lib/ssh/sftp-server /usr/lib/sftp-server /usr/libexec/sftp-server \
 /usr/local/libexec/sftp-server /usr/local/lib/openssh/sftp-server \
+/usr/lib/misc/sftp-server /usr/lib64/misc/sftp-server \
 /opt/homebrew/libexec/sftp-server /usr/local/sbin/sftp-server 2>/dev/null | head -n 1); \
+    [ -n \"$p\" ] && [ -x \"$p\" ] && echo \"$p\" && exit 0; \
+    p=$(awk '$1 == \"Subsystem\" && $2 == \"sftp\" { print $3; exit }' \
+/etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null); \
+    case \"$p\" in internal-sftp|\"\") p=\"\" ;; esac; \
+    [ -n \"$p\" ] && [ -x \"$p\" ] && echo \"$p\" && exit 0; \
+    p=$(find /usr /opt /lib /lib64 /nix/store -maxdepth 5 -type f \
+-name sftp-server 2>/dev/null | head -n 1); \
     [ -n \"$p\" ] && [ -x \"$p\" ] && echo \"$p\" && exit 0; exit 3";
 
 /// sftp subsystem 应答 + INIT 握手的硬超时。必须给足余量：GateShell 等堡垒机
@@ -918,27 +933,41 @@ impl Session {
     /// channel stdin/stdout。`user` 非 None/root 时以 `sudo -u <user>` 切换到
     /// 指定用户运行（以该用户身份浏览/操作文件）。
     ///
-    /// 流程：探测远端 sftp-server 二进制路径 -> 探测 NOPASSWD（`sudo -n true`）
-    /// -> 直接 exec，或 `sudo -S -p ''` 启动后从 stdin 喂一行密码。
-    /// sudo 拒绝（密码错 / 不在 sudoers / 目标用户不存在或无权）会在 stderr
-    /// 输出原因并快速退出，据此报错；静默放行即进入 sftp 协议握手。
+    /// 流程：探测远端 sftp-server 二进制路径（`path_override` 非空时直接采用，
+    /// 跳过探测）-> 探测 NOPASSWD（`sudo -n true`）-> 直接 exec，或
+    /// `sudo -S -p ''` 启动后从 stdin 喂一行密码。sudo 拒绝（密码错 / 不在
+    /// sudoers / 目标用户不存在或无权）会在 stderr 输出原因并快速退出，
+    /// 据此报错；静默放行即进入 sftp 协议握手。
     pub async fn open_sftp_elevated(
         &self,
         sid: &str,
         password: Option<&str>,
         user: Option<&str>,
+        path_override: Option<&str>,
     ) -> AppResult<Arc<SftpSession>> {
         let user = user.map(str::trim).filter(|s| !s.is_empty());
-        let detect = self
-            .execute(SFTP_SERVER_DETECT)
-            .await
-            .map_err(|e| AppError::Ssh(format!("elevate detect: {e}")))?;
-        let path = detect.stdout.trim().to_string();
-        if detect.exit_status != 0 || path.is_empty() {
-            return Err(AppError::BadRequest(
-                "sftp-server binary not found on remote host".into(),
-            ));
-        }
+        let path = match path_override.map(str::trim).filter(|p| !p.is_empty()) {
+            Some(p) => p.to_string(),
+            None => {
+                let detect = self
+                    .execute(&format!(
+                        "sh -c {}",
+                        sftp_svc::sh_quote(SFTP_SERVER_DETECT)
+                    ))
+                    .await
+                    .map_err(|e| AppError::Ssh(format!("elevate detect: {e}")))?;
+                let path = detect.stdout.trim().to_string();
+                if detect.exit_status != 0 || path.is_empty() {
+                    return Err(AppError::BadRequest(
+                        "sftp-server binary not found on remote host; \
+                         the host may only support internal-sftp, or the binary \
+                         lives at a non-standard path"
+                            .into(),
+                    ));
+                }
+                path
+            }
+        };
 
         let nopasswd = self
             .execute("sudo -n true 2>/dev/null")

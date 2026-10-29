@@ -62,13 +62,15 @@ export function openSftp(hostId: number, sid?: string): Promise<{ sid: string }>
 
 /** SFTP 临时提权 / 还原：重建 sid 关联的 SFTP 会话（sudo [-u 用户] sftp-server）。
  *  会中断该会话上进行中的传输。后端在"需要 sudo 密码但没有可用密码"时
- *  返回 message 含 ELEVATE_PASSWORD_REQUIRED 的 400。user 缺省/root = root。 */
+ *  返回 message 含 ELEVATE_PASSWORD_REQUIRED 的 400。user 缺省/root = root；
+ *  sftpServerPath 手动指定远端 sftp-server 路径（缺省自动探测）。 */
 export function elevateSftp(opts: {
   sid: string
   hostId: number
   elevated: boolean
   password?: string
   user?: string
+  sftpServerPath?: string
 }): Promise<void> {
   return request<void>("/api/ssh/sftp/elevate", {
     method: "POST",
@@ -78,6 +80,7 @@ export function elevateSftp(opts: {
       elevated: opts.elevated,
       password: opts.password,
       user: opts.user,
+      sftp_server_path: opts.sftpServerPath,
     },
   })
 }

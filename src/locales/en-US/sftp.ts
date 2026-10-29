@@ -86,6 +86,8 @@ export default {
     userTitle: "Elevate as another user",
     userPlaceholder: "Target username (e.g. www-data)",
     userPasswordPlaceholder: "sudo password (leave blank to try NOPASSWD)",
+    pathTitle: "sftp-server path required",
+    pathPlaceholder: "Remote sftp-server path (e.g. /usr/lib/openssh/sftp-server)",
     badge: "sudo root",
     badgeTip: "This SFTP session is elevated via sudo; all operations run as root",
     badgeTipUser:

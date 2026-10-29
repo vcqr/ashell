@@ -1378,6 +1378,7 @@ async fn run_terminal(
                         &warm_sid,
                         warm_password.as_deref(),
                         elevate_user.as_deref(),
+                        None,
                     ),
                 )
                 .await;
