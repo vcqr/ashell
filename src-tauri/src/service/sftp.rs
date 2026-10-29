@@ -107,6 +107,23 @@ async fn read_id_map(sftp: &SftpSession, path: &str) -> HashMap<u32, String> {
     map
 }
 
+/// 状态错误是否为 SSH_FX_NO_SUCH_FILE
+fn is_no_such_file(e: &russh_sftp::client::error::Error) -> bool {
+    matches!(
+        e,
+        russh_sftp::client::error::Error::Status(s)
+            if s.status_code == russh_sftp::protocol::StatusCode::NoSuchFile
+    )
+}
+
+/// 剥离路径首段（堡垒机虚拟主机目录），返回 None 表示无可剥离。
+/// "/主机名/etc" -> "/etc"；单段路径（"/主机名"）无下游可列。
+fn strip_virtual_prefix(path: &str) -> Option<String> {
+    let rest = path.strip_prefix('/')?;
+    let (_, tail) = rest.split_once('/')?;
+    Some(format!("/{tail}"))
+}
+
 /// 列出目录详细信息
 pub async fn list(sid: &str, path: Option<String>) -> AppResult<SftpListResp> {
     let sftp = ssh_svc::get_sftp(sid).await?;
@@ -114,9 +131,16 @@ pub async fn list(sid: &str, path: Option<String>) -> AppResult<SftpListResp> {
         .canonicalize(".")
         .await
         .map_err(|e| sftp_err("canonicalize", e))?;
+    let mut explicit = false;
     if let Some(p) = path {
         if !p.is_empty() {
-            dir_path = p;
+            explicit = true;
+            // 堡垒机（GateShell 类网关）的 sftp 根目录是虚拟主机列表，进入主机
+            // 目录后通道切换为对目标机的透明转发，带虚拟主机前缀的路径
+            // （/主机名/etc）在目标机上并不存在。OpenSSH sftp CLI 的 cd 是先
+            // realpath 再列目录，网关借 realpath 完成路径翻译；这里对齐该行为，
+            // 路径确实不存在时 canonicalize 失败，回退原路径保持报错语义
+            dir_path = sftp.canonicalize(&p).await.unwrap_or(p);
         }
     }
 
@@ -124,10 +148,30 @@ pub async fn list(sid: &str, path: Option<String>) -> AppResult<SftpListResp> {
     let group_map = read_id_map(&sftp, "/etc/group").await;
 
     let mut files = Vec::new();
-    let entries = sftp
-        .read_dir(&dir_path)
-        .await
-        .map_err(|e| sftp_err("read_dir", e))?;
+    let entries = match sftp.read_dir(&dir_path).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            // 网关切到透明转发后对虚拟前缀路径按原样转发：剥离首段（虚拟主机
+            // 目录）重试一次，命中则连路径一起替换，前端后续导航自愈为原生路径。
+            // 仅对显式传入的导航路径兜底，初始 canonicalize(".") 不做
+            let stripped = if explicit {
+                strip_virtual_prefix(&dir_path)
+            } else {
+                None
+            };
+            match stripped {
+                Some(s) if is_no_such_file(&e) => match sftp.read_dir(&s).await {
+                    Ok(entries) => {
+                        log::info!("sftp list: retry without virtual prefix, {dir_path} -> {s}");
+                        dir_path = s;
+                        entries
+                    }
+                    Err(_) => return Err(sftp_err("read_dir", e)),
+                },
+                _ => return Err(sftp_err("read_dir", e)),
+            }
+        }
+    };
 
     for entry in entries {
         let attrs: FileAttributes = entry.metadata();
@@ -455,6 +499,25 @@ pub async fn du_size(sid: &str, path: &str, password: Option<&str>) -> AppResult
 /// 包装也会用到
 pub(crate) fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_virtual_prefix;
+
+    #[test]
+    fn strips_virtual_host_prefix() {
+        assert_eq!(
+            strip_virtual_prefix("/web-01/etc/nginx").as_deref(),
+            Some("/etc/nginx")
+        );
+        // 尾随斜杠：剥离后落到目标机根目录
+        assert_eq!(strip_virtual_prefix("/web-01/").as_deref(), Some("/"));
+        // 单段（主机目录本身）与相对路径无下游可列
+        assert_eq!(strip_virtual_prefix("/web-01"), None);
+        assert_eq!(strip_virtual_prefix("etc/passwd"), None);
+        assert_eq!(strip_virtual_prefix("/"), None);
+    }
 }
 
 /// 压缩包识别：返回匹配到的（后缀, tar 解压压缩字母）；zip 用 "zip" 特殊标记。
