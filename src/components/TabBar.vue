@@ -843,18 +843,20 @@ onBeforeUnmount(() => {
   --tab-bg: transparent;
 }
 
-/* 两态形变的统一视觉层：悬停 = 胶囊浮起，激活 = 直角连通面板（中性微亮底，
-   标签色只出现在顶部彩条——低透明度的彩色大面积铺底会发闷）；::before 是
-   激活标签顶部通宽彩条。::after 的 z-index: -1 依赖 .tab-item 的 z-index: 0
-   建立层叠上下文，否则会沉到头部背景之后 */
+/* 两态形变的统一视觉层：悬停 = 胶囊浮起，激活 = 顶部圆角、上缘留隙的连通面板
+   （中性微亮底，标签色只出现在底部彩条——低透明度的彩色大面积铺底会发闷；
+   彩条贴底也避免最大化时贴屏幕顶边的突兀感，同 VSCode 的底部指示条）；
+   ::before 是激活标签底部通宽彩条。::after 的 z-index: -1 依赖 .tab-item 的
+   z-index: 0 建立层叠上下文，否则会沉到头部背景之后 */
 .tab-item::after {
   content: '';
   position: absolute;
   inset: 6px 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   z-index: -1;
-  /* 两态间只有 top/bottom 变化（6px → 0），显式长手属性保证 WKWebView 稳定过渡 */
+  /* 两态间只有 bottom 变化（6px → 0，上缘同为 6px 不动），显式长手属性保证
+     WKWebView 稳定过渡 */
   transition: top 0.16s ease, bottom 0.16s ease, border-radius 0.16s ease,
     background-color 0.16s ease;
 }
@@ -862,7 +864,7 @@ onBeforeUnmount(() => {
 .tab-item::before {
   content: '';
   position: absolute;
-  top: 0;
+  bottom: 0;
   left: 0;
   right: 0;
   height: 2px;
@@ -881,8 +883,8 @@ onBeforeUnmount(() => {
 
 .tab-item.active {
   color: var(--ashell-text-strong);
-  /* 连通面板 = 标签色向白混成粉彩后，纵向渐变铺底（顶部浓、向下渐隐）：
-     玻璃受光的透感，同时消除彩条与面板之间的明度断层。悬停胶囊保持中性 */
+  /* 连通面板 = 标签色向白混成粉彩后，纵向渐变铺底（底部浓、向上渐隐）：
+     与底部彩条同向渐强，消除彩条与面板之间的明度断层。悬停胶囊保持中性 */
   --panel-tint: color-mix(
     in srgb,
     color-mix(in srgb, var(--tab-color, var(--ashell-primary)) 55%, white) 26%,
@@ -890,22 +892,22 @@ onBeforeUnmount(() => {
   );
   --panel-bg: linear-gradient(
     180deg,
-    var(--panel-tint) 0%,
-    color-mix(in srgb, var(--panel-tint) 45%, transparent) 100%
+    color-mix(in srgb, var(--panel-tint) 45%, transparent) 0%,
+    var(--panel-tint) 100%
   );
   --tab-bg: var(--panel-tint);
 }
 
 .tab-item.active::after {
-  inset: 0;
-  border-radius: 0;
+  inset: 6px 0 0;
+  border-radius: 10px 10px 0 0;
   background: var(--panel-bg);
 }
 
 .tab-item.active::before {
   background: var(--tab-color, var(--ashell-primary));
-  /* 柔光：同色向下渗光，让全饱和彩条与下方玻璃渐变面板自然衔接 */
-  box-shadow: 0 1px 8px 0
+  /* 柔光：同色向上渗光，让全饱和彩条与上方玻璃渐变面板自然衔接 */
+  box-shadow: 0 -1px 8px 0
     color-mix(in srgb, var(--tab-color, var(--ashell-primary)) 40%, transparent);
 }
 
