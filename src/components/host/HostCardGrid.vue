@@ -37,7 +37,7 @@ const { t } = useI18n()
 const hostStore = useHostStore()
 const iconStore = useIconStore()
 
-const DEFAULT_COLOR = "#7c5cff"
+const DEFAULT_COLOR = "#6d5ae8"
 
 const nodes = computed(() => props.hosts)
 
@@ -151,7 +151,7 @@ function onMousedown(e: MouseEvent) {
         <span v-if="node.protocol && node.protocol !== 'ssh'" class="host-proto">
           {{ node.protocol }}
         </span>
-        <NIcon v-if="isPinned(node) && !batchMode" :size="12" color="#7c5cff">
+        <NIcon v-if="isPinned(node) && !batchMode" :size="12" color="#6d5ae8">
           <RiPushpinFill />
         </NIcon>
         <NCheckbox

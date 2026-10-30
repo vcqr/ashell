@@ -670,7 +670,7 @@ const canSave = computed(
 
 .editor-host :deep(.cm-panel.cm-search input.cm-textfield:focus) {
   border-color: var(--ashell-primary);
-  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.18);
+  box-shadow: 0 0 0 2px rgba(109, 90, 232, 0.18);
 }
 
 .editor-host :deep(.cm-panel.cm-search button.cm-button) {
@@ -722,8 +722,8 @@ const canSave = computed(
 
 /* 搜索/选中匹配高亮 */
 .editor-host :deep(.cm-editor .cm-searchMatch) {
-  background: rgba(124, 92, 255, 0.28);
-  outline: 1px solid rgba(124, 92, 255, 0.35);
+  background: rgba(109, 90, 232, 0.28);
+  outline: 1px solid rgba(109, 90, 232, 0.35);
   border-radius: 2px;
 }
 
@@ -733,7 +733,7 @@ const canSave = computed(
 }
 
 .editor-host :deep(.cm-editor .cm-selectionMatch) {
-  background: rgba(124, 92, 255, 0.18);
+  background: rgba(109, 90, 232, 0.18);
   border-radius: 2px;
 }
 

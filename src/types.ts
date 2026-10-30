@@ -247,7 +247,7 @@ export interface TerminalTab {
   hostKey?: string
   /** host.icon 文件名（来自 ~/.ashell/icons），用于 tab 与树中显示自定义图标 */
   icon?: string | null
-  /** 主机自定义颜色（hex，如 "#7c5cff"），用于 tab 激活态着色 */
+  /** 主机自定义颜色（hex，如 "#6d5ae8"），用于 tab 激活态着色 */
   color?: string | null
   /** 连接状态 */
   status?: 'connecting' | 'connected' | 'closed' | 'error'

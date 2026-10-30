@@ -817,7 +817,7 @@ if (!isTauri) {
 .acrylic-tint-layer {
   position: absolute;
   inset: 0;
-  background: var(--ashell-bg-solid, #0f1115);
+  background: var(--ashell-bg-solid, #131316);
   z-index: 0;
   pointer-events: none;
 }

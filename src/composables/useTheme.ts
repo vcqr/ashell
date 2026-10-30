@@ -8,12 +8,24 @@ export type ResolvedTheme = "dark" | "light";
 
 const THEME_KEY = "ashell:theme-mode";
 
+// 主色按主题分档：暗色用亮档，亮色主题底是白/浅灰，压白字的实心按钮
+// 需要深一档才能过 WCAG AA（4.5:1），浅色下直接沿用亮档只有 ~4.3:1
+const darkPrimaryOverrides = {
+  primaryColor: "#6d5ae8",
+  primaryColorHover: "#8272f0",
+  primaryColorPressed: "#5a47cf",
+  primaryColorSuppl: "#6d5ae8",
+};
+
+const lightPrimaryOverrides = {
+  primaryColor: "#5f4fd9",
+  primaryColorHover: "#6d5ae8",
+  primaryColorPressed: "#5342c2",
+  primaryColorSuppl: "#5f4fd9",
+};
+
 const sharedThemeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: "#7c5cff",
-    primaryColorHover: "#9277ff",
-    primaryColorPressed: "#6a4ae6",
-    primaryColorSuppl: "#7c5cff",
     borderRadius: "8px",
     fontFamily:
       "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -54,15 +66,16 @@ export function useTheme() {
     ...sharedThemeOverrides,
     common: {
       ...sharedThemeOverrides.common,
-      bodyColor: `rgba(15, 17, 21, ${terminalStore.windowOpacity})`,
-      cardColor: `rgba(22, 25, 31, ${terminalStore.windowOpacity})`,
-      modalColor: `rgba(22, 25, 31, ${terminalStore.windowOpacity})`,
-      popoverColor: `rgba(28, 32, 39, ${terminalStore.windowOpacity})`,
+      ...darkPrimaryOverrides,
+      bodyColor: `rgba(19, 19, 22, ${terminalStore.windowOpacity})`,
+      cardColor: `rgba(24, 24, 29, ${terminalStore.windowOpacity})`,
+      modalColor: `rgba(24, 24, 29, ${terminalStore.windowOpacity})`,
+      popoverColor: `rgba(33, 33, 40, ${terminalStore.windowOpacity})`,
     },
     Layout: {
-      color: `rgba(15, 17, 21, ${terminalStore.windowOpacity})`,
-      siderColor: `rgba(19, 22, 28, ${terminalStore.windowOpacity})`,
-      headerColor: `rgba(19, 22, 28, ${terminalStore.windowOpacity})`,
+      color: `rgba(19, 19, 22, ${terminalStore.windowOpacity})`,
+      siderColor: `rgba(24, 24, 29, ${terminalStore.windowOpacity})`,
+      headerColor: `rgba(24, 24, 29, ${terminalStore.windowOpacity})`,
     },
     Tree: {
       nodeTextColor: "rgba(255,255,255,0.85)",
@@ -73,13 +86,14 @@ export function useTheme() {
     ...sharedThemeOverrides,
     common: {
       ...sharedThemeOverrides.common,
-      bodyColor: `rgba(244, 246, 251, ${terminalStore.windowOpacity})`,
+      ...lightPrimaryOverrides,
+      bodyColor: `rgba(245, 245, 248, ${terminalStore.windowOpacity})`,
       cardColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
       modalColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
       popoverColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
     },
     Layout: {
-      color: `rgba(244, 246, 251, ${terminalStore.windowOpacity})`,
+      color: `rgba(245, 245, 248, ${terminalStore.windowOpacity})`,
       siderColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
       headerColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
     },

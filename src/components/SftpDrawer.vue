@@ -3703,7 +3703,7 @@ function openInStandaloneWindow() {
 
 .resize-handle:hover,
 .sftp-panel.resizing .resize-handle {
-  background: rgba(124, 92, 255, 0.45);
+  background: rgba(109, 90, 232, 0.45);
 }
 
 .drop-overlay {
@@ -3713,8 +3713,8 @@ function openInStandaloneWindow() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(124, 92, 255, 0.08);
-  border: 2px dashed rgba(124, 92, 255, 0.7);
+  background: rgba(109, 90, 232, 0.08);
+  border: 2px dashed rgba(109, 90, 232, 0.7);
   pointer-events: none;
 }
 
@@ -3859,7 +3859,7 @@ function openInStandaloneWindow() {
 .dual-split :deep(.n-split__resize-trigger--hover)::before {
   width: 3px;
   border-radius: 2px;
-  background: var(--ashell-primary, #7c5cff);
+  background: var(--ashell-primary, #6d5ae8);
 }
 
 .drag-ghost {
@@ -3868,7 +3868,7 @@ function openInStandaloneWindow() {
   pointer-events: none;
   padding: 4px 10px;
   border-radius: 4px;
-  background: var(--ashell-accent, #7c5cff);
+  background: var(--ashell-accent, #6d5ae8);
   color: #fff;
   font-size: 12px;
   transform: translate(12px, 12px);
@@ -3940,7 +3940,7 @@ function openInStandaloneWindow() {
 }
 
 .address-display:focus {
-  border-color: rgba(124, 92, 255, 0.6);
+  border-color: rgba(109, 90, 232, 0.6);
 }
 
 /* 面包屑变体：左对齐；宽度不足时前面的段按比例压缩成 …，
@@ -3971,7 +3971,7 @@ function openInStandaloneWindow() {
 
 .crumb:hover {
   background: var(--ashell-row-hover, rgba(255, 255, 255, 0.06));
-  color: var(--ashell-accent, #7c5cff);
+  color: var(--ashell-accent, #6d5ae8);
 }
 
 .crumb.active {
@@ -4034,7 +4034,7 @@ function openInStandaloneWindow() {
 }
 
 .bm-path:hover {
-  color: var(--ashell-accent, #7c5cff);
+  color: var(--ashell-accent, #6d5ae8);
 }
 
 .bm-empty {
@@ -4057,7 +4057,7 @@ function openInStandaloneWindow() {
 
 .bm-add:hover {
   background: var(--ashell-row-hover, rgba(255, 255, 255, 0.06));
-  color: var(--ashell-accent, #7c5cff);
+  color: var(--ashell-accent, #6d5ae8);
 }
 
 .filter-input {

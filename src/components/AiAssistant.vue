@@ -1824,7 +1824,7 @@ defineExpose({
 
 .resize-handle:hover,
 .ai-panel.resizing .resize-handle {
-  background: rgba(124, 92, 255, 0.45);
+  background: rgba(109, 90, 232, 0.45);
 }
 
 /* ── Header ── */
@@ -1851,7 +1851,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   color: #fff;
-  box-shadow: 0 4px 12px rgba(124, 92, 255, 0.4);
+  box-shadow: 0 4px 12px rgba(109, 90, 232, 0.4);
 }
 
 .title {
@@ -2023,7 +2023,7 @@ defineExpose({
 }
 
 .msg.user .bubble {
-  background: linear-gradient(135deg, #7c5cff 0%, #6a4ae6 100%);
+  background: linear-gradient(135deg, #6d5ae8 0%, #5a47cf 100%);
   color: #fff;
   white-space: pre-wrap;
 }
@@ -2398,7 +2398,7 @@ defineExpose({
 .assistant-avatar {
   background: linear-gradient(
     135deg,
-    #7c5cff 0%,
+    #6d5ae8 0%,
     #4a8cff 100%
   ) !important;
   color: #fff !important;
@@ -2588,7 +2588,7 @@ defineExpose({
 .markdown-body :deep(:not(pre) > code) {
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(124, 92, 255, 0.15);
+  background: rgba(109, 90, 232, 0.15);
   font-size: 12px;
 }
 

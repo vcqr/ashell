@@ -622,7 +622,7 @@ const panelStyle = computed(() => {
                     :show-indicator="false"
                     :height="8"
                     :border-radius="4"
-                    :color="gaugeColor(cpuPercent, '#7c5cff')"
+                    :color="gaugeColor(cpuPercent, '#6d5ae8')"
                     rail-color="var(--ashell-hover)"
                   />
                 </div>
@@ -791,7 +791,7 @@ const panelStyle = computed(() => {
                       :percentage="clamp(g.util_percent)"
                       :show-indicator="false"
                       :height="6"
-                      :color="gaugeColor(g.util_percent, '#7c5cff')"
+                      :color="gaugeColor(g.util_percent, '#6d5ae8')"
                       rail-color="var(--ashell-hover)"
                     />
                   </div>
@@ -995,7 +995,7 @@ const panelStyle = computed(() => {
 
 .resize-handle:hover,
 .hostinfo-panel.resizing .resize-handle {
-  background: rgba(124, 92, 255, 0.45);
+  background: rgba(109, 90, 232, 0.45);
 }
 
 .panel-header {
@@ -1452,7 +1452,7 @@ const panelStyle = computed(() => {
   display: inline-block;
 }
 .net-dot.rx {
-  background: #7c5cff;
+  background: #6d5ae8;
 }
 .net-dot.tx {
   background: #4a8cff;

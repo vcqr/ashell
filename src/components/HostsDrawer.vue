@@ -228,6 +228,6 @@ function onClose() {
 
 .resize-handle:hover,
 .hosts-panel.resizing .resize-handle {
-  background: rgba(124, 92, 255, 0.45);
+  background: rgba(109, 90, 232, 0.45);
 }
 </style>

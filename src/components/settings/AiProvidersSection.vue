@@ -341,7 +341,7 @@ onMounted(() => {
 .provider-item.active {
   background: var(--ashell-active);
   color: var(--ashell-text-strong);
-  border-color: var(--ashell-primary, #7c5cff);
+  border-color: var(--ashell-primary, #6d5ae8);
 }
 
 .provider-item-name {

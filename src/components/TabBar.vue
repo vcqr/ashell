@@ -691,7 +691,7 @@ onBeforeUnmount(() => {
             <NIcon
               v-else
               :size="16"
-              :color="tab.color ?? '#7c5cff'"
+              :color="tab.color ?? '#6d5ae8'"
               class="tab-icon-default"
             >
               <RiTerminalBoxLine />
@@ -1120,10 +1120,10 @@ onBeforeUnmount(() => {
   font-weight: 500;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     sans-serif;
-  background: var(--tab-color-bg, var(--ashell-active, rgba(124, 92, 255, 0.18)));
+  background: var(--tab-color-bg, var(--ashell-active, rgba(109, 90, 232, 0.18)));
   color: var(--ashell-text-strong, #fff);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32),
-    0 0 0 1px var(--tab-color, var(--ashell-primary, #7c5cff));
+    0 0 0 1px var(--tab-color, var(--ashell-primary, #6d5ae8));
   pointer-events: none;
   z-index: 9999;
   opacity: 0.95;
@@ -1136,7 +1136,7 @@ onBeforeUnmount(() => {
 
 .drag-preview.active {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4),
-    0 0 0 2px var(--tab-color, var(--ashell-primary, #7c5cff));
+    0 0 0 2px var(--tab-color, var(--ashell-primary, #6d5ae8));
 }
 
 .drag-preview .tab-label {

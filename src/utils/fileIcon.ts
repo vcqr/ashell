@@ -128,7 +128,7 @@ import IconLicense from "~icons/material-icon-theme/license"
 /** 文件类型配色：用于文件夹/软链接等单色图标 */
 export const FILE_TYPE_COLORS = {
   dir: "#f1c27d",
-  symlink: "#7c5cff",
+  symlink: "#6d5ae8",
   file: "#9aa0a6",
 }
 

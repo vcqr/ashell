@@ -499,7 +499,7 @@ function onClose() {
 
 .resize-handle:hover,
 .forward-panel.resizing .resize-handle {
-  background: rgba(124, 92, 255, 0.18);
+  background: rgba(109, 90, 232, 0.18);
 }
 
 .panel-header {

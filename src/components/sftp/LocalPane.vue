@@ -1522,7 +1522,7 @@ onMounted(() => {
 }
 
 .address-display:focus {
-  border-color: rgba(124, 92, 255, 0.6);
+  border-color: rgba(109, 90, 232, 0.6);
 }
 
 .address-input {
@@ -1607,7 +1607,7 @@ onMounted(() => {
   pointer-events: none;
   padding: 4px 10px;
   border-radius: 4px;
-  background: var(--ashell-accent, #7c5cff);
+  background: var(--ashell-accent, #6d5ae8);
   color: #fff;
   font-size: 12px;
   transform: translate(12px, 12px);

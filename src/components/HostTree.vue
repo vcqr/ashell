@@ -290,7 +290,7 @@ function renderPrefix({ option }: { option: TreeOption }) {
     )
   }
   const iconUrl = node.icon ? iconStore.urlOf(node.icon) : null
-  const color = node.color ?? "#7c5cff"
+  const color = node.color ?? "#6d5ae8"
   const iconEl = iconUrl
     ? h("img", {
         src: iconUrl,
@@ -335,7 +335,7 @@ function renderSuffix({ option }: { option: TreeOption }) {
     pinned
       ? h(
           NIcon,
-          { class: "node-pin", size: 12, color: "#7c5cff" },
+          { class: "node-pin", size: 12, color: "#6d5ae8" },
           { default: () => h(RiPushpinFill) },
         )
       : null,
@@ -1503,7 +1503,7 @@ async function onRefresh() {
         class="drag-ghost"
         :style="{ left: dragGhost.x + 12 + 'px', top: dragGhost.y + 12 + 'px' }"
       >
-        <NIcon :size="14" color="#7c5cff"><RiTerminalBoxLine /></NIcon>
+        <NIcon :size="14" color="#6d5ae8"><RiTerminalBoxLine /></NIcon>
         <span>{{ dragGhost.label }}</span>
       </div>
     </Teleport>
@@ -1712,8 +1712,8 @@ async function onRefresh() {
 }
 
 .tree-body.drop-on-root {
-  background: rgba(124, 92, 255, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.45);
+  background: rgba(109, 90, 232, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(109, 90, 232, 0.45);
 }
 
 .tree-spin {
@@ -1734,7 +1734,7 @@ async function onRefresh() {
 }
 
 :deep(.n-tree-node--selected .n-tree-node-content) {
-  background: rgba(124, 92, 255, 0.15) !important;
+  background: rgba(109, 90, 232, 0.15) !important;
 }
 
 /* 悬停节点行末元信息：grid 0fr→1fr 做宽度动画，悬停时名字被平滑推开而非跳变；
@@ -1805,7 +1805,7 @@ async function onRefresh() {
 /* drop target 高亮（穿透 scoped，因为 data-node-key 是动态加在内部节点上） */
 .host-tree .tree-body [data-node-key].drop-target,
 .host-tree .tree-body [data-node-key][data-drop-active="true"] {
-  outline: 2px solid rgba(124, 92, 255, 0.55);
+  outline: 2px solid rgba(109, 90, 232, 0.55);
   outline-offset: -2px;
   border-radius: 6px;
 }
@@ -1820,7 +1820,7 @@ async function onRefresh() {
   padding: 4px 10px;
   background: var(--ashell-panel-bg, #1f1f24);
   color: var(--ashell-text, #e5e5ea);
-  border: 1px solid rgba(124, 92, 255, 0.5);
+  border: 1px solid rgba(109, 90, 232, 0.5);
   border-radius: 6px;
   font-size: 12px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
@@ -1831,7 +1831,7 @@ async function onRefresh() {
 /* 节点 tooltip（NTooltip 挂到 body，样式须全局） */
 /* 搜索命中子串（renderLabel 动态创建、挂在 NTree 子树，scoped 属性够不到，样式须全局） */
 .node-label-hit {
-  color: #7c5cff;
+  color: #6d5ae8;
   font-weight: 600;
 }
 

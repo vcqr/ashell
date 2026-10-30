@@ -17,7 +17,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   height: 96,
-  rxColor: "#7c5cff",
+  rxColor: "#6d5ae8",
   txColor: "#4a8cff",
 })
 

@@ -526,8 +526,8 @@ async function exportCurrent() {
 }
 
 .preset-card.active {
-  border-color: var(--ashell-primary, #7c5cff);
-  box-shadow: 0 0 0 1px var(--ashell-primary, #7c5cff);
+  border-color: var(--ashell-primary, #6d5ae8);
+  box-shadow: 0 0 0 1px var(--ashell-primary, #6d5ae8);
 }
 
 .preset-card.custom {
