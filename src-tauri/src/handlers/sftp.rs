@@ -82,8 +82,15 @@ pub struct ElevateReq {
 /// 注意会中断该 sid 上进行中的传输。
 pub async fn elevate(
     State(state): State<AppState>,
-    Json(req): Json<ElevateReq>,
+    Json(raw): Json<serde_json::Value>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    // 先记录原始请求体再手动解析：Json<T> 提取器的反序列化失败不会进入
+    // handler，前端发了什么异常字段时在这里才能看到
+    log::info!("elevate raw body: {raw}");
+    let req: ElevateReq = serde_json::from_value(raw.clone()).map_err(|e| {
+        log::warn!("elevate body parse failed: {e}");
+        AppError::BadRequest(format!("elevate request invalid: {e}"))
+    })?;
     let session = ssh_svc::get_client(&req.sid).await?;
     if !req.elevated {
         session.open_sftp(&req.sid).await?;
