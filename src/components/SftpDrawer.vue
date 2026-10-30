@@ -81,7 +81,6 @@ import {
 } from "@/api/sftp"
 import { useI18n } from "vue-i18n"
 import { useSftpStore } from "@/stores/sftp"
-import { useHostStore } from "@/stores/hosts"
 import { useStartupStore } from "@/stores/startup"
 import type { OsDropEntry, OsDropFolder, SftpFile, TransferTask } from "@/types"
 import { humanSize } from "@/utils/humanSize"
@@ -436,32 +435,29 @@ watch(
 )
 
 /** 堡垒机会话：提权/切换用户在服务端必被拒绝（sudo 够不到目标机），
- *  这里事前置灰按钮。优先取显式 prop（独立窗口经 URL 传入）；否则按
- *  hostId 拉取主机记录兜底——主机 store 仅在列表抽屉打开时刷新，
- *  刚勾选堡垒机模式的旧数据里可能还没有该标志 */
-const hostStore = useHostStore()
-const fetchedBastion = ref<boolean | null>(null)
-watch(
-  () => props.hostId,
-  (id) => {
-    fetchedBastion.value = null
-    if (id == null || props.bastion != null) return
-    getHost(id)
-      .then((h) => {
-        fetchedBastion.value = h.bastion === true
-      })
-      .catch(() => {
-        // 拉取失败不阻塞：交由服务端拦截兜底
-      })
-  },
-  { immediate: true },
-)
-const bastionMode = computed(() => {
-  if (props.bastion != null) return props.bastion
-  if (fetchedBastion.value != null) return fetchedBastion.value
-  if (props.hostId == null) return false
-  return hostStore.hosts.find((h) => h.id === props.hostId)?.bastion === true
-})
+ *  这里事前置灰按钮。标志不读主机 store（其加载时机不可控：经恢复的
+ *  标签页连接时树可能从未刷新），由 load() 按 hostId 实时拉取主机记录；
+ *  独立窗口经 URL 显式传入时直接采用。 */
+const bastionMode = ref(false)
+const bastionCheckedFor = ref<number | null>(null)
+async function ensureBastionFlag() {
+  if (props.bastion != null) {
+    bastionMode.value = props.bastion
+    return
+  }
+  const id = props.hostId
+  if (id == null) {
+    bastionMode.value = false
+    return
+  }
+  if (bastionCheckedFor.value === id) return
+  bastionCheckedFor.value = id
+  try {
+    bastionMode.value = (await getHost(id)).bastion === true
+  } catch {
+    // 拉取失败不阻塞：交由服务端拦截兜底
+  }
+}
 
 /** 会话当前身份名（用于徽标/提示文案） */
 const elevatedUserName = computed(() => elevatedUser.value || "root")
@@ -705,6 +701,7 @@ const loadError = ref<string | null>(null)
  *  back/forward=历史导航（对向栈承接当前位置）。 */
 async function load(path?: string, history: "push" | "back" | "forward" = "push") {
   if (!props.sid) return
+  void ensureBastionFlag()
   const sid = props.sid
   loading.value = true
   try {
