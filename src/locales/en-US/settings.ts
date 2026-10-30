@@ -510,6 +510,7 @@ export default {
     cancelLogin: "Cancel",
     loginStartFailed: "Failed to start login: {error}",
     loginSuccess: "WeChat connected",
+    logout: "Sign out of WeChat",
     logoutSuccess: "Signed out of WeChat",
     logoutFailed: "Sign out failed: {error}",
     loginStatus_idle: "Not signing in",

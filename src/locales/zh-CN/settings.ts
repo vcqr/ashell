@@ -502,6 +502,7 @@ export default {
     cancelLogin: "取消登录",
     loginStartFailed: "发起登录失败：{error}",
     loginSuccess: "微信已连接",
+    logout: "退出微信登录",
     logoutSuccess: "已退出微信登录",
     logoutFailed: "退出失败：{error}",
     loginStatus_idle: "未在登录",
