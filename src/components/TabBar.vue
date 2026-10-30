@@ -906,9 +906,6 @@ onBeforeUnmount(() => {
 
 .tab-item.active::before {
   background: var(--tab-color, var(--ashell-primary));
-  /* 柔光：同色向上渗光，让全饱和彩条与上方玻璃渐变面板自然衔接 */
-  box-shadow: 0 -1px 8px 0
-    color-mix(in srgb, var(--tab-color, var(--ashell-primary)) 40%, transparent);
 }
 
 .tab-item.is-dragging {
