@@ -435,14 +435,14 @@ watch(
 )
 
 /** 堡垒机会话：提权/切换用户在服务端必被拒绝（sudo 够不到目标机），
- *  这里事前置灰按钮。标志不读主机 store（其加载时机不可控：经恢复的
- *  标签页连接时树可能从未刷新），由 load() 按 hostId 实时拉取主机记录；
- *  独立窗口经 URL 显式传入时直接采用。 */
+ *  这里事前置灰按钮。标志由 load() 按 hostId 实时拉取主机记录——
+ *  注意 bastion 是 Boolean 型 prop，父组件未传时 Vue 会转成 false 而非
+ *  undefined，因此只认显式 true（独立窗口 URL 传入），其余一律拉取。 */
 const bastionMode = ref(false)
 const bastionCheckedFor = ref<number | null>(null)
 async function ensureBastionFlag() {
-  if (props.bastion != null) {
-    bastionMode.value = props.bastion
+  if (props.bastion === true) {
+    bastionMode.value = true
     return
   }
   const id = props.hostId
