@@ -79,7 +79,7 @@ body.window-rounded::after {
   --ashell-text-strong: #141821;
   --ashell-text-muted: rgba(20, 24, 33, 0.6);
   --ashell-text-subtle: rgba(20, 24, 33, 0.45);
-  --ashell-hover: rgba(20, 24, 33, 0.06);
+  --ashell-hover: rgba(20, 24, 33, 0.08);
   --ashell-active: rgba(95, 79, 217, 0.1);
   --ashell-shadow: rgba(20, 24, 33, 0.14);
   --ashell-terminal-text: #1f2937;

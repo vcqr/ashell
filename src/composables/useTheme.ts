@@ -87,6 +87,10 @@ export function useTheme() {
     common: {
       ...sharedThemeOverrides.common,
       ...lightPrimaryOverrides,
+      // naive 浅色默认 hoverColor 是实色 #f3f3f5，在应用浅色头部（#f5f5f8）上
+      // 几乎同亮度，TabBar/ActivityBar 悬停胶囊会隐形；换成半透明墨色，
+      // 强度与暗色主题的白色 9% 对称
+      hoverColor: "rgba(20, 24, 33, 0.08)",
       bodyColor: `rgba(245, 245, 248, ${terminalStore.windowOpacity})`,
       cardColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
       modalColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
