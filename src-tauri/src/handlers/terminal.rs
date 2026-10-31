@@ -181,6 +181,12 @@ async fn send_progress(ws_tx: &mut SplitSink<WebSocket, Message>, stage: &str) {
 /// （认证的用户交互发生在 connect_prepared 返回之后的弹窗循环里，不占此处预算）
 const CONNECT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// 收到 CHANNEL_EOF 后等待 exit-status / close 的宽限：OpenSSH 的退出帧序是
+/// EOF → exit-status → CLOSE，EOF 先于 exit-status 到达（子进程输出关闭即发，
+/// exit-status 要等 sshd 回收进程）。个别设备只发 EOF 不发后续帧，宽限到期
+/// 按会话结束处理，避免 select 永远挂在 channel.wait() 上
+const SESSION_EOF_GRACE: Duration = Duration::from_secs(5);
+
 /// 将建连失败的底层错误归类为面向用户的错误码（前端据此做 i18n 全局提示）。
 /// 命中常见网络错误时返回分类码；其余（罕见 IO 错误等）返回 None，前端展示原文。
 fn classify_connect_failure(err: &crate::errors::AppError) -> Option<&'static str> {
@@ -1617,6 +1623,11 @@ async fn run_terminal(
     let idle_dur = Duration::from_secs(if idle_secs > 0 { idle_secs as u64 } else { 1 });
     let idle_timer = tokio::time::sleep(idle_dur);
     tokio::pin!(idle_timer);
+    // EOF 宽限定时器：收到 EOF 才启用（select 分支有 eof_seen 守卫），
+    // 到期仍未见 exit-status/close 时按会话结束收尾
+    let eof_grace = tokio::time::sleep(SESSION_EOF_GRACE);
+    tokio::pin!(eof_grace);
+    let mut eof_seen = false;
 
     let closed = false;
     loop {
@@ -1777,7 +1788,9 @@ async fn run_terminal(
                         }
                         reset_idle(&mut idle_timer, idle_dur);
                     }
-                    Some(ChannelMsg::ExitStatus { exit_status: _ }) => {
+                    // exit-status = 正常退出；exit-signal = 进程被信号杀死
+                    // （kill -9 等），sshd 以 exit-signal 代替 exit-status
+                    Some(ChannelMsg::ExitStatus { .. }) | Some(ChannelMsg::ExitSignal { .. }) => {
                         // shell 正常退出（用户 exit / 命令结束），非异常断开。
                         // 此分支会主动关闭 ws，session_end 帧必须先于 close 发出
                         session_end_code = Some("session_exited");
@@ -1793,9 +1806,21 @@ async fn run_terminal(
                         }
                         break;
                     }
-                    // 服务器关闭通道且无 exit status：shell 被杀或服务端主动断开
-                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                        session_end_code = Some("channel_closed");
+                    // EOF 只是远端停止输出：退出流程中 EOF 先于 exit-status 到达，
+                    // 在此 break 会把正常 exit 误报成"服务器关闭了会话通道"。
+                    // 继续等 ExitStatus / Close，靠 eof 宽限定时器防个别设备只发 EOF
+                    Some(ChannelMsg::Eof) => {
+                        eof_seen = true;
+                        eof_grace.as_mut().reset(tokio::time::Instant::now() + SESSION_EOF_GRACE);
+                    }
+                    Some(ChannelMsg::Close) | None => {
+                        // 已见 EOF = 程序输出已结束（正常退出的兜底，缺 exit-status 帧）；
+                        // 未见 EOF 的 Close/None = 服务端突兀关闭（重启/被强杀）
+                        session_end_code = Some(if eof_seen {
+                            "session_exited"
+                        } else {
+                            "channel_closed"
+                        });
                         break;
                     }
                     _ => {}
@@ -1807,6 +1832,10 @@ async fn run_terminal(
                     break;
                 }
                 reset_idle(&mut idle_timer, idle_dur);
+            }
+            _ = &mut eof_grace, if eof_seen => {
+                session_end_code = Some("session_exited");
+                break;
             }
         }
     }
