@@ -1450,7 +1450,9 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           lastSessionEndCode = m.code ?? ""
           if (lastSessionEndCode && te(`terminal.sessionEndCodes.${lastSessionEndCode}`)) {
             term?.writeln(
-              `\x1b[33m[ashell] ${t(`terminal.sessionEndCodes.${lastSessionEndCode}`)}\x1b[0m`,
+              // \r\n 前缀与其他 [ashell] 提示一致：会话可能停在 shell 提示符
+              // （光标在行中），不换行会把提示直接拼在提示符后面
+              `\r\n\x1b[33m[ashell] ${t(`terminal.sessionEndCodes.${lastSessionEndCode}`)}\x1b[0m`,
             )
           }
           return
