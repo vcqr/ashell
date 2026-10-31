@@ -214,6 +214,8 @@ const progressStage = ref<"tcp" | "handshake" | "auth" | "shell">("tcp")
 /** 建连已等待秒数：连接慢时回答"它是死了还是在努力" */
 const connectElapsed = ref(0)
 let connectElapsedTimer: number | null = null
+/** 断开态输入是否已提示过：每个断开周期只提示一次，重连发起时重置 */
+let deadInputHintShown = false
 
 // ===== SSH 认证失败重试弹窗（密码过期 / 被修改后重新输入） =====
 const authPromptVisible = ref(false)
@@ -641,6 +643,24 @@ function onTermCustomKey(ev: KeyboardEvent): boolean {
     return false
   }
   if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return true
+  // 断开态回车重连：重连入口可见（closed/error/离线恢复）且无认证/主机密钥弹窗时，
+  // 无修饰键 Enter 等价于点击"重新连接"按钮。拦截 keydown 而非 onData：
+  // 粘贴含换行的文本不会产生 keydown，避免粘贴内容误触重连；
+  // isComposing 排除输入法确认键。自动重连退避中按 Enter 即取消等待、立即重试
+  // （reconnect 内部会 cancelAutoReconnect）
+  if (
+    ev.key === "Enter" &&
+    !ev.isComposing &&
+    showReconnectBtn.value &&
+    currentStatus.value !== "connecting" &&
+    !authPromptVisible.value &&
+    !hostkeyVisible.value &&
+    !kbPromptVisible.value
+  ) {
+    ev.preventDefault()
+    void reconnect()
+    return false
+  }
   if (ev.key.toLowerCase() === "c" && term?.hasSelection()) {
     ev.preventDefault()
     void writeClipboard(term.getSelection())
@@ -1285,6 +1305,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
   lastFatalReason = ""
   lastFatalCode = ""
   progressStage.value = "tcp"
+  deadInputHintShown = false
   const isLocal = props.tab.kind === "local"
   const isTelnet = props.tab.kind === "telnet"
   const isSerial = props.tab.kind === "serial"
@@ -1603,6 +1624,15 @@ onMounted(() => {
   term.attachCustomKeyEventHandler(onTermCustomKey)
 
   term.onData((data: string) => {
+    // 断开态的输入无处可去：按 Enter 走上面的 keydown 拦截触发重连，
+    // 其余输入（含粘贴）不静默吞掉，给一次暗色提示告知如何重连
+    if (showReconnectBtn.value && currentStatus.value !== "connecting") {
+      if (!deadInputHintShown) {
+        deadInputHintShown = true
+        term?.write(`\r\n\x1b[90m[ashell] ${t("terminal.deadInputHint")}\x1b[0m\r\n`)
+      }
+      return
+    }
     if (sudoArmed.value) {
       if (data === "\r") {
         // 回车确认 -> 发送 sudo_fill，后端注入密码
@@ -2125,6 +2155,7 @@ onBeforeUnmount(() => {
         v-if="showReconnectBtn"
         type="button"
         class="reconnect-btn"
+        :title="t('terminal.tabBar.reconnectTip')"
         @click="reconnect"
       >
         <NIcon :size="14">
