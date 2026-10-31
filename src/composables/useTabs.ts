@@ -1,5 +1,13 @@
-import { computed, h, ref, watch, type InjectionKey, type ComputedRef } from "vue";
-import { NButton } from "naive-ui";
+import {
+  computed,
+  h,
+  ref,
+  watch,
+  type InjectionKey,
+  type ComputedRef,
+  type Ref,
+} from "vue";
+import { NButton, type NotificationReactive } from "naive-ui";
 import type { TerminalTab, HostNode } from "@/types";
 import { useAiStore } from "@/stores/ai";
 import { useBroadcastStore } from "@/stores/broadcast";
@@ -803,7 +811,7 @@ export function useTabs() {
   function onStatusChange(
     tabKey: string,
     status: NonNullable<TerminalTab["status"]>,
-    meta?: { cause?: "user" },
+    meta?: { cause?: "user"; reason?: string },
   ) {
     const t = tabs.value.find((x) => x.key === tabKey);
     if (!t) return;
@@ -839,7 +847,7 @@ export function useTabs() {
     // keep 策略：开启自动重连时不打扰（重连成功后自动恢复）；
     // 未开自动重连时轻提示，避免用户在其他标签页错过断开事件
     if (!terminalStore.autoReconnect) {
-      notifySessionClosed(t);
+      notifySessionClosed(t, meta?.reason);
     }
   }
 
@@ -864,10 +872,43 @@ export function useTabs() {
   const PENDING_CLOSE_SECONDS = 5;
 
   /**
+   * 系统通知：仅在窗口失焦（后台）时发送——前台时应用内通知已覆盖。
+   * 未授权或插件不可用时静默跳过，绝不借断开事件主动弹权限申请
+   */
+  async function notifySystem(title: string, body: string) {
+    if (!isTauri || !document.hidden) return;
+    try {
+      const { isPermissionGranted, sendNotification } = await import(
+        "@tauri-apps/plugin-notification"
+      );
+      if (await isPermissionGranted()) {
+        sendNotification({ title, body });
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
    * 会话断开且策略为自动关闭：先弹通知倒计时，给用户查阅现场/反悔的缓冲。
    * 自动清理类设置的语义是"会话结束后帮我收拾"，不是"抹掉一切痕迹"，
    * 静默瞬间关掉标签会让人误以为应用闪退。
+   *
+   * 同一波断开（网络抖动/睡眠唤醒常同时打断多条会话）的多标签并入同一
+   * 批次，共享一条倒计时通知；"保留标签页"一次性保留整批
    */
+  interface CloseBatch {
+    keys: Set<string>;
+    action: "closeTab" | "closeWindow";
+    firstTarget: string;
+    count: Ref<number>;
+    secLeft: Ref<number>;
+    timer: number | null;
+    notif: NotificationReactive | null;
+  }
+
+  let closeBatch: CloseBatch | null = null;
+
   function scheduleDisconnectClose(
     t: TerminalTab,
     action: "closeTab" | "closeWindow",
@@ -883,59 +924,128 @@ export function useTabs() {
     const target = t.hostInfo
       ? `${t.hostInfo.username}@${t.hostInfo.addr}`
       : t.title;
-    const secLeft = ref(PENDING_CLOSE_SECONDS);
-    let timer: number | null = null;
-    const stop = () => {
-      if (timer !== null) window.clearInterval(timer);
-      timer = null;
-      pendingCloseKeys.delete(tabKey);
-    };
-    const keep = () => {
-      stop();
-      notif.destroy();
-    };
-    const apply = () => {
-      stop();
-      notif.destroy();
-      applyDisconnectAction(tabKey, action);
-    };
     const gt = i18n.global.t;
-    const notif = api.create({
+
+    if (closeBatch && closeBatch.action === action) {
+      // 并入现有批次：计数联动刷新，倒计时与取消按钮共享
+      closeBatch.keys.add(tabKey);
+      closeBatch.count.value = closeBatch.keys.size;
+      return;
+    }
+
+    const batch: CloseBatch = {
+      keys: new Set([tabKey]),
+      action,
+      firstTarget: target,
+      count: ref(1),
+      secLeft: ref(PENDING_CLOSE_SECONDS),
+      timer: null,
+      notif: null,
+    };
+    const stopTimer = () => {
+      if (batch.timer !== null) {
+        window.clearInterval(batch.timer);
+        batch.timer = null;
+      }
+    };
+    const keepAll = () => {
+      stopTimer();
+      for (const k of batch.keys) pendingCloseKeys.delete(k);
+      batch.notif?.destroy();
+      if (closeBatch === batch) closeBatch = null;
+    };
+    const applyAll = () => {
+      stopTimer();
+      batch.notif?.destroy();
+      const keys = [...batch.keys];
+      for (const k of keys) pendingCloseKeys.delete(k);
+      if (closeBatch === batch) closeBatch = null;
+      // 逐个关标签；closeWindow 语义下最后一个看到空标签列表时关窗口
+      for (const k of keys) applyDisconnectAction(k, action);
+    };
+    batch.notif = api.create({
       title: gt("terminal.sessionClosedTitle"),
       content: () =>
         h(
           "span",
           null,
-          gt("terminal.sessionClosingSoon", { target, sec: secLeft.value }),
+          batch.count.value === 1
+            ? gt("terminal.sessionClosingSoon", {
+                target: batch.firstTarget,
+                sec: batch.secLeft.value,
+              })
+            : gt("terminal.sessionClosingSoonBatch", {
+                n: batch.count.value,
+                sec: batch.secLeft.value,
+              }),
         ),
       action: () =>
         h(
           NButton,
-          { size: "tiny", secondary: true, onClick: keep },
+          { size: "tiny", secondary: true, onClick: keepAll },
           { default: () => gt("terminal.sessionCloseKeep") },
         ),
       duration: 0,
       closable: false,
     });
-    timer = window.setInterval(() => {
-      secLeft.value -= 1;
-      if (secLeft.value <= 0) apply();
+    closeBatch = batch;
+    // 系统通知延后 1.2s：让同一波断开的标签先并入批次，再按最终条数提醒
+    window.setTimeout(() => {
+      if (closeBatch !== batch) return;
+      void notifySystem(
+        gt("terminal.sessionClosedTitle"),
+        batch.count.value === 1
+          ? batch.firstTarget
+          : gt("terminal.sessionClosedBatchBody", { n: batch.count.value }),
+      );
+    }, 1200);
+    batch.timer = window.setInterval(() => {
+      batch.secLeft.value -= 1;
+      if (batch.secLeft.value <= 0) applyAll();
     }, 1000);
   }
 
-  /** keep 策略且未开自动重连时的断开轻提示 */
-  function notifySessionClosed(t: TerminalTab) {
-    const api = notify();
-    if (!api) return;
+  /** keep 策略且未开自动重连时的断开轻提示：1.2s 窗口内多条合并为一条 */
+  const closedNotifyPending: { target: string; reason: string }[] = [];
+  let closedNotifyTimer: number | null = null;
+
+  function notifySessionClosed(t: TerminalTab, reason?: string) {
     const target = t.hostInfo
       ? `${t.hostInfo.username}@${t.hostInfo.addr}`
       : t.title;
-    api.create({
-      type: "warning",
-      title: i18n.global.t("terminal.sessionClosedTitle"),
-      content: i18n.global.t("terminal.sessionClosedDetail", { target }),
-      duration: 6000,
-    });
+    closedNotifyPending.push({ target, reason: reason ?? "" });
+    if (closedNotifyTimer !== null) return;
+    closedNotifyTimer = window.setTimeout(() => {
+      closedNotifyTimer = null;
+      const items = closedNotifyPending.splice(0);
+      const api = notify();
+      const first = items[0];
+      if (!api || !first) return;
+      const gt = i18n.global.t;
+      const n = items.length;
+      api.create({
+        type: "warning",
+        title: gt("terminal.sessionClosedTitle"),
+        content:
+          n === 1
+            ? first.reason
+              ? gt("terminal.sessionClosedDetailReason", {
+                  target: first.target,
+                  reason: first.reason,
+                })
+              : gt("terminal.sessionClosedDetail", { target: first.target })
+            : gt("terminal.sessionClosedBatchDetail", { n }),
+        duration: 6000,
+      });
+      void notifySystem(
+        gt("terminal.sessionClosedTitle"),
+        n === 1
+          ? first.reason
+            ? `${first.target}：${first.reason}`
+            : first.target
+          : gt("terminal.sessionClosedBatchBody", { n }),
+      );
+    }, 1200);
   }
 
   function onTitleChange(tabKey: string, title: string) {

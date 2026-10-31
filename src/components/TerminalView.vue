@@ -58,7 +58,7 @@ type TermStatus = "connecting" | "connected" | "closed" | "error"
 
 const emit = defineEmits<{
   (e: "sid-ready", tabKey: string, sid: string): void
-  (e: "status-change", tabKey: string, status: TermStatus, meta?: { cause?: "user" }): void
+  (e: "status-change", tabKey: string, status: TermStatus, meta?: { cause?: "user"; reason?: string }): void
   (e: "title-change", tabKey: string, title: string): void
   (e: "cwd-change", tabKey: string, cwd: string): void
   (e: "send-to-ai", tabKey: string, text: string): void
@@ -209,6 +209,8 @@ let everConnected = false
 /** 最近一次 fatal 帧的原文与错误码（从未连上的失败时用于全局提示） */
 let lastFatalReason = ""
 let lastFatalCode = ""
+/** 会话建立后的中断原因码（session_end 帧）：心跳超时/服务器断开/网络错误/shell 退出 */
+let lastSessionEndCode = ""
 /** 建连阶段（SSH 由后端 progress 帧驱动；本地/串口/telnet 无阶段上报走默认文案） */
 const progressStage = ref<"tcp" | "handshake" | "auth" | "shell">("tcp")
 /** 建连已等待秒数：连接慢时回答"它是死了还是在努力" */
@@ -364,7 +366,7 @@ function applyTheme() {
   terminalBackground.value = String(theme.background ?? "transparent")
 }
 
-function setStatus(status: TermStatus, meta?: { cause?: "user" }) {
+function setStatus(status: TermStatus, meta?: { cause?: "user"; reason?: string }) {
   currentStatus.value = status
   emit("status-change", props.tab.key, status, meta)
   if (status === "connecting") {
@@ -1222,6 +1224,8 @@ function onTextInputCapture(e: Event) {
 
 /** 自动重连退避上限（ms）。1s 起步指数退避：1s -> 2s -> 4s -> ... -> 30s 封顶。 */
 const AUTO_RECONNECT_MAX_DELAY = 30_000
+/** 自动重连连续失败止损上限：超过后停止重试并明确告知，不再无限循环刷屏 */
+const AUTO_RECONNECT_MAX_ATTEMPTS = 10
 
 function cancelAutoReconnect() {
   if (reconnectTimer !== null) {
@@ -1246,6 +1250,14 @@ function scheduleAutoReconnect() {
   // 且重连定时器会随组件销毁失效。设置页选择关闭策略时会联动关掉此开关
   if (termStore.disconnectAction !== "keep") return
   if (props.tab.kind === "local") return
+  // 止损：连续失败达到上限后停止（成功连接或手动重连会复位计数），
+  // 明确告知用户而不是永远沉默地 30s 一轮刷红字
+  if (reconnectAttempts >= AUTO_RECONNECT_MAX_ATTEMPTS) {
+    term?.writeln(
+      `\r\n\x1b[33m[ashell] ${t("terminal.autoReconnectStopped", { n: reconnectAttempts })}\x1b[0m`,
+    )
+    return
+  }
   reconnectAttempts += 1
   const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), AUTO_RECONNECT_MAX_DELAY)
   term?.writeln(
@@ -1304,6 +1316,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
   everConnected = false
   lastFatalReason = ""
   lastFatalCode = ""
+  lastSessionEndCode = ""
   progressStage.value = "tcp"
   deadInputHintShown = false
   const isLocal = props.tab.kind === "local"
@@ -1431,6 +1444,17 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           }
           return
         }
+        if (msg.kind === "session_end") {
+          // 会话建立后的断开原因帧：本地化写入终端，并随 status-change 透传给通知
+          const m = msg as { code?: string }
+          lastSessionEndCode = m.code ?? ""
+          if (lastSessionEndCode && te(`terminal.sessionEndCodes.${lastSessionEndCode}`)) {
+            term?.writeln(
+              `\x1b[33m[ashell] ${t(`terminal.sessionEndCodes.${lastSessionEndCode}`)}\x1b[0m`,
+            )
+          }
+          return
+        }
         if (msg.kind === "fatal") {
           const m = msg as { message?: string; code?: string }
           lastFatalReason = m.message ?? ""
@@ -1530,16 +1554,24 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     authSubmitting.value = false
     hostkeyVisible.value = false
     const neverConnected = !everConnected
-    // 从未连上的失败标为 error（区别于会话正常断开的 closed），保留标签页展示错误
-    setStatus(neverConnected ? "error" : "closed")
+    // 从未连上的失败标为 error（区别于会话正常断开的 closed），保留标签页展示错误；
+    // 会话建立后的断开把已本地化的原因随 meta 透传，供断开通知展示
+    const sessionEndReason =
+      lastSessionEndCode && te(`terminal.sessionEndCodes.${lastSessionEndCode}`)
+        ? t(`terminal.sessionEndCodes.${lastSessionEndCode}`)
+        : ""
+    setStatus(
+      neverConnected ? "error" : "closed",
+      !neverConnected && sessionEndReason ? { reason: sessionEndReason } : undefined,
+    )
     // local 终端 shell 进程已退出，无法重连，直接关闭 tab
     if (props.tab.kind === "local") {
       emit("close-tab", props.tab.key)
       return
     }
     showReconnectBtn.value = true
-    if (term && !(neverConnected && lastFatalReason)) {
-      // fatal 帧已写过具体失败原因时不再重复写关闭码，避免同屏两行报错
+    if (term && !(neverConnected && lastFatalReason) && !lastSessionEndCode) {
+      // fatal / session_end 帧已写过具体原因时不再重复写关闭码，避免同屏两行报错
       const reason = ev.reason ? `: ${ev.reason}` : ""
       term.writeln(`\r\n\x1b[31m[ashell] ${t("terminal.connClosed", { code: ev.code, reason })}\x1b[0m`)
       term.writeln(`\x1b[33m[ashell] ${t("terminal.sessionClosed")}\x1b[0m`)

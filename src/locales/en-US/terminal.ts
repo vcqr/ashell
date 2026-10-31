@@ -101,9 +101,27 @@ export default {
   sessionClosedTitle: "Session disconnected",
   sessionClosedDetail:
     "The session to {target} was disconnected. You can reconnect from its tab.",
+  sessionClosedDetailReason:
+    "The session to {target} was disconnected: {reason}",
+  sessionClosedBatchDetail:
+    "{n} sessions were disconnected. Reconnect from their tabs.",
+  sessionClosedBatchBody: "{n} SSH sessions were disconnected",
   sessionClosingSoon:
     "The session to {target} was disconnected. The tab will close in {sec}s.",
+  sessionClosingSoonBatch:
+    "{n} sessions (including {target}) were disconnected. Tabs will close in {sec}s.",
   sessionCloseKeep: "Keep tab",
+  // Session end reasons (code of backend session_end frame)
+  sessionEndCodes: {
+    session_exited: "The shell session has ended",
+    channel_closed: "The server closed the session channel",
+    keepalive_timeout:
+      "Keepalive timed out and the connection dropped (consider raising the keepalive interval)",
+    server_disconnected: "The server closed the connection",
+    network_error: "The connection was interrupted by a network error",
+  },
+  autoReconnectStopped:
+    "Auto-reconnect stopped after {n} failed attempts. Press Enter or click Reconnect to retry manually.",
   authRequiredNotice:
     "SSH authentication failed (password may have expired or changed). Enter the new password in the dialog.",
   authPromptTitle: "SSH Authentication",

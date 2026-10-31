@@ -177,6 +177,10 @@ async fn send_progress(ws_tx: &mut SplitSink<WebSocket, Message>, stage: &str) {
     let _ = ws_tx.send(Message::Text(payload.into())).await;
 }
 
+/// 建连总超时：TCP 阶段在 ssh.rs 已有 15s 限时，这里兜底握手/认证悬挂
+/// （认证的用户交互发生在 connect_prepared 返回之后的弹窗循环里，不占此处预算）
+const CONNECT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// 将建连失败的底层错误归类为面向用户的错误码（前端据此做 i18n 全局提示）。
 /// 命中常见网络错误时返回分类码；其余（罕见 IO 错误等）返回 None，前端展示原文。
 fn classify_connect_failure(err: &crate::errors::AppError) -> Option<&'static str> {
@@ -196,6 +200,16 @@ fn classify_connect_failure(err: &crate::errors::AppError) -> Option<&'static st
         Some("connect_unreachable")
     } else {
         None
+    }
+}
+
+/// 将会话建立后的中断错误归类为面向用户的错误码（前端 i18n 展示断开原因）。
+/// 心跳超时对用户有直接诊断价值：提示调大 keepalive 间隔可缓解 NAT 超时断连。
+fn classify_session_end_err(e: &russh::Error) -> &'static str {
+    match e {
+        russh::Error::KeepaliveTimeout => "keepalive_timeout",
+        russh::Error::Disconnect => "server_disconnected",
+        _ => "network_error",
     }
 }
 
@@ -1198,9 +1212,19 @@ async fn run_terminal(
             );
             tokio::pin!(connect_fut);
             let mut stages_alive = true;
+            // 建连总超时：TCP 阶段已有 15s 限时，这里兜底握手/认证悬挂。
+            // deadline 固定，sleep_until 分支到点即触发；认证的用户交互发生在
+            // connect_prepared 返回之后的弹窗循环里，不占此处预算
+            let connect_deadline = tokio::time::Instant::now() + CONNECT_TOTAL_TIMEOUT;
             loop {
                 tokio::select! {
                     res = &mut connect_fut => break res,
+                    _ = tokio::time::sleep_until(connect_deadline) => {
+                        break Err(AppError::Ssh(format!(
+                            "connect: timed out after {}s overall",
+                            CONNECT_TOTAL_TIMEOUT.as_secs()
+                        )));
+                    }
                     changed = stage_rx.changed(), if stages_alive => {
                         match changed {
                             Ok(()) => {
@@ -1572,6 +1596,10 @@ async fn run_terminal(
         }
     }
 
+    // 会话中断原因（session_end 帧下发给前端展示）：ExitStatus=shell 正常退出，
+    // channel 收发错误按 russh 错误细分（心跳超时/服务器断开/网络错误），
+    // 前端主动关 ws 的路径置 None 不发帧
+    let mut session_end_code: Option<&'static str> = None;
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
     // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续，
@@ -1595,7 +1623,10 @@ async fn run_terminal(
         tokio::select! {
             // 外部命令注入（POST /api/ssh/send/{sid}）
             Some(data) = cmd_rx.recv() => {
-                if channel.data(data.as_bytes()).await.is_err() { break; }
+                if let Err(e) = channel.data(data.as_bytes()).await {
+                    session_end_code = Some(classify_session_end_err(&e));
+                    break;
+                }
                 // marker 会话：按本次注入形态重置回显剥离目标——后缀并入式
                 // 只剥 `; printf …` 后缀（命令文本保留可见），独立上报行退路
                 // 剥整行
@@ -1626,7 +1657,10 @@ async fn run_terminal(
                                             data.as_bytes(),
                                             INPUT_BUF_LIMIT,
                                         );
-                                        if channel.data(data.as_bytes()).await.is_err() { break; }
+                                        if let Err(e) = channel.data(data.as_bytes()).await {
+                                            session_end_code = Some(classify_session_end_err(&e));
+                                            break;
+                                        }
                                         reset_idle(&mut idle_timer, idle_dur);
                                     }
                                     ClientMsg::Resize { cols, rows } => {
@@ -1639,7 +1673,10 @@ async fn run_terminal(
                                         if let Some(pwd) = sudo_password.as_deref() {
                                             if !pwd.is_empty() {
                                                 let payload = format!("{pwd}\r");
-                                                if channel.data(payload.as_bytes()).await.is_err() { break; }
+                                                if let Err(e) = channel.data(payload.as_bytes()).await {
+                                                    session_end_code = Some(classify_session_end_err(&e));
+                                                    break;
+                                                }
                                                 reset_idle(&mut idle_timer, idle_dur);
                                             }
                                         }
@@ -1649,19 +1686,24 @@ async fn run_terminal(
                                     ClientMsg::KbdAuthResponse { .. } => {}
                                     ClientMsg::HostKeyResponse { .. } => {}
                                 }
-                            } else if channel.data(s.as_bytes()).await.is_err() {
+                            } else if let Err(e) = channel.data(s.as_bytes()).await {
+                                session_end_code = Some(classify_session_end_err(&e));
                                 break;
                             } else {
                                 reset_idle(&mut idle_timer, idle_dur);
                             }
-                        } else if channel.data(s.as_bytes()).await.is_err() {
+                        } else if let Err(e) = channel.data(s.as_bytes()).await {
+                            session_end_code = Some(classify_session_end_err(&e));
                             break;
                         } else {
                             reset_idle(&mut idle_timer, idle_dur);
                         }
                     }
                     Some(Ok(Message::Binary(b))) => {
-                        if channel.data(&b[..]).await.is_err() { break; }
+                        if let Err(e) = channel.data(&b[..]).await {
+                            session_end_code = Some(classify_session_end_err(&e));
+                            break;
+                        }
                         reset_idle(&mut idle_timer, idle_dur);
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -1736,6 +1778,14 @@ async fn run_terminal(
                         reset_idle(&mut idle_timer, idle_dur);
                     }
                     Some(ChannelMsg::ExitStatus { exit_status: _ }) => {
+                        // shell 正常退出（用户 exit / 命令结束），非异常断开。
+                        // 此分支会主动关闭 ws，session_end 帧必须先于 close 发出
+                        session_end_code = Some("session_exited");
+                        let _ = ws_tx
+                            .send(Message::Text(
+                                "{\"kind\":\"session_end\",\"code\":\"session_exited\"}".into(),
+                            ))
+                            .await;
                         if !closed {
                             let _ = channel.eof().await;
                             let _ = ws_tx.close().await;
@@ -1743,12 +1793,19 @@ async fn run_terminal(
                         }
                         break;
                     }
-                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                    // 服务器关闭通道且无 exit status：shell 被杀或服务端主动断开
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                        session_end_code = Some("channel_closed");
+                        break;
+                    }
                     _ => {}
                 }
             }
             _ = &mut idle_timer, if idle_secs > 0 => {
-                if channel.data(&[0u8][..]).await.is_err() { break; }
+                if let Err(e) = channel.data(&[0u8][..]).await {
+                    session_end_code = Some(classify_session_end_err(&e));
+                    break;
+                }
                 reset_idle(&mut idle_timer, idle_dur);
             }
         }
@@ -1758,6 +1815,16 @@ async fn run_terminal(
     let tail_text = util::utf8_flush(&mut utf8_tail);
     if !tail_text.is_empty() {
         let _ = output_tx.send(tail_text);
+    }
+
+    // 会话中断原因下发（session_exited 已在 ExitStatus 分支先行发送）：
+    // 前端据此展示本地化断开原因（心跳超时/服务器断开/网络错误/通道关闭），
+    // 替代过去只能看到 "连接已关闭（code=1006）" 的盲区
+    if let Some(code) = session_end_code {
+        if code != "session_exited" {
+            let payload = serde_json::json!({ "kind": "session_end", "code": code }).to_string();
+            let _ = ws_tx.send(Message::Text(payload.into())).await;
+        }
     }
 
     Ok(())

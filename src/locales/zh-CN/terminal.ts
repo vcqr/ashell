@@ -100,8 +100,22 @@ export default {
   },
   sessionClosedTitle: "会话已断开",
   sessionClosedDetail: "「{target}」的会话已断开，可在标签页中重新连接。",
+  sessionClosedDetailReason: "「{target}」的会话已断开：{reason}",
+  sessionClosedBatchDetail: "{n} 个会话已断开，可回到对应标签页重新连接。",
+  sessionClosedBatchBody: "{n} 个 SSH 会话已断开",
   sessionClosingSoon: "「{target}」的会话已断开，标签页将在 {sec} 秒后自动关闭。",
+  sessionClosingSoonBatch: "「{target}」等 {n} 个会话已断开，标签页将在 {sec} 秒后自动关闭。",
   sessionCloseKeep: "保留标签页",
+  // 会话建立后的断开原因（后端 session_end 帧 code）
+  sessionEndCodes: {
+    session_exited: "Shell 会话已结束",
+    channel_closed: "服务器关闭了会话通道",
+    keepalive_timeout: "心跳超时，连接已断开（可尝试调大 keepalive 间隔）",
+    server_disconnected: "服务器主动断开了连接",
+    network_error: "网络错误导致连接中断",
+  },
+  autoReconnectStopped:
+    "已连续自动重连 {n} 次失败，已停止自动重连；按 Enter 或点击重连按钮可手动重试。",
   authRequiredNotice: "SSH 认证失败（密码可能已过期或被修改），请在弹窗中输入新密码",
   authPromptTitle: "SSH 身份验证",
   authPromptDesc: "{label} 密码验证失败：密码可能已在服务器上修改或过期，请输入新密码以继续。",
