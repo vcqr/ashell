@@ -128,6 +128,8 @@ export default {
     autoReconnect: "Auto-reconnect after unexpected disconnect",
     autoReconnectHint:
       'Retry with exponential backoff (starting at 1s, capped at 30s) after an unexpected drop — ideal for flaky networks and sleep/wake. Only meaningful with "Keep tab". Local terminals cannot reconnect.',
+    autoReconnectDisabledHint:
+      'Auto-close tab/window is selected, so reconnection is disabled. Switch back to "Keep tab" to re-enable.',
     groupShortcuts: "Shortcuts",
     tabShortcuts: "Tab shortcuts",
     tabShortcutsHint:

@@ -1,4 +1,5 @@
-import { computed, ref, watch, type InjectionKey, type ComputedRef } from "vue";
+import { computed, h, ref, watch, type InjectionKey, type ComputedRef } from "vue";
+import { NButton } from "naive-ui";
 import type { TerminalTab, HostNode } from "@/types";
 import { useAiStore } from "@/stores/ai";
 import { useBroadcastStore } from "@/stores/broadcast";
@@ -8,6 +9,8 @@ import { isTauri } from "@/utils/platform";
 import { useTerminalStore } from "@/stores/terminal";
 import { openTabInNewWindow } from "@/utils/newWindow";
 import { useHostsPin } from "@/composables/useHostsPin";
+import { notify } from "@/utils/notify";
+import i18n from "@/locales";
 
 /** TerminalView 通过 defineExpose 暴露的实例方法 */
 export type TerminalViewExposed = {
@@ -25,6 +28,9 @@ export type AiAssistantExposed = {
 };
 
 const TABS_KEY = "ashell:tabs";
+
+/** 正在倒计时自动关闭的 tab key：onerror/onclose 可能先后触发，防止重复弹倒计时 */
+const pendingCloseKeys = new Set<string>();
 
 /** 主机会话状态(取该主机所有 tab 中最活跃的状态),主机树/卡片视图的状态点用 */
 export type HostSessionStatus = NonNullable<TerminalTab["status"]>;
@@ -797,10 +803,15 @@ export function useTabs() {
   function onStatusChange(
     tabKey: string,
     status: NonNullable<TerminalTab["status"]>,
+    meta?: { cause?: "user" },
   ) {
     const t = tabs.value.find((x) => x.key === tabKey);
     if (!t) return;
     t.status = status;
+    // 收到 ready：标记本 tab 建立过会话（断开关闭策略只对建立过的会话生效）
+    if (status === "connected") {
+      t.everConnected = true;
+    }
     // SSH session 断开时 kill 对应 ssid 的 AI sidecar 并清理会话状态
     if ((status === "closed" || status === "error") && t.sid) {
       void aiStore.killFor(t.sid);
@@ -810,22 +821,121 @@ export function useTabs() {
       closeTab(tabKey);
       return;
     }
-    // 远程终端断开时根据用户设置执行退出策略
-    if (status === "closed" || status === "error") {
-      const action = terminalStore.disconnectAction;
-      if (action === "closeTab" || action === "closeWindow") {
-        closeTab(tabKey);
-        if (action === "closeWindow" && tabs.value.length === 0) {
-          if (isTauri) {
-            void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
-              getCurrentWindow().close(),
-            );
-          } else {
-            window.close();
-          }
-        }
+    if (status !== "closed" && status !== "error") return;
+    // 从未建立过会话的失败（服务器拒绝/超时/DNS 等）：保留标签页展示错误与
+    // 重连入口，不执行关闭策略——否则失败瞬间标签消失、错误无从查看，形同闪退。
+    // 失败原因由 TerminalView 直接 toast，这里只保证标签不被自动关掉
+    if (!t.everConnected) return;
+    const action = terminalStore.disconnectAction;
+    if (action === "closeTab" || action === "closeWindow") {
+      if (meta?.cause === "user") {
+        // 用户主动断开：立即执行，无需缓冲
+        applyDisconnectAction(tabKey, action);
+      } else {
+        scheduleDisconnectClose(t, action);
+      }
+      return;
+    }
+    // keep 策略：开启自动重连时不打扰（重连成功后自动恢复）；
+    // 未开自动重连时轻提示，避免用户在其他标签页错过断开事件
+    if (!terminalStore.autoReconnect) {
+      notifySessionClosed(t);
+    }
+  }
+
+  /** 执行退出策略：关标签；closeWindow 且无剩余标签时关窗口 */
+  function applyDisconnectAction(
+    tabKey: string,
+    action: "closeTab" | "closeWindow",
+  ) {
+    closeTab(tabKey);
+    if (action === "closeWindow" && tabs.value.length === 0) {
+      if (isTauri) {
+        void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+          getCurrentWindow().close(),
+        );
+      } else {
+        window.close();
       }
     }
+  }
+
+  /** 断开后自动关闭前的倒计时缓冲（秒） */
+  const PENDING_CLOSE_SECONDS = 5;
+
+  /**
+   * 会话断开且策略为自动关闭：先弹通知倒计时，给用户查阅现场/反悔的缓冲。
+   * 自动清理类设置的语义是"会话结束后帮我收拾"，不是"抹掉一切痕迹"，
+   * 静默瞬间关掉标签会让人误以为应用闪退。
+   */
+  function scheduleDisconnectClose(
+    t: TerminalTab,
+    action: "closeTab" | "closeWindow",
+  ) {
+    const tabKey = t.key;
+    if (pendingCloseKeys.has(tabKey)) return;
+    const api = notify();
+    if (!api) {
+      applyDisconnectAction(tabKey, action);
+      return;
+    }
+    pendingCloseKeys.add(tabKey);
+    const target = t.hostInfo
+      ? `${t.hostInfo.username}@${t.hostInfo.addr}`
+      : t.title;
+    const secLeft = ref(PENDING_CLOSE_SECONDS);
+    let timer: number | null = null;
+    const stop = () => {
+      if (timer !== null) window.clearInterval(timer);
+      timer = null;
+      pendingCloseKeys.delete(tabKey);
+    };
+    const keep = () => {
+      stop();
+      notif.destroy();
+    };
+    const apply = () => {
+      stop();
+      notif.destroy();
+      applyDisconnectAction(tabKey, action);
+    };
+    const gt = i18n.global.t;
+    const notif = api.create({
+      title: gt("terminal.sessionClosedTitle"),
+      content: () =>
+        h(
+          "span",
+          null,
+          gt("terminal.sessionClosingSoon", { target, sec: secLeft.value }),
+        ),
+      action: () =>
+        h(
+          NButton,
+          { size: "tiny", secondary: true, onClick: keep },
+          { default: () => gt("terminal.sessionCloseKeep") },
+        ),
+      duration: 0,
+      closable: false,
+    });
+    timer = window.setInterval(() => {
+      secLeft.value -= 1;
+      if (secLeft.value <= 0) apply();
+    }, 1000);
+  }
+
+  /** keep 策略且未开自动重连时的断开轻提示 */
+  function notifySessionClosed(t: TerminalTab) {
+    const api = notify();
+    if (!api) return;
+    const target = t.hostInfo
+      ? `${t.hostInfo.username}@${t.hostInfo.addr}`
+      : t.title;
+    api.create({
+      type: "warning",
+      title: i18n.global.t("terminal.sessionClosedTitle"),
+      content: i18n.global.t("terminal.sessionClosedDetail", { target }),
+      duration: 6000,
+    });
   }
 
   function onTitleChange(tabKey: string, title: string) {

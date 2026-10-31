@@ -8,7 +8,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
 use crate::errors::{AppError, KbdPrompt};
@@ -157,9 +157,46 @@ const AUTH_INPUT_TIMEOUT: Duration = Duration::from_secs(300);
 /// 认证重试次数上限：防止错误密码经 WS 无限暴力尝试
 const MAX_AUTH_ATTEMPTS: u32 = 5;
 
-async fn send_fatal(ws_tx: &mut SplitSink<WebSocket, Message>, message: &str) {
-    let payload = serde_json::json!({ "kind": "fatal", "message": message }).to_string();
+/// 下发致命错误帧。`code` 是可选的错误分类码（如 connect_refused），
+/// 前端据此映射 i18n 文案做全局提示；无码时展示原始 message。
+async fn send_fatal(
+    ws_tx: &mut SplitSink<WebSocket, Message>,
+    message: &str,
+    code: Option<&str>,
+) {
+    let mut payload = serde_json::json!({ "kind": "fatal", "message": message });
+    if let Some(code) = code {
+        payload["code"] = serde_json::json!(code);
+    }
+    let _ = ws_tx.send(Message::Text(payload.to_string().into())).await;
+}
+
+/// 下发建连进度帧（阶段文案由前端 i18n）
+async fn send_progress(ws_tx: &mut SplitSink<WebSocket, Message>, stage: &str) {
+    let payload = serde_json::json!({ "kind": "progress", "stage": stage }).to_string();
     let _ = ws_tx.send(Message::Text(payload.into())).await;
+}
+
+/// 将建连失败的底层错误归类为面向用户的错误码（前端据此做 i18n 全局提示）。
+/// 命中常见网络错误时返回分类码；其余（罕见 IO 错误等）返回 None，前端展示原文。
+fn classify_connect_failure(err: &crate::errors::AppError) -> Option<&'static str> {
+    let msg = err.to_string().to_ascii_lowercase();
+    if msg.contains("refused") {
+        Some("connect_refused")
+    } else if msg.contains("timed out") || msg.contains("timeout") {
+        Some("connect_timeout")
+    } else if msg.contains("failed to lookup")
+        || msg.contains("name or service not known")
+        || msg.contains("nodename nor servname")
+        || msg.contains("no address")
+        || msg.contains("name resolution")
+    {
+        Some("connect_dns")
+    } else if msg.contains("unreachable") || msg.contains("network is down") {
+        Some("connect_unreachable")
+    } else {
+        None
+    }
 }
 
 async fn send_pong(ws_tx: &mut SplitSink<WebSocket, Message>) {
@@ -193,7 +230,7 @@ async fn request_new_password(
     loop {
         tokio::select! {
             _ = &mut deadline => {
-                send_fatal(ws_tx, "等待输入新密码超时").await;
+                send_fatal(ws_tx, "等待输入新密码超时", Some("input_timeout")).await;
                 return None;
             }
             frame = ws_rx.next() => {
@@ -252,7 +289,7 @@ async fn request_new_passphrase(
     loop {
         tokio::select! {
             _ = &mut deadline => {
-                send_fatal(ws_tx, "等待输入 passphrase 超时").await;
+                send_fatal(ws_tx, "等待输入 passphrase 超时", Some("input_timeout")).await;
                 return None;
             }
             frame = ws_rx.next() => {
@@ -320,7 +357,7 @@ async fn request_kbd_answers(
     loop {
         tokio::select! {
             _ = &mut deadline => {
-                send_fatal(ws_tx, "等待输入认证信息超时").await;
+                send_fatal(ws_tx, "等待输入认证信息超时", Some("input_timeout")).await;
                 return None;
             }
             frame = ws_rx.next() => {
@@ -385,7 +422,7 @@ async fn request_hostkey_confirm(
     loop {
         tokio::select! {
             _ = &mut deadline => {
-                send_fatal(ws_tx, "等待主机密钥确认超时").await;
+                send_fatal(ws_tx, "等待主机密钥确认超时", Some("input_timeout")).await;
                 return None;
             }
             frame = ws_rx.next() => {
@@ -1096,17 +1133,34 @@ async fn run_terminal(
 
     // 1) 取主机并解密凭证
     let mut host =
-        service::host::get_with_credentials(&state.db, &state.config.crypto_key, host_id)
+        match service::host::get_with_credentials(&state.db, &state.config.crypto_key, host_id)
             .await
-            .map_err(|e| anyhow::anyhow!("load host: {e}"))?;
+        {
+            Ok(h) => h,
+            Err(e) => {
+                send_fatal(&mut ws_tx, &format!("加载主机配置失败: {e}"), Some("load_host")).await;
+                anyhow::bail!("load host: {e}");
+            }
+        };
 
     // 跳板机凭证缓存：认证失败重试时原地更新，避免每轮重新解密加载
     let mut jump_host: Option<Host> = match host.jump_host_id {
-        Some(jid) => Some(
-            service::host::get_with_credentials(&state.db, &state.config.crypto_key, jid)
+        Some(jid) => {
+            match service::host::get_with_credentials(&state.db, &state.config.crypto_key, jid)
                 .await
-                .map_err(|e| anyhow::anyhow!("load jump host: {e}"))?,
-        ),
+            {
+                Ok(j) => Some(j),
+                Err(e) => {
+                    send_fatal(
+                        &mut ws_tx,
+                        &format!("加载跳板机配置失败: {e}"),
+                        Some("load_host"),
+                    )
+                    .await;
+                    anyhow::bail!("load jump host: {e}");
+                }
+            }
+        }
         None => None,
     };
 
@@ -1120,17 +1174,47 @@ async fn run_terminal(
     // 会互相覆盖，双端都要交互时永远无法收敛；密码重输后旧应答序列失效
     let mut kbd_jump: Vec<String> = Vec::new();
     let mut kbd_target: Vec<String> = Vec::new();
+    // 建连阶段旁路通道：connect_prepared 内部同步上报阶段变化（TCP/握手/认证），
+    // 这里在 select 中转成 ws progress 帧——对建连 future 只轮询不取消，
+    // 保证 select 等待进度时不会中断正在进行的建连
+    let (stage_tx, mut stage_rx) = watch::channel(ssh_svc::ConnectStage::Tcp);
+    let stage_reporter_impl = |stage| {
+        let _ = stage_tx.send(stage);
+    };
+    let stage_reporter: &ssh_svc::StageReporter<'_> = &stage_reporter_impl;
     let session_arc = loop {
         let (jump_kbd, target_kbd): (&[String], &[String]) =
             (kbd_jump.as_slice(), kbd_target.as_slice());
-        match Session::connect_prepared(
-            &state.db,
-            jump_host.as_ref(),
-            &host,
-            jump_kbd,
-            target_kbd,
-        )
-        .await
+        // 块作用域内完成建连轮询：future 持有 jump_host/host/kbd_* 的借用，
+        // 出块即释放，后续 match 分支才能原地更新这些凭证
+        let connect_result = {
+            let connect_fut = Session::connect_prepared(
+                &state.db,
+                jump_host.as_ref(),
+                &host,
+                jump_kbd,
+                target_kbd,
+                stage_reporter,
+            );
+            tokio::pin!(connect_fut);
+            let mut stages_alive = true;
+            loop {
+                tokio::select! {
+                    res = &mut connect_fut => break res,
+                    changed = stage_rx.changed(), if stages_alive => {
+                        match changed {
+                            Ok(()) => {
+                                let stage = *stage_rx.borrow_and_update();
+                                send_progress(&mut ws_tx, stage.as_str()).await;
+                            }
+                            // 发送端随闭包存活到建连结束，不会 drop；防御性停用分支避免忙轮询
+                            Err(_) => stages_alive = false,
+                        }
+                    }
+                }
+            }
+        };
+        match connect_result
         {
             Ok(s) => break Arc::new(s),
             Err(AppError::HostKeyVerify {
@@ -1163,14 +1247,14 @@ async fn run_terminal(
                         )
                         .await
                         {
-                            send_fatal(&mut ws_tx, &format!("保存主机指纹失败: {e}")).await;
+                            send_fatal(&mut ws_tx, &format!("保存主机指纹失败: {e}"), None).await;
                             anyhow::bail!("save trusted host key failed: {e}");
                         }
                         log::info!("host key trusted for {label} ({key_type})");
                         // 信任写库后继续循环重试建连
                     }
                     _ => {
-                        send_fatal(&mut ws_tx, "主机密钥未被信任，连接已取消").await;
+                        send_fatal(&mut ws_tx, "主机密钥未被信任，连接已取消", Some("hostkey_rejected")).await;
                         anyhow::bail!("host key rejected for {label}");
                     }
                 }
@@ -1178,7 +1262,7 @@ async fn run_terminal(
             Err(AppError::AuthFailed { host_id: failed_id }) => {
                 attempts += 1;
                 if attempts >= MAX_AUTH_ATTEMPTS {
-                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试").await;
+                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试", Some("auth_exhausted")).await;
                     anyhow::bail!("ssh auth failed after {attempts} attempts");
                 }
                 let is_jump = jump_host.as_ref().is_some_and(|j| j.id == failed_id);
@@ -1208,7 +1292,7 @@ async fn run_terminal(
                         kbd_target.clear();
                     }
                     None => {
-                        send_fatal(&mut ws_tx, "认证已取消").await;
+                        send_fatal(&mut ws_tx, "认证已取消", Some("auth_cancelled")).await;
                         anyhow::bail!("auth cancelled by user");
                     }
                 }
@@ -1222,7 +1306,7 @@ async fn run_terminal(
             }) => {
                 attempts += 1;
                 if attempts >= MAX_AUTH_ATTEMPTS {
-                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试").await;
+                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试", Some("auth_exhausted")).await;
                     anyhow::bail!("ssh keyboard-interactive failed after {attempts} attempts");
                 }
                 let is_jump = jump_host.as_ref().is_some_and(|j| j.id == failed_id);
@@ -1255,7 +1339,7 @@ async fn run_terminal(
                         }
                     }
                     None => {
-                        send_fatal(&mut ws_tx, "认证已取消").await;
+                        send_fatal(&mut ws_tx, "认证已取消", Some("auth_cancelled")).await;
                         anyhow::bail!("keyboard-interactive auth cancelled by user");
                     }
                 }
@@ -1263,7 +1347,7 @@ async fn run_terminal(
             Err(AppError::KeyPassphraseRequired { host_id: failed_id }) => {
                 attempts += 1;
                 if attempts >= MAX_AUTH_ATTEMPTS {
-                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试").await;
+                    send_fatal(&mut ws_tx, "多次认证失败，已停止重试", Some("auth_exhausted")).await;
                     anyhow::bail!("ssh key passphrase failed after {attempts} attempts");
                 }
                 let is_jump = jump_host.as_ref().is_some_and(|j| j.id == failed_id);
@@ -1298,12 +1382,21 @@ async fn run_terminal(
                         target.key_passphrase = Some(passphrase);
                     }
                     None => {
-                        send_fatal(&mut ws_tx, "认证已取消").await;
+                        send_fatal(&mut ws_tx, "认证已取消", Some("auth_cancelled")).await;
                         anyhow::bail!("key passphrase prompt cancelled by user");
                     }
                 }
             }
-            Err(e) => return Err(anyhow::anyhow!("ssh connect: {e}")),
+            Err(e) => {
+                // 未连上的建连失败（拒绝/超时/DNS 等）：分类后下发 fatal 帧，
+                // 前端据此做 i18n 全局提示并保留标签页，而不是无声地关掉
+                let code = classify_connect_failure(&e);
+                // AppError::Ssh 的 Display 自带 "ssh error: " 前缀，剥掉避免与"连接失败"叠词
+                let detail = e.to_string();
+                let detail = detail.trim_start_matches("ssh error: ");
+                send_fatal(&mut ws_tx, &format!("连接失败：{detail}"), code).await;
+                return Err(anyhow::anyhow!("ssh connect: {e}"));
+            }
         }
     };
     // 把 sid 写入 client handler，使远程转发回连能路由到本会话
@@ -1322,15 +1415,40 @@ async fn run_terminal(
     //    连接上的第一个会话打印 Last login/MOTD，先开 sftp 子系统会让 shell 会话
     //    的欢迎信息（Last login / uname / Welcome...）整体消失，提示符前一片空白
     //    （阿里云 Debian 13 实测复现）。
-    let mut channel = session_arc.channel_open_session().await?;
-    channel
+    send_progress(&mut ws_tx, "shell").await;
+    let mut channel = match session_arc.channel_open_session().await {
+        Ok(c) => c,
+        Err(e) => {
+            send_fatal(
+                &mut ws_tx,
+                &format!("打开终端会话失败: {e}"),
+                Some("open_session"),
+            )
+            .await;
+            anyhow::bail!("open session channel: {e}");
+        }
+    };
+    if let Err(e) = channel
         .request_pty(false, &q.term, q.cols, q.rows, 0, 0, &[])
         .await
-        .map_err(|e| anyhow::anyhow!("request pty: {e}"))?;
-    channel
-        .request_shell(true)
-        .await
-        .map_err(|e| anyhow::anyhow!("request shell: {e}"))?;
+    {
+        send_fatal(
+            &mut ws_tx,
+            &format!("打开终端会话失败: {e}"),
+            Some("open_session"),
+        )
+        .await;
+        anyhow::bail!("request pty: {e}");
+    }
+    if let Err(e) = channel.request_shell(true).await {
+        send_fatal(
+            &mut ws_tx,
+            &format!("打开终端会话失败: {e}"),
+            Some("open_session"),
+        )
+        .await;
+        anyhow::bail!("request shell: {e}");
+    }
 
     // 4) sftp 子通道预热：放后台任务执行。open_sftp 在堡垒机上可能很慢
     //    （GateShell 的 sftp 是惰性仿真代理，后续会话初始化实测 >10s）甚至

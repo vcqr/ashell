@@ -40,6 +40,7 @@ import TemplateDrawer from "@/components/TemplateDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
 import LoginGate from "@/components/LoginGate.vue";
+import NotifyBridge from "@/components/NotifyBridge.vue";
 import { isTauri } from "@/utils/platform";
 import { installTauriDblclickGuard, onTitlebarDblclick } from "@/utils/titlebar";
 import { installDevtoolsShortcut } from "@/utils/devtools";
@@ -509,6 +510,7 @@ if (!isTauri) {
     <NMessageProvider>
       <NDialogProvider>
         <NNotificationProvider>
+          <NotifyBridge />
           <LoginGate>
             <UpdateChecker v-if="isTauri && !soloSftp && !soloAi && !soloHostInfo" />
             <SftpWindow v-if="soloSftp" />

@@ -17,7 +17,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links"
 import { Unicode11Addon } from "@xterm/addon-unicode11"
 import { LigaturesAddon } from "@xterm/addon-ligatures"
 import { SerializeAddon } from "@xterm/addon-serialize"
-import { NCheckbox, NIcon, NInput, NModal, NTooltip, NButton } from "naive-ui"
+import { NCheckbox, NIcon, NInput, NModal, NTooltip, NButton, useMessage } from "naive-ui"
 
 import { pasteText, copyText, sanitizePastedText } from "@/utils/clipboard"
 import { openExternal } from "@/utils/platform"
@@ -58,12 +58,14 @@ type TermStatus = "connecting" | "connected" | "closed" | "error"
 
 const emit = defineEmits<{
   (e: "sid-ready", tabKey: string, sid: string): void
-  (e: "status-change", tabKey: string, status: TermStatus): void
+  (e: "status-change", tabKey: string, status: TermStatus, meta?: { cause?: "user" }): void
   (e: "title-change", tabKey: string, title: string): void
   (e: "cwd-change", tabKey: string, cwd: string): void
   (e: "send-to-ai", tabKey: string, text: string): void
   (e: "close-tab", tabKey: string): void
 }>()
+
+const message = useMessage()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 /** 主题背景色（随壁纸/窗口透明度联动）：涂在 .terminal-host 上填补画布网格外余量 */
@@ -87,7 +89,7 @@ let disposed = false
 // 广播投递失败提示的限频时间戳（fanout 按键级触发）
 let lastBroadcastWarnAt = 0
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const apiStore = useApiStore()
 const termStore = useTerminalStore()
 const broadcastStore = useBroadcastStore()
@@ -199,6 +201,19 @@ const showReconnectBtn = ref(false)
 const currentStatus = ref<TermStatus>("connecting")
 const showConnectingOverlay = ref(false)
 let connectingOverlayTimer: number | null = null
+
+// ===== 建连过程跟踪 =====
+/** 本轮 ws 是否建立过会话（收到 ready）。区分"从未连上"与"连上后断开"：
+ * 从未连上的失败保留标签页展示错误；每次 connectWs 开始时重置 */
+let everConnected = false
+/** 最近一次 fatal 帧的原文与错误码（从未连上的失败时用于全局提示） */
+let lastFatalReason = ""
+let lastFatalCode = ""
+/** 建连阶段（SSH 由后端 progress 帧驱动；本地/串口/telnet 无阶段上报走默认文案） */
+const progressStage = ref<"tcp" | "handshake" | "auth" | "shell">("tcp")
+/** 建连已等待秒数：连接慢时回答"它是死了还是在努力" */
+const connectElapsed = ref(0)
+let connectElapsedTimer: number | null = null
 
 // ===== SSH 认证失败重试弹窗（密码过期 / 被修改后重新输入） =====
 const authPromptVisible = ref(false)
@@ -347,10 +362,16 @@ function applyTheme() {
   terminalBackground.value = String(theme.background ?? "transparent")
 }
 
-function setStatus(status: TermStatus) {
+function setStatus(status: TermStatus, meta?: { cause?: "user" }) {
   currentStatus.value = status
-  emit("status-change", props.tab.key, status)
+  emit("status-change", props.tab.key, status, meta)
   if (status === "connecting") {
+    connectElapsed.value = 0
+    if (connectElapsedTimer === null) {
+      connectElapsedTimer = window.setInterval(() => {
+        connectElapsed.value += 1
+      }, 1000)
+    }
     if (connectingOverlayTimer === null) {
       connectingOverlayTimer = window.setTimeout(() => {
         if (currentStatus.value === "connecting") {
@@ -360,6 +381,10 @@ function setStatus(status: TermStatus) {
       }, 300)
     }
   } else {
+    if (connectElapsedTimer !== null) {
+      window.clearInterval(connectElapsedTimer)
+      connectElapsedTimer = null
+    }
     if (connectingOverlayTimer !== null) {
       window.clearTimeout(connectingOverlayTimer)
       connectingOverlayTimer = null
@@ -368,11 +393,33 @@ function setStatus(status: TermStatus) {
   }
 }
 
+/** 连接失败提示里的原因文案：优先错误码 i18n，其次后端原文，最后通用兜底 */
+function connectFailReason(): string {
+  if (lastFatalCode && te(`terminal.fatalCodes.${lastFatalCode}`)) {
+    return t(`terminal.fatalCodes.${lastFatalCode}`)
+  }
+  if (lastFatalReason) return lastFatalReason
+  return t("terminal.connectFailedUnknown")
+}
+
 const connectingLabel = computed(() => {
   const kind = props.tab.kind
   if (kind === "local") return t("terminal.connectingLocal")
   if (kind === "serial") return t("terminal.connectingSerial")
-  return t("terminal.connecting")
+  if (kind === "telnet") return t("terminal.connecting")
+  // SSH：按后端 progress 帧切换分阶段文案（tcp → handshake → auth → shell）
+  return t(`terminal.progress.${progressStage.value}`)
+})
+
+/** 已等待秒数只在远程 SSH 连接且超过 3 秒后展示，避免快连场景闪一下 */
+const showConnectElapsed = computed(() => {
+  const kind = props.tab.kind
+  return (
+    connectElapsed.value >= 3 &&
+    kind !== "local" &&
+    kind !== "serial" &&
+    kind !== "telnet"
+  )
 })
 
 const connectingTarget = computed(() => {
@@ -1175,6 +1222,9 @@ function scheduleAutoReconnect() {
   cancelAutoReconnect()
   if (disposed) return
   if (!termStore.autoReconnect) return
+  // 与"断开自动关闭标签/窗口"策略互斥：标签马上要关了，重连没有意义，
+  // 且重连定时器会随组件销毁失效。设置页选择关闭策略时会联动关掉此开关
+  if (termStore.disconnectAction !== "keep") return
   if (props.tab.kind === "local") return
   reconnectAttempts += 1
   const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), AUTO_RECONNECT_MAX_DELAY)
@@ -1229,6 +1279,12 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
   // 防御性清理：正常调用方（onMounted / reconnect）此时 ws 应为 null
   teardownWs()
   showReconnectBtn.value = false
+  // 新一轮建连：重置"是否建立过会话"与失败原因。
+  // 重连失败按"从未连上"处理（保留标签页 + 错误提示），不视为会话被断开
+  everConnected = false
+  lastFatalReason = ""
+  lastFatalCode = ""
+  progressStage.value = "tcp"
   const isLocal = props.tab.kind === "local"
   const isTelnet = props.tab.kind === "telnet"
   const isSerial = props.tab.kind === "serial"
@@ -1315,6 +1371,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         const msg = JSON.parse(data) as { kind?: string; sid?: string }
         if (msg.kind === "ready" && typeof msg.sid === "string") {
           emit("sid-ready", props.tab.key, msg.sid)
+          everConnected = true
           setStatus("connected")
           // 认证重试成功：复位弹窗状态
           authSubmitting.value = false
@@ -1339,8 +1396,24 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           }
           return
         }
+        if (msg.kind === "progress") {
+          // 建连阶段帧（tcp/handshake/auth/shell）：驱动连接中浮层的分阶段文案。
+          // 必须在"未知帧写终端"兜底之前处理，否则会当文本打进终端
+          const m = msg as { stage?: string }
+          if (
+            m.stage === "tcp" ||
+            m.stage === "handshake" ||
+            m.stage === "auth" ||
+            m.stage === "shell"
+          ) {
+            progressStage.value = m.stage
+          }
+          return
+        }
         if (msg.kind === "fatal") {
-          const m = msg as { message?: string }
+          const m = msg as { message?: string; code?: string }
+          lastFatalReason = m.message ?? ""
+          lastFatalCode = m.code ?? ""
           term?.writeln(`\r\n\x1b[31m[ashell] ${m.message ?? t("terminal.connFatal")}\x1b[0m`)
           return
         }
@@ -1435,26 +1508,44 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     authPromptVisible.value = false
     authSubmitting.value = false
     hostkeyVisible.value = false
-    setStatus("closed")
+    const neverConnected = !everConnected
+    // 从未连上的失败标为 error（区别于会话正常断开的 closed），保留标签页展示错误
+    setStatus(neverConnected ? "error" : "closed")
     // local 终端 shell 进程已退出，无法重连，直接关闭 tab
     if (props.tab.kind === "local") {
       emit("close-tab", props.tab.key)
       return
     }
     showReconnectBtn.value = true
-    if (term) {
+    if (term && !(neverConnected && lastFatalReason)) {
+      // fatal 帧已写过具体失败原因时不再重复写关闭码，避免同屏两行报错
       const reason = ev.reason ? `: ${ev.reason}` : ""
       term.writeln(`\r\n\x1b[31m[ashell] ${t("terminal.connClosed", { code: ev.code, reason })}\x1b[0m`)
       term.writeln(`\x1b[33m[ashell] ${t("terminal.sessionClosed")}\x1b[0m`)
     }
     if (authCancelledByUser || hostkeyDeclinedByUser) {
-      // 用户在认证/主机密钥弹窗点了取消或拒绝：本轮不自动重连，
+      // 用户在认证/主机密钥弹窗点了取消或拒绝：本轮不自动重连、不额外提示，
       // 避免弹窗随退避反复出现
       authCancelledByUser = false
       hostkeyDeclinedByUser = false
       return
     }
-    scheduleAutoReconnect()
+    if (neverConnected) {
+      // 从未连上（服务器拒绝/超时/DNS 等）：全局 toast 带出原因。
+      // 自动重连的静默重试（reconnectAttempts > 0）不提示，避免连点轰炸
+      if (reconnectAttempts === 0) {
+        message.error(
+          t("terminal.connectFailedToast", {
+            target: connectingTarget.value,
+            reason: connectFailReason(),
+          }),
+        )
+      }
+    } else if (termStore.disconnectAction === "keep") {
+      // 会话建立后被断开：仅 keep 策略保留自动重连；
+      // 自动关闭策略下标签即将关闭，重连没有意义（关闭决策见 useTabs）
+      scheduleAutoReconnect()
+    }
   }
 }
 
@@ -1623,7 +1714,7 @@ function cancelConnect() {
   clearHeartbeat()
   resetTextProgress()
   disarmSudo()
-  setStatus("closed")
+  setStatus("closed", { cause: "user" })
   showReconnectBtn.value = true
   reconnectAttempts = 0
   term?.writeln(`\r\n\x1b[33m[ashell] ${t("terminal.connectingCancelled")}\x1b[0m`)
@@ -1635,7 +1726,7 @@ function disconnect() {
   resetTextProgress()
   disarmSudo()
   teardownWs()
-  setStatus("closed")
+  setStatus("closed", { cause: "user" })
   reconnectAttempts = 0
   term?.writeln("\r\n\x1b[33m[ashell] " + t("terminal.disconnectedByUser") + "\x1b[0m")
 }
@@ -1768,6 +1859,10 @@ onBeforeUnmount(() => {
   if (connectingOverlayTimer !== null) {
     window.clearTimeout(connectingOverlayTimer)
     connectingOverlayTimer = null
+  }
+  if (connectElapsedTimer !== null) {
+    window.clearInterval(connectElapsedTimer)
+    connectElapsedTimer = null
   }
   // 撤销 broadcast 注册，让广播配置面板里残留的 key 失效（store.purgeKey 也会顺带由 App.vue 调）
   broadcastStore.unregisterSender(props.tab.key)
@@ -2047,6 +2142,9 @@ onBeforeUnmount(() => {
         </div>
         <div class="connecting-info">
           <span class="connecting-label">{{ connectingLabel }}</span>
+          <span v-if="showConnectElapsed" class="connecting-elapsed">
+            {{ t('terminal.connectingElapsed', { sec: connectElapsed }) }}
+          </span>
           <span v-if="connectingTarget" class="connecting-target">{{ connectingTarget }}</span>
         </div>
         <div class="connecting-dots">
@@ -2717,6 +2815,13 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--ashell-text-muted, rgba(255, 255, 255, 0.55));
   letter-spacing: 0.4px;
+}
+
+.connecting-elapsed {
+  font-size: 11px;
+  color: var(--ashell-text-muted, rgba(255, 255, 255, 0.55));
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 .connecting-target {

@@ -27,6 +27,40 @@ use crate::service::host as host_svc;
 use crate::service::known_host;
 use crate::service::sftp as sftp_svc;
 
+/// TCP 连接（含 DNS 解析）限时：连不可达主机时系统默认 TCP 超时可达 75s 以上，
+/// 前端会一直停在"连接中"，此处主动限时并把超时归类为可读错误反馈给用户
+const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// SSH 建连阶段（终端 WS 据此驱动前端"连接中"浮层的分阶段文案）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectStage {
+    /// 建立 TCP 连接（含 DNS 解析；跳板机模式下含 direct-tcpip 通道请求）
+    Tcp,
+    /// SSH 握手与主机密钥校验
+    Handshake,
+    /// 用户认证（密码 / 私钥 / keyboard-interactive）
+    Auth,
+}
+
+impl ConnectStage {
+    /// 前端 progress 帧里的 stage 字符串
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConnectStage::Tcp => "tcp",
+            ConnectStage::Handshake => "handshake",
+            ConnectStage::Auth => "auth",
+        }
+    }
+}
+
+/// 建连阶段上报回调：同步调用（只做内存写，不做异步 IO）
+pub type StageReporter<'a> = dyn Fn(ConnectStage) + Send + Sync + 'a;
+
+/// 无上报的回调（REST SFTP 等非交互调用方使用）
+pub fn noop_stage_reporter() -> &'static StageReporter<'static> {
+    &|_| {}
+}
+
 static SSH_CLIENT_MAP: Lazy<RwLock<HashMap<String, Arc<Session>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
@@ -368,13 +402,13 @@ impl Session {
     /// 隧道到目标机，再在隧道上完成目标机的 SSH 握手（仅支持一级跳板）。
     pub async fn connect(pool: &DbPool, crypto_key: &[u8; 32], host: &Host) -> AppResult<Self> {
         let Some(jump_id) = host.jump_host_id else {
-            return Self::connect_direct(pool, host, &[]).await;
+            return Self::connect_direct(pool, host, &[], noop_stage_reporter()).await;
         };
 
         let jump_host = host_svc::get_with_credentials(pool, crypto_key, jump_id)
             .await
             .map_err(|e| AppError::Ssh(format!("load jump host {jump_id}: {e}")))?;
-        Self::connect_via(pool, &jump_host, host, &[], &[]).await
+        Self::connect_via(pool, &jump_host, host, &[], &[], noop_stage_reporter()).await
     }
 
     /// 用调用方准备好的（已解密）跳板机配置连接目标主机。
@@ -390,10 +424,11 @@ impl Session {
         host: &Host,
         jump_kbd: &[String],
         kbd_answers: &[String],
+        progress: &StageReporter<'_>,
     ) -> AppResult<Self> {
         match jump_host {
-            Some(j) => Self::connect_via(pool, j, host, jump_kbd, kbd_answers).await,
-            None => Self::connect_direct(pool, host, kbd_answers).await,
+            Some(j) => Self::connect_via(pool, j, host, jump_kbd, kbd_answers, progress).await,
+            None => Self::connect_direct(pool, host, kbd_answers, progress).await,
         }
     }
 
@@ -406,6 +441,7 @@ impl Session {
         host: &Host,
         jump_kbd: &[String],
         kbd_answers: &[String],
+        progress: &StageReporter<'_>,
     ) -> AppResult<Self> {
         if jump_host.protocol != "ssh" {
             return Err(AppError::Ssh("jump host must use SSH protocol".into()));
@@ -415,7 +451,9 @@ impl Session {
             .port
             .parse()
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
-        let jump_sess = Self::connect_direct(pool, jump_host, jump_kbd).await?;
+        let jump_sess = Self::connect_direct(pool, jump_host, jump_kbd, progress).await?;
+        // 经跳板机向目标机发起 direct-tcpip 通道，语义上等同目标机的"TCP 连接"阶段
+        progress(ConnectStage::Tcp);
         let channel = jump_sess
             .channel_open_direct_tcpip(&host.addr, port, "127.0.0.1", 0)
             .await
@@ -432,7 +470,7 @@ impl Session {
                 AppError::Ssh(format!("{msg}；{hint}"))
             })?;
 
-        let mut sess = Self::connect_stream(pool, host, channel.into_stream(), kbd_answers)
+        let mut sess = Self::connect_stream(pool, host, channel.into_stream(), kbd_answers, progress)
             .await
             .map_err(|e| match e {
                 // 结构化错误（主机密钥确认 / 交互认证 / 密码 / 密钥口令）由
@@ -451,7 +489,12 @@ impl Session {
     }
 
     /// 直接 TCP 连接目标主机
-    async fn connect_direct(pool: &DbPool, host: &Host, kbd_answers: &[String]) -> AppResult<Self> {
+    async fn connect_direct(
+        pool: &DbPool,
+        host: &Host,
+        kbd_answers: &[String],
+        progress: &StageReporter<'_>,
+    ) -> AppResult<Self> {
         let port: u16 = host
             .port
             .parse()
@@ -460,7 +503,33 @@ impl Session {
 
         let (handler, sid_slot, pending_key, banner_slot) =
             ClientHandler::new(host.id, host.addr.clone(), port, pool.clone());
-        let result = client::connect(Self::build_config(host), addr, handler).await;
+        // 手动建 TCP（限时）后再在流上完成 SSH 握手：与 russh client::connect 的
+        // 内部流程一致，但能区分"TCP 连不上"与"握手失败"两个阶段并分别限时/上报
+        progress(ConnectStage::Tcp);
+        let stream =
+            match tokio::time::timeout(TCP_CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr))
+                .await
+            {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    log::error!("SSH TCP connect failed for {}:{}: {e}", host.addr, port);
+                    return Err(AppError::Ssh(format!("connect: {e}")));
+                }
+                Err(_) => {
+                    log::error!(
+                        "SSH TCP connect to {}:{} timed out after {}s",
+                        host.addr,
+                        port,
+                        TCP_CONNECT_TIMEOUT.as_secs()
+                    );
+                    return Err(AppError::Ssh(format!(
+                        "connect: timed out after {}s",
+                        TCP_CONNECT_TIMEOUT.as_secs()
+                    )));
+                }
+            };
+        progress(ConnectStage::Handshake);
+        let result = client::connect_stream(Self::build_config(host), stream, handler).await;
         let mut handle = match result {
             Ok(h) => h,
             Err(e) => {
@@ -469,7 +538,7 @@ impl Session {
             }
         };
 
-        Self::authenticate(&mut handle, host, kbd_answers).await?;
+        Self::authenticate(&mut handle, host, kbd_answers, progress).await?;
 
         Ok(Self {
             handle: AsyncMutex::new(handle),
@@ -485,6 +554,7 @@ impl Session {
         host: &Host,
         stream: R,
         kbd_answers: &[String],
+        progress: &StageReporter<'_>,
     ) -> AppResult<Self>
     where
         R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -495,13 +565,14 @@ impl Session {
             .map_err(|_| AppError::BadRequest(format!("invalid port: {}", host.port)))?;
         let (handler, sid_slot, pending_key, banner_slot) =
             ClientHandler::new(host.id, host.addr.clone(), port, pool.clone());
+        progress(ConnectStage::Handshake);
         let result = client::connect_stream(Self::build_config(host), stream, handler).await;
         let mut handle = match result {
             Ok(h) => h,
             Err(e) => return Err(Self::map_connect_err(e, &pending_key, host, port).await),
         };
 
-        Self::authenticate(&mut handle, host, kbd_answers).await?;
+        Self::authenticate(&mut handle, host, kbd_answers, progress).await?;
 
         Ok(Self {
             handle: AsyncMutex::new(handle),
@@ -557,7 +628,9 @@ impl Session {
         handle: &mut Handle<ClientHandler>,
         host: &Host,
         kbd_answers: &[String],
+        progress: &StageReporter<'_>,
     ) -> AppResult<()> {
+        progress(ConnectStage::Auth);
         // 优先使用密码认证（行为与 demo 保持一致）
         let mut authed = false;
         if let Some(pwd) = host.password.as_deref() {

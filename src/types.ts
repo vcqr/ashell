@@ -251,6 +251,10 @@ export interface TerminalTab {
   color?: string | null
   /** 连接状态 */
   status?: 'connecting' | 'connected' | 'closed' | 'error'
+  /** 本 tab 是否建立过会话（收到过 ready）。运行时状态，不持久化：
+   *  "连接断开时自动关闭标签" 策略只对建立过的会话生效，
+   *  从未连上的失败（服务器拒绝/超时等）保留标签页展示错误 */
+  everConnected?: boolean
   /** 本地 PTY tab 使用的 shell 名（powershell/pwsh/cmd/bash/zsh/...）。 */
   shell?: string | null
   /** 终端当前工作目录（本地 shell 由后端注入 OSC 9;9 上报，远程依赖用户 shell 集成；驱动本地文件抽屉与 SFTP 远程栏目录跟随；不持久化） */

@@ -84,6 +84,18 @@ const disconnectOptions = computed(() => [
   { label: t("settings.terminal.disconnectActions.closeTab"), value: "closeTab" as DisconnectAction },
   { label: t("settings.terminal.disconnectActions.closeWindow"), value: "closeWindow" as DisconnectAction },
 ]);
+
+// "断开自动关闭"与"断线自动重连"互斥：标签都要关了，重连没有意义
+const disconnectPolicyActive = computed(
+  () => terminalStore.disconnectAction !== "keep",
+);
+
+function onDisconnectActionChange(value: DisconnectAction) {
+  terminalStore.disconnectAction = value;
+  if (value !== "keep" && terminalStore.autoReconnect) {
+    terminalStore.autoReconnect = false;
+  }
+}
 </script>
 
 <template>
@@ -178,14 +190,24 @@ const disconnectOptions = computed(() => [
       <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupConnection") }}</div>
       <NFormItem :label="t('settings.terminal.disconnectAction')" style="margin-top: 12px">
         <NSelect
-          v-model:value="terminalStore.disconnectAction"
+          :value="terminalStore.disconnectAction"
           :options="disconnectOptions"
+          @update:value="onDisconnectActionChange"
         />
       </NFormItem>
       <NFormItem :label="t('settings.terminal.autoReconnect')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.autoReconnect" />
+        <NSwitch
+          v-model:value="terminalStore.autoReconnect"
+          :disabled="disconnectPolicyActive"
+        />
       </NFormItem>
-      <p class="settings-hint">{{ t("settings.terminal.autoReconnectHint") }}</p>
+      <p class="settings-hint">
+        {{
+          disconnectPolicyActive
+            ? t("settings.terminal.autoReconnectDisabledHint")
+            : t("settings.terminal.autoReconnectHint")
+        }}
+      </p>
 
       <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupShortcuts") }}</div>
       <NFormItem :label="t('settings.terminal.tabShortcuts')" style="margin-top: 12px">

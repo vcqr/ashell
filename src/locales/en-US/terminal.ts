@@ -74,6 +74,35 @@ export default {
   connectingSerial: "Connecting to serial device",
   connectingCancel: "Cancel",
   connectingCancelled: "Connection cancelled",
+  // SSH connection stage labels (driven by backend progress frames)
+  progress: {
+    tcp: "Connecting to server",
+    handshake: "Negotiating encryption",
+    auth: "Verifying identity",
+    shell: "Opening terminal session",
+  },
+  connectingElapsed: "elapsed {sec}s",
+  connectFailedToast: "Failed to connect to {target}: {reason}",
+  connectFailedUnknown: "Unknown error",
+  // Connection failure codes (code field of backend fatal frames)
+  fatalCodes: {
+    connect_refused: "Connection refused — nothing is listening on the target port",
+    connect_timeout: "Connection timed out — host unreachable or blocked by a firewall",
+    connect_dns: "DNS resolution failed — check the host address",
+    connect_unreachable: "Network unreachable — check local network or routing",
+    auth_exhausted: "Authentication failed repeatedly; retries stopped",
+    auth_cancelled: "Authentication cancelled",
+    hostkey_rejected: "Host key not trusted; connection cancelled",
+    input_timeout: "Timed out waiting for input",
+    load_host: "Failed to load host config",
+    open_session: "Failed to open terminal session",
+  },
+  sessionClosedTitle: "Session disconnected",
+  sessionClosedDetail:
+    "The session to {target} was disconnected. You can reconnect from its tab.",
+  sessionClosingSoon:
+    "The session to {target} was disconnected. The tab will close in {sec}s.",
+  sessionCloseKeep: "Keep tab",
   authRequiredNotice:
     "SSH authentication failed (password may have expired or changed). Enter the new password in the dialog.",
   authPromptTitle: "SSH Authentication",

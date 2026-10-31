@@ -127,6 +127,8 @@ export default {
     autoReconnect: "断线后自动重连",
     autoReconnectHint:
       "意外断线后按指数退避自动重连（1s 起步、最长间隔 30s），适合网络抖动与睡眠唤醒场景；仅在\"保持标签页\"时有意义。本地终端不支持重连。",
+    autoReconnectDisabledHint:
+      "已选择自动关闭标签页/窗口，断线后不会重连；改回\"保持标签页\"可重新开启。",
     groupShortcuts: "快捷键",
     tabShortcuts: "标签页快捷键",
     tabShortcutsHint:
