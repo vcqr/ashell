@@ -35,6 +35,7 @@ import {
   RiUploadCloudLine,
 } from "@remixicon/vue"
 import { isTauri } from "@/utils/platform"
+import { DRAG_LEAVE_EVENT, DRAG_OVER_EVENT } from "@/composables/useFileDropBridge"
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NBadge,
@@ -1658,9 +1659,7 @@ async function walkLocalDir(
  *  （复用 Rust 进程内直传、上传任务列表与进度轮询） */
 async function onLocalDirUpload(dirRow: SftpFile) {
   if (!props.sid || dirRow.file_type !== "dir") return
-  const sid = props.sid
   const topName = dirRow.file_name
-  const baseDir = currentPath.value
 
   // 顶层同名确认（与"上传文件夹"按钮一致）
   const exists = files.value.some(
@@ -1682,11 +1681,22 @@ async function onLocalDirUpload(dirRow: SftpFile) {
     if (!ok) return
   }
 
+  await uploadLocalDirTree(dirRow.full_path, topName)
+}
+
+/** 目录树上传核心（顶层同名确认由调用方完成）：收集目录树 → 预建目录 →
+ *  逐文件 Rust 进程内直传（任务 + 轮询进度）。OS 拖入目录与本地栏右键
+ *  "上传此目录"共用。 */
+async function uploadLocalDirTree(dirPath: string, topName: string) {
+  if (!props.sid) return
+  const sid = props.sid
+  const baseDir = currentPath.value
+
   // 收集目录树（loopback 本地盘遍历）
   const dirs = new Set<string>()
   const list: Array<{ rel: string; path: string; size: number }> = []
   try {
-    await walkLocalDir(dirRow.full_path, "", dirs, list)
+    await walkLocalDir(dirPath, "", dirs, list)
   } catch (e) {
     message.error(t("sftp.localPane.loadFailed", { error: (e as Error).message }))
     return
@@ -2144,6 +2154,137 @@ function readAllDirectoryEntries(reader: FileSystemDirectoryReader): Promise<Fil
     readBatch()
   })
 }
+
+/* ---------- 桌面端原生拖放（tauri://drag-drop 转发的 ashell 事件） ----------
+ * 原生 drag-drop handler 开启后桌面端 HTML5 dnd 不再触发，上面那组
+ * dragover/drop 处理器只在浏览器访问的 Web 形态生效；桌面端由
+ * useFileDropBridge 把 tauri://drag-drop 转成：
+ * - ashell-drag-over / ashell-drag-leave（window 级，detail 为 CSS 像素坐标）
+ * - ashell-drop（落点元素冒泡，detail.paths 为真实磁盘路径）
+ * 路径由 Rust 原生层读出，上传/复制全部走进程内通道，不经 webview 传字节。 */
+
+function onNativeDragOver(e: Event) {
+  if (!props.open || !props.sid) return
+  const { x, y } = (e as CustomEvent<{ x: number; y: number }>).detail
+  const el = document.elementFromPoint(x, y)
+  if (!el || !panelRef.value?.contains(el)) {
+    // 拖拽在面板外（如终端区）：清掉悬停态
+    onNativeDragLeave()
+    return
+  }
+  dropHover.value = true
+  dropHoverZone.value =
+    dualPane.value && zoneFromPoint(x, y) === "local" ? "local" : "remote"
+}
+
+function onNativeDragLeave() {
+  dropHover.value = false
+  dropHoverZone.value = ""
+}
+
+async function onNativeDrop(e: Event) {
+  onNativeDragLeave()
+  if (!props.open || !props.sid) return
+  const paths = (e as CustomEvent<{ paths: string[] }>).detail?.paths
+  if (!paths || paths.length === 0) return
+
+  // 双栏下拖进本地栏：复制到本地目录，而不是上传远程
+  const target = e.target as HTMLElement | null
+  const zoneEl = target?.closest?.("[data-drop-zone]") as HTMLElement | null
+  const dropToLocal = dualPane.value && zoneEl?.dataset.dropZone === "local"
+  if (dropToLocal) {
+    await localPaneRef.value?.importPaths(paths)
+    return
+  }
+  await uploadPathsFromOs(paths)
+}
+
+/** 按坐标取拖放落区（与 dropZoneOf 同语义，供悬停态用） */
+function zoneFromPoint(x: number, y: number): string | undefined {
+  const el = document.elementFromPoint(x, y)
+  const zoneEl = el?.closest?.("[data-drop-zone]") as HTMLElement | null
+  return zoneEl?.dataset.dropZone
+}
+
+/** 桌面端 OS 拖放路径上传到远程当前目录（与 Web 形态的 onPanelDrop 对应）：
+ *  文件走 uploadLocalToRemote 直传，目录走 uploadLocalDirTree；覆盖整批确认。 */
+async function uploadPathsFromOs(paths: string[]) {
+  if (!props.sid) return
+  const sid = props.sid
+
+  // 顶层条目类型判定：按父目录各查一次列表（混合拖放通常来自同一目录）
+  const topFiles: Array<{ name: string; path: string; size: number }> = []
+  const topDirs: Array<{ name: string; path: string }> = []
+  const byParent = new Map<string, SftpFile[]>()
+  for (const p of paths) {
+    const idx = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"))
+    const name = idx >= 0 ? p.slice(idx + 1) : p
+    const parent = idx > 0 ? p.slice(0, idx) : p
+    try {
+      let list = byParent.get(parent)
+      if (!list) {
+        list = (await listLocalFs(parent)).files
+        byParent.set(parent, list)
+      }
+      const entry = list.find((f) => f.file_name === name)
+      if (entry?.file_type === "dir") {
+        topDirs.push({ name, path: p })
+        continue
+      }
+      topFiles.push({ name, path: p, size: entry?.size_bytes ?? 0 })
+    } catch {
+      // 父目录不可列（权限等）：按未知大小文件处理，进度交由轮询显示
+      topFiles.push({ name, path: p, size: 0 })
+    }
+  }
+  if (topFiles.length === 0 && topDirs.length === 0) return
+
+  // 顶层文件与目录统一批量预检：一次确认覆盖全部同名冲突（与 Web 拖放同语义）
+  const conflicts = findUploadConflicts([
+    ...topFiles.map((f) => f.name),
+    ...topDirs.map((d) => d.name),
+  ])
+  if (conflicts.length > 0 && !(await confirmUploadOverwriteBatch(conflicts))) {
+    return
+  }
+
+  // 顶层文件：Rust 进程内直传（任务 + 轮询进度），不经 webview 传字节
+  for (const f of topFiles) {
+    const remotePath = joinPath(currentPath.value, f.name)
+    await runTransferTask({
+      kind: "upload",
+      sid,
+      filename: remotePath,
+      remoteDir: currentPath.value,
+      total: f.size,
+      poll: true,
+      transfer: async ({ signal, taskId }) => {
+        await uploadLocalToRemote(sid, f.path, remotePath, { signal, taskId })
+      },
+      okToast: {
+        group: "upload-ok",
+        text: () => t("sftp.message.uploaded", { name: f.name }),
+        textMulti: (n) => t("sftp.message.uploadedMulti", { count: n }),
+      },
+      failToast: true,
+      onDone: async () => {
+        await load()
+      },
+    })
+  }
+  for (const d of topDirs) {
+    await uploadLocalDirTree(d.path, d.name)
+  }
+}
+
+onMounted(() => {
+  window.addEventListener(DRAG_OVER_EVENT, onNativeDragOver)
+  window.addEventListener(DRAG_LEAVE_EVENT, onNativeDragLeave)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener(DRAG_OVER_EVENT, onNativeDragOver)
+  window.removeEventListener(DRAG_LEAVE_EVENT, onNativeDragLeave)
+})
 
 /* ---------- 表格列 ---------- */
 
@@ -3018,6 +3159,7 @@ function openInStandaloneWindow() {
       @dragover="onPanelDragOver"
       @dragleave="onPanelDragLeave"
       @drop="onPanelDrop"
+      @ashell-drop="onNativeDrop"
     >
       <div
         v-if="!props.standalone"

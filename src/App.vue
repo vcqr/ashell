@@ -398,7 +398,7 @@ const { isMac, toggleMaximize } = useWindowControls(terminalRefs, activeTabKey);
 // 守卫按文档只装一次，对没有 deep 区域的 solo 窗口无影响
 installTauriDblclickGuard();
 
-// 资源管理器拖文件到终端 → 填充路径（Rust 侧拿到真实路径后 eval 回派发，
+// OS 拖文件到终端 → 填充路径（监听 tauri://drag-drop 拿真实路径后按落点派发，
 // 主窗口与所有 solo 弹窗共用本组件，一处安装覆盖全部）
 installFileDropBridge();
 

@@ -57,6 +57,7 @@ import {
   revealLocalFs,
   saveLocalFile,
   trashLocalFs,
+  transferProgress,
 } from "@/api/local"
 import MkdirDialog from "@/components/sftp/MkdirDialog.vue"
 import RenameDialog from "@/components/sftp/RenameDialog.vue"
@@ -1122,9 +1123,137 @@ async function importOsFiles(topFiles: File[], folders: OsDropFolder[]) {
   }
 }
 
+/** 本地复制在 Rust 进程内进行、无浏览器字节流，进度按 taskId 轮询后端计数器
+ *  （SftpDrawer pollDirectTransferProgress 同款，300ms 间隔）。返回停止函数。 */
+function pollCopyProgress(sid: string, taskId: string): () => void {
+  const timer = window.setInterval(() => {
+    void transferProgress([taskId])
+      .then((map) => {
+        const bytes = map[taskId]
+        if (typeof bytes === "number") {
+          store.updateDownload(sid, taskId, { loaded: bytes })
+        }
+      })
+      .catch(() => {
+        // 轮询失败不影响传输本身
+      })
+  }, 300)
+  return () => window.clearInterval(timer)
+}
+
+/** OS 拖入路径落盘（桌面端原生 drag-drop 通道，与 Web 形态的 importOsFiles
+ *  对应）。路径由 Rust 原生层读出，复制走本地 copy 接口（进程内递归复制），
+ *  不再经 webview 传字节流；每个顶层条目一条下载列表任务（轮询进度 + 可取消）。 */
+async function importPaths(paths: string[]) {
+  if (viewingRoots.value || !currentPath.value) {
+    message.warning(t("sftp.localPane.dropNeedsDir"))
+    return
+  }
+  if (paths.length === 0) return
+
+  const baseName = (p: string) => p.split(/[\\/]/).pop() || p
+  const names = paths.map(baseName)
+  const conflicts = files.value
+    .filter((f) => new Set(names.map((n) => n.toLowerCase())).has(f.file_name.toLowerCase()))
+    .map((f) => f.file_name)
+  if (conflicts.length > 0) {
+    const preview = conflicts.slice(0, 5).join(", ")
+    const more = conflicts.length > 5 ? ` …(+${conflicts.length - 5})` : ""
+    const ok = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: t("sftp.dialog.overwriteTitle"),
+        content: `${preview}${more}`,
+        positiveText: t("common.overwrite"),
+        negativeText: t("common.cancel"),
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+        onClose: () => resolve(false),
+        onMaskClick: () => resolve(false),
+      })
+    })
+    if (!ok) return
+  }
+
+  const dir = currentPath.value
+  // 独立模式（本地文件抽屉）：无下载列表面板可展示进度，直接落盘
+  if (props.standalone) {
+    let okCount = 0
+    let failCount = 0
+    for (const p of paths) {
+      try {
+        await copyLocalFs(p, dir)
+        okCount++
+      } catch {
+        failCount++
+      }
+    }
+    await refresh()
+    if (okCount + failCount === 0) return
+    if (failCount === 0) {
+      message.success(t("sftp.localPane.importDone", { count: okCount }))
+    } else {
+      message.warning(
+        t("sftp.localPane.importPartial", { ok: okCount, fail: failCount }),
+      )
+    }
+    return
+  }
+  const sid = props.sid
+  if (!sid) return
+  emit("copy-started")
+  let okCount = 0
+  let failCount = 0
+  const copyOne = async (srcPath: string) => {
+    const ctrl = new AbortController()
+    const taskId = genId()
+    const task: TransferTask = {
+      id: taskId,
+      sid,
+      filename: localJoin(dir, baseName(srcPath)),
+      total: 0,
+      loaded: 0,
+      status: "running",
+      controller: ctrl,
+      startedAt: Date.now(),
+    }
+    store.addDownload(sid, task)
+    const stopPoll = pollCopyProgress(sid, taskId)
+    try {
+      await copyLocalFs(srcPath, dir, { taskId, signal: ctrl.signal })
+      store.updateDownload(sid, taskId, { status: "done" })
+      okCount++
+    } catch (e) {
+      if (isAbortError(e)) {
+        store.updateDownload(sid, taskId, { status: "cancelled" })
+      } else {
+        const err = e as Error
+        store.updateDownload(sid, taskId, {
+          status: "error",
+          error: err.message,
+        })
+      }
+      failCount++
+    } finally {
+      stopPoll()
+    }
+  }
+  for (const p of paths) await copyOne(p)
+
+  await refresh()
+  if (okCount + failCount === 0) return
+  if (failCount === 0) {
+    message.success(t("sftp.localPane.importDone", { count: okCount }))
+  } else {
+    message.warning(
+      t("sftp.localPane.importPartial", { ok: okCount, fail: failCount }),
+    )
+  }
+}
+
 defineExpose({
   refresh,
   importOsFiles,
+  importPaths,
   /** 当前已加载的本地目录条目快照（父组件下载同名检查用） */
   getLocalFiles: () => files.value,
   /** 全选当前列表（SftpDrawer 的 Ctrl/Cmd+A 分发） */

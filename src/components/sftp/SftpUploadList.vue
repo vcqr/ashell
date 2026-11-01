@@ -31,6 +31,13 @@ function percent(task: TransferTask): number {
   return Math.min(100, Math.floor((task.loaded / task.total) * 100))
 }
 
+/** 总量未知（total=0，如目录导入）时只展示已传字节数 */
+function sizeText(task: TransferTask): string {
+  return task.total > 0
+    ? `${humanSize(task.loaded)} / ${humanSize(task.total)}`
+    : humanSize(task.loaded)
+}
+
 function speedText(task: TransferTask): string {
   const bps = speeds.value[task.id]
   if (!bps || bps <= 0) return ""
@@ -107,7 +114,7 @@ function statusLabel(s: TransferStatus): string {
       </div>
       <div class="meta">
         <span>
-          {{ humanSize(task.loaded) }} / {{ humanSize(task.total) }}
+          {{ sizeText(task) }}
           <span class="pct">{{ percent(task) }}%</span>
         </span>
         <NButton

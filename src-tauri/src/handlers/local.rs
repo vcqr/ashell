@@ -243,12 +243,30 @@ pub struct LocalFsCopyMoveReq {
     pub dst_dir: String,
 }
 
-/// 本地复制（目录递归，文件覆盖、目录合并）
+#[derive(Debug, Deserialize)]
+pub struct LocalFsCopyReq {
+    /// 源文件/目录绝对路径
+    pub src: String,
+    /// 目标目录绝对路径（保持原名放入）
+    pub dst_dir: String,
+    /// 前端任务 id：提供时按累计字节数记录进度，供 /progress 轮询
+    pub task_id: Option<String>,
+}
+
+/// 本地复制（目录递归，文件覆盖、目录合并；OS 拖入本地栏的导入走此通道）
 pub async fn fs_copy(
-    Json(req): Json<LocalFsCopyMoveReq>,
+    Json(req): Json<LocalFsCopyReq>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    local_fs::copy(&req.src, &req.dst_dir).await?;
-    Ok(ok_msg("ok"))
+    let res = local_fs::copy(&req.src, &req.dst_dir, req.task_id.as_deref()).await;
+    if let Some(id) = &req.task_id {
+        local_fs::progress_remove(id);
+    }
+    let copied = res?;
+    Ok(Json(ApiResponse {
+        code: 0,
+        message: "ok".into(),
+        data: Some(serde_json::json!({ "bytes": copied })),
+    }))
 }
 
 /// 本地移动（同盘 rename 瞬时；跨盘回退复制+删除）

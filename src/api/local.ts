@@ -104,12 +104,18 @@ export function renameLocalFs(from: string, to: string): Promise<void> {
 }
 
 /** 本地复制到目标目录（保持原名；目录递归，文件覆盖、目录合并）。
+ *  传 taskId 时后端按累计字节数记账进度，可用 transferProgress 轮询。
  *  大目录耗时随体积增长，关闭 axios 默认 30s 超时。 */
-export function copyLocalFs(src: string, dstDir: string): Promise<void> {
-  return request<void>("/api/local/fs/copy", {
+export function copyLocalFs(
+  src: string,
+  dstDir: string,
+  opts: { taskId?: string; signal?: GenericAbortSignal } = {},
+): Promise<{ bytes: number }> {
+  return request<{ bytes: number }>("/api/local/fs/copy", {
     method: "POST",
-    json: { src, dst_dir: dstDir },
+    json: { src, dst_dir: dstDir, task_id: opts.taskId ?? null },
     timeout: 0,
+    signal: opts.signal,
   })
 }
 

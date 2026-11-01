@@ -5,7 +5,7 @@ import {
   RiPushpinFill,
   RiPushpinLine,
 } from "@remixicon/vue"
-import { ref, watch, watchEffect, onBeforeUnmount } from "vue"
+import { ref, watch, watchEffect, onBeforeUnmount, onMounted } from "vue"
 import { NButton, NIcon, NTooltip } from "naive-ui"
 
 
@@ -16,6 +16,7 @@ import { useDrawerWidth } from "@/composables/useDrawerWidth"
 import { usePanelSwitchClosed } from "@/composables/usePanels"
 import { useStartupStore } from "@/stores/startup"
 import type { OsDropFolder } from "@/types"
+import { DRAG_LEAVE_EVENT, DRAG_OVER_EVENT } from "@/composables/useFileDropBridge"
 
 const props = defineProps<{
   open: boolean
@@ -61,8 +62,10 @@ onBeforeUnmount(() => {
   document.documentElement.style.setProperty("--ashell-local-files-w", "0px")
 })
 
-/** LocalPane 实例：OS 拖入时调 importOsFiles 落盘 */
+/** LocalPane 实例：OS 拖入时调 importOsFiles / importPaths 落盘 */
 const localPaneRef = ref<InstanceType<typeof LocalPane> | null>(null)
+/** 面板根元素：原生拖放悬停时判定落点是否在面板内 */
+const panelRef = ref<HTMLElement | null>(null)
 
 /** 本地栏当前目录：pane 自己导航时回写（update:dir），终端 cwd 变化时跟随 */
 const dir = ref("")
@@ -197,11 +200,46 @@ async function onDrop(e: DragEvent) {
   if (topFiles.length === 0 && folders.length === 0) return
   await localPaneRef.value?.importOsFiles(topFiles, folders)
 }
+
+/* ---------- 桌面端原生拖放（tauri://drag-drop 转发的 ashell 事件） ----------
+ * 原生 drag-drop handler 开启后桌面端 HTML5 dnd 不再触发，上面那组
+ * dragover/drop 处理器只在浏览器访问的 Web 形态生效；桌面端由
+ * useFileDropBridge 派发 ashell-drag-over/leave（window 级）与
+ * ashell-drop（落点元素冒泡，detail.paths），路径经 Rust 原生层读出。 */
+
+function onNativeDragOver(e: Event) {
+  if (!props.open) return
+  const { x, y } = (e as CustomEvent<{ x: number; y: number }>).detail
+  const el = document.elementFromPoint(x, y)
+  dropHover.value = !!el && !!panelRef.value?.contains(el)
+}
+
+function onNativeDragLeave() {
+  dropHover.value = false
+}
+
+async function onNativeDrop(e: Event) {
+  dropHover.value = false
+  if (!props.open) return
+  const paths = (e as CustomEvent<{ paths: string[] }>).detail?.paths
+  if (!paths || paths.length === 0) return
+  await localPaneRef.value?.importPaths(paths)
+}
+
+onMounted(() => {
+  window.addEventListener(DRAG_OVER_EVENT, onNativeDragOver)
+  window.addEventListener(DRAG_LEAVE_EVENT, onNativeDragLeave)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener(DRAG_OVER_EVENT, onNativeDragOver)
+  window.removeEventListener(DRAG_LEAVE_EVENT, onNativeDragLeave)
+})
 </script>
 
 <template>
   <Teleport to="body">
     <aside
+      ref="panelRef"
       class="local-files-panel"
       :class="{ open: props.open, resizing: resizing, pinned: pinned, 'switch-closed': switchClosed }"
       :style="{ width: `${width}px` }"
@@ -209,6 +247,7 @@ async function onDrop(e: DragEvent) {
       @dragover="onDragOver"
       @dragleave="onDragLeave"
       @drop="onDrop"
+      @ashell-drop="onNativeDrop"
     >
       <div
         class="resize-handle"

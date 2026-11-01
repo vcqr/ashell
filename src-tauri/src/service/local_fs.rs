@@ -437,17 +437,28 @@ pub async fn rename(from: &str, to: &str) -> AppResult<()> {
 
 /// 复制文件/目录到 dst_dir 下（保持原名；文件同名覆盖、目录同名合并，递归）。
 /// 类型判定用 metadata（跟随符号链接），与远程 duplicate 的 stat 语义一致。
-pub async fn copy(src_path: &str, dst_dir: &str) -> AppResult<()> {
+/// `task_id` 提供时按累计字节数记账进度（OS 拖入本地栏的导入走此通道）。
+pub async fn copy(src_path: &str, dst_dir: &str, task_id: Option<&str>) -> AppResult<u64> {
     let src = validate_absolute(src_path)?;
     let dir = validate_absolute(dst_dir)?;
     let name = src
         .file_name()
         .ok_or_else(|| AppError::BadRequest("invalid src_path".into()))?;
     let dst = dir.join(name);
-    copy_inner(&src, &dst).await
+    if let Some(id) = task_id {
+        progress_set(id, 0);
+    }
+    let mut copied: u64 = 0;
+    copy_inner(&src, &dst, task_id, &mut copied).await?;
+    Ok(copied)
 }
 
-async fn copy_inner(src: &Path, dst: &Path) -> AppResult<()> {
+async fn copy_inner(
+    src: &Path,
+    dst: &Path,
+    task_id: Option<&str>,
+    copied: &mut u64,
+) -> AppResult<()> {
     let display = src.to_string_lossy().into_owned();
     let md = tokio::fs::metadata(src)
         .await
@@ -464,13 +475,41 @@ async fn copy_inner(src: &Path, dst: &Path) -> AppResult<()> {
             .await
             .map_err(|e| io_err("next_entry", e))?
         {
-            Box::pin(copy_inner(&entry.path(), &dst.join(entry.file_name()))).await?;
+            Box::pin(copy_inner(
+                &entry.path(),
+                &dst.join(entry.file_name()),
+                task_id,
+                copied,
+            ))
+            .await?;
         }
         return Ok(());
     }
-    tokio::fs::copy(src, dst)
+    // 256KiB 块复制：tokio::fs::copy 拿不到中间字节数，逐块累计进度
+    let mut reader = tokio::fs::File::open(src)
         .await
-        .map_err(|e| io_err(&format!("copy {}", display), e))?;
+        .map_err(|e| io_err(&format!("open {}", display), e))?;
+    let mut writer = tokio::fs::File::create(dst)
+        .await
+        .map_err(|e| io_err(&format!("create {}", dst.to_string_lossy()), e))?;
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .await
+            .map_err(|e| io_err("read local", e))?;
+        if n == 0 {
+            break;
+        }
+        writer
+            .write_all(&buf[..n])
+            .await
+            .map_err(|e| io_err("write local", e))?;
+        *copied += n as u64;
+        if let Some(id) = task_id {
+            progress_set(id, *copied);
+        }
+    }
     Ok(())
 }
 
@@ -487,7 +526,8 @@ pub async fn move_to(src_path: &str, dst_dir: &str) -> AppResult<()> {
     match tokio::fs::rename(&src, &dst).await {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-            copy_inner(&src, &dst).await?;
+            let mut copied: u64 = 0;
+            copy_inner(&src, &dst, None, &mut copied).await?;
             remove(src.to_str().unwrap_or_default()).await
         }
         Err(e) => Err(io_err(&format!("rename {}", display), e)),

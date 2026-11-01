@@ -57,9 +57,9 @@ export async function openTabInNewWindow(tab: TerminalTab): Promise<void> {
     transparent: WINDOW_TRANSPARENT,
     shadow: false,
     center: true,
-    // 与主窗口（tauri.conf.json）保持一致：关闭 wry 原生拖放拦截，
-    // 否则 Windows 下 DOM drop 事件的多文件数据会被吞成 1 个
-    dragDropEnabled: false,
+    // 与主窗口（tauri.conf.json）保持一致：开启 wry 原生拖放拦截，
+    // OS 文件拖放经 tauri://drag-drop 派发真实路径（见 useFileDropBridge）
+    dragDropEnabled: true,
   })
 
   webview.once("tauri://error", (e) => {
@@ -117,8 +117,8 @@ export async function openSftpInNewWindow(opts: OpenSftpWindowOptions): Promise<
     transparent: WINDOW_TRANSPARENT,
     shadow: false,
     center: true,
-    // SFTP 独立窗口同样走 HTML5 dnd 接收 OS 文件拖放，必须关闭原生拦截
-    dragDropEnabled: false,
+    // SFTP 独立窗口与主窗口一致：开启原生拖放拦截（tauri://drag-drop）
+    dragDropEnabled: true,
   })
 
   webview.once("tauri://error", (e) => {
@@ -179,8 +179,8 @@ export async function openAiInNewWindow(opts: OpenAiWindowOptions): Promise<void
     transparent: WINDOW_TRANSPARENT,
     shadow: false,
     center: true,
-    // 统一与主窗口一致，避免 wry 原生拖放拦截干扰 DOM 事件
-    dragDropEnabled: false,
+    // 统一与主窗口一致：开启原生拖放拦截（tauri://drag-drop）
+    dragDropEnabled: true,
   })
 
   webview.once("tauri://error", (e) => {
@@ -232,8 +232,8 @@ export async function openHostInfoInNewWindow(opts: OpenHostInfoWindowOptions): 
     transparent: WINDOW_TRANSPARENT,
     shadow: false,
     center: true,
-    // 统一与主窗口一致，避免 wry 原生拖放拦截干扰 DOM 事件
-    dragDropEnabled: false,
+    // 统一与主窗口一致：开启原生拖放拦截（tauri://drag-drop）
+    dragDropEnabled: true,
   })
 
   webview.once("tauri://error", (e) => {
