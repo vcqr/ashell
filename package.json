@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "sidecar:build": "cd sidecar-ai && npm run build",
+    "sign:mac": "node scripts/sign-macos.mjs",
     "prepare": "husky"
   },
   "dependencies": {

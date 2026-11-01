@@ -7,6 +7,7 @@
     "beforeDevCommand": "node scripts/sidecar-guard.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run sidecar:build && npm run build",
+    "beforeBundleCommand": "node scripts/sign-macos.mjs",
     "frontendDist": "../dist"
   },
   "app": {

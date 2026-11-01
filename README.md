@@ -130,6 +130,8 @@ npm run tauri build
 
 > `npm run tauri build` 会先自动执行 `npm run sidecar:build`（编译统一 AI sidecar 二进制），再执行 `npm run build`（前端类型检查 + Vite 构建），无需手动编译 sidecar。
 
+> **macOS 隐私授权**：本地网络等系统授权按「二进制签名标识」匹配，未固定签名时每次重新构建标识都会变，导致已点过的授权失效。构建流程已通过 `beforeBundleCommand` 把主程序与 sidecar 的签名标识钉死为 `com.vcqr.ashell`（`tauri build` 自动执行）。`tauri dev` 不走该钩子，cargo 重新编译后如遇本地网络连不通，执行 `npm run sign:mac` 再重启 dev 即可。
+
 ---
 
 ## Web 服务器模式（浏览器访问）
