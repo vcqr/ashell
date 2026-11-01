@@ -15,6 +15,11 @@ import { detectWindows, isTauri } from "@/utils/platform"
 export function initWindowRounded(): void {
   if (!isTauri) return
 
+  // 同步先加：class 必须早于 useWindowControls 的 nextTick show()，否则窗口
+  // 首帧是直角方块，WKWebView 透明窗口不清除四角旧像素（dev 下动态 import
+  // 走 Vite 慢，竞态被放大成可见残影）。乐观添加，apply() 异步按真实状态修正
+  document.body.classList.add("window-rounded")
+
   void (async () => {
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
     const win = getCurrentWindow()
