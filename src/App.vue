@@ -43,6 +43,7 @@ import LoginGate from "@/components/LoginGate.vue";
 import NotifyBridge from "@/components/NotifyBridge.vue";
 import { isTauri } from "@/utils/platform";
 import { installTauriDblclickGuard, onTitlebarDblclick } from "@/utils/titlebar";
+import { installFileDropBridge } from "@/composables/useFileDropBridge";
 import { installDevtoolsShortcut } from "@/utils/devtools";
 import { useKeybindingStore } from "@/stores/keybindings";
 import { onBeforeUnmount } from "vue";
@@ -396,6 +397,10 @@ const { isMac, toggleMaximize } = useWindowControls(terminalRefs, activeTabKey);
 // @dblclick → onTitlebarDblclick 处理；App.vue 同时是 solo 独立窗口的根组件，
 // 守卫按文档只装一次，对没有 deep 区域的 solo 窗口无影响
 installTauriDblclickGuard();
+
+// 资源管理器拖文件到终端 → 填充路径（Rust 侧拿到真实路径后 eval 回派发，
+// 主窗口与所有 solo 弹窗共用本组件，一处安装覆盖全部）
+installFileDropBridge();
 
 // SFTP 面板右键目录 -> 当前终端 cd 到该目录（sendCommand 自动补 \r 执行）
 function onSftpOpenTerminalHere(path: string) {

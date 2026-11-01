@@ -581,6 +581,52 @@ function pasteToTerminal(text: string) {
   term.paste(clean)
 }
 
+/* ---------- 资源管理器拖文件到终端 → 填充路径 ----------
+ * WebView2 的 drop 事件拿不到文件完整路径（File.path 是 Electron 专有），
+ * 走 file_drop_bridge 中转：drop 时同步把 File 对象经
+ * postMessageWithAdditionalObjects 交给 Rust 宿主（DataTransfer 数据在事件
+ * 任务结束后失效，必须同步取出），Rust 读出 ICoreWebView2File::Path 后
+ * eval 派发回页面（useFileDropBridge），最终以 ashell-drop CustomEvent 回到这里。
+ * 断开态粘贴走 onData 的统一兜底（deadInputHint），此处无需额外守卫。 */
+
+/** 含这些字符的路径插入时包双引号：空格必包（Windows Terminal 惯例），
+ *  其余为 POSIX shell 元字符，防远端 bash 把路径当语法解析 */
+const TERM_PATH_QUOTE_RE = /[\s"'`$;&|()<>*?#]/
+
+function formatPathsForTerminal(paths: string[]): string {
+  return paths.map((p) => (TERM_PATH_QUOTE_RE.test(p) ? `"${p}"` : p)).join(" ")
+}
+
+function onTermFileDrop(e: DragEvent) {
+  e.preventDefault()
+  const files = e.dataTransfer?.files
+  if (!files || files.length === 0) return
+  // chrome.webview 仅 WebView2 提供（旧 Runtime 无 postMessageWithAdditionalObjects
+  // 时静默返回，维持"拖了没反应"的现状，不报错）
+  const webview = (
+    window as unknown as {
+      chrome?: {
+        webview?: {
+          postMessageWithAdditionalObjects?: (msg: unknown, files: File[]) => void
+        }
+      }
+    }
+  ).chrome?.webview
+  if (typeof webview?.postMessageWithAdditionalObjects !== "function") return
+  // 消息体必须是 JSON 字符串：实测该 WebView2 的 WebMessageReceived 只对字符串
+  // 消息派发事件，对象消息体被静默丢弃（Rust 侧对应二次解析）
+  webview.postMessageWithAdditionalObjects(
+    JSON.stringify({ kind: "ashell-file-drop", x: e.clientX, y: e.clientY }),
+    [...files],
+  )
+}
+
+function onDroppedPaths(e: Event) {
+  const paths = (e as CustomEvent<{ paths: string[] }>).detail?.paths
+  if (!paths || paths.length === 0 || !term) return
+  pasteToTerminal(formatPathsForTerminal(paths))
+}
+
 function onSelectionChange() {
   if (!term) return
   const sel = term.getSelection()
@@ -2018,6 +2064,9 @@ onBeforeUnmount(() => {
       ref="containerRef"
       class="terminal-host"
       :style="{ background: terminalBackground }"
+      @dragover.prevent
+      @drop="onTermFileDrop"
+      @ashell-drop="onDroppedPaths"
     ></div>
     <Transition name="search-fade">
       <div

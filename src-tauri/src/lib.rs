@@ -9,6 +9,8 @@ mod ai_env;
 mod commands;
 mod config;
 mod errors;
+#[cfg(feature = "desktop")]
+mod file_drop_bridge;
 mod handlers;
 #[cfg(feature = "desktop")]
 mod hotkey;
@@ -376,6 +378,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_api_info,
             commands::fonts::list_system_fonts,
+            file_drop_bridge::install_file_drop_bridge,
             open_icons_dir,
             get_ai_dir,
             devtools_set,
