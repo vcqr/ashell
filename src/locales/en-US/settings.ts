@@ -143,6 +143,12 @@ export default {
     commandSuggest: "Command suggestions (keyword match for history, prefix for common commands)",
     clearHistory: "Clear command history",
     clearHistoryConfirm: "Clear all command history and learned commands?",
+    lineTimestamp: "Line timestamps (per-line time on the left)",
+    lineTimestampFormat: "Time format",
+    lineTimestampFormatPlaceholder: "YYYY-MM-DD HH:mm:ss",
+    lineTimestampFormatHint:
+      "Tokens: YYYY (year), MM, DD, HH, mm, ss, SSS (ms); any literal text allowed, e.g. HH:mm:ss.",
+    lineTimestampColor: "Timestamp color",
     resetDefaults: "Reset to defaults",
     resetDefaultsConfirm: "Reset all terminal settings to their defaults?",
   },

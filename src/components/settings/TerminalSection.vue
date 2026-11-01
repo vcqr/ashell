@@ -4,12 +4,14 @@ import {
   NForm,
   NFormItem,
   NSelect,
+  NInput,
   NInputNumber,
   NRadioGroup,
   NRadioButton,
   NSwitch,
   NSpace,
   NButton,
+  NColorPicker,
   NPopconfirm,
   type SelectOption,
 } from "naive-ui";
@@ -253,6 +255,29 @@ function onDisconnectActionChange(value: DisconnectAction) {
           </NPopconfirm>
         </NSpace>
       </NFormItem>
+      <NFormItem :label="t('settings.terminal.lineTimestamp')" style="margin-top: 12px">
+        <NSwitch v-model:value="terminalStore.lineTimestampEnabled" />
+      </NFormItem>
+      <template v-if="terminalStore.lineTimestampEnabled">
+        <NFormItem :label="t('settings.terminal.lineTimestampFormat')" style="margin-top: 12px">
+          <NInput
+            v-model:value="terminalStore.lineTimestampFormat"
+            :placeholder="t('settings.terminal.lineTimestampFormatPlaceholder')"
+            :maxlength="64"
+          />
+        </NFormItem>
+        <p class="settings-hint">
+          {{ t("settings.terminal.lineTimestampFormatHint") }}
+        </p>
+        <NFormItem :label="t('settings.terminal.lineTimestampColor')" style="margin-top: 12px">
+          <NColorPicker
+            v-model:value="terminalStore.lineTimestampColor"
+            :show-alpha="false"
+            :modes="['hex']"
+            style="width: 140px"
+          />
+        </NFormItem>
+      </template>
     </NForm>
     <NSpace style="margin-top: 16px">
       <NPopconfirm @positive-click="terminalStore.resetDefaults()">

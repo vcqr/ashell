@@ -35,6 +35,12 @@ export interface TerminalConfig {
   ligaturesEnabled: boolean
   progressEnabled: boolean
   commandSuggestEnabled: boolean
+  /** 行时间戳：在终端左侧 gutter 按行显示该行输出/指令到达的时间 */
+  lineTimestampEnabled: boolean
+  /** 行时间戳格式串，支持 YYYY MM DD HH mm ss SSS 记号与任意文字 */
+  lineTimestampFormat: string
+  /** 行时间戳文字颜色 */
+  lineTimestampColor: string
   scrollback: number
   autoReconnect: boolean
   tabShortcutsEnabled: boolean
@@ -93,6 +99,9 @@ const DEFAULT_CONFIG: TerminalConfig = {
   ligaturesEnabled: false,
   progressEnabled: true,
   commandSuggestEnabled: true,
+  lineTimestampEnabled: false,
+  lineTimestampFormat: "YYYY-MM-DD HH:mm:ss",
+  lineTimestampColor: "#7d8590",
   scrollback: 5000,
   autoReconnect: false,
   tabShortcutsEnabled: true,
@@ -127,6 +136,22 @@ function isLeftClickAction(v: unknown): v is LeftClickAction {
 
 function isDisconnectAction(v: unknown): v is DisconnectAction {
   return v === "keep" || v === "closeTab" || v === "closeWindow"
+}
+
+/** 行时间戳格式串：空/超长回退默认，其余原样保存（记号在渲染时解析） */
+function normalizeTimestampFormat(v: unknown): string {
+  if (typeof v !== "string") return DEFAULT_CONFIG.lineTimestampFormat
+  const trimmed = v.trim()
+  if (trimmed.length === 0 || trimmed.length > 64) return DEFAULT_CONFIG.lineTimestampFormat
+  return trimmed
+}
+
+/** 行时间戳颜色：仅接受 #rgb / #rrggbb / #rrggbbaa */
+function normalizeTimestampColor(v: unknown): string {
+  if (typeof v !== "string") return DEFAULT_CONFIG.lineTimestampColor
+  return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v.trim())
+    ? v.trim()
+    : DEFAULT_CONFIG.lineTimestampColor
 }
 
 function loadConfig(): TerminalConfig {
@@ -188,6 +213,12 @@ function loadConfig(): TerminalConfig {
         typeof parsed.commandSuggestEnabled === "boolean"
           ? parsed.commandSuggestEnabled
           : DEFAULT_CONFIG.commandSuggestEnabled,
+      lineTimestampEnabled:
+        typeof parsed.lineTimestampEnabled === "boolean"
+          ? parsed.lineTimestampEnabled
+          : DEFAULT_CONFIG.lineTimestampEnabled,
+      lineTimestampFormat: normalizeTimestampFormat(parsed.lineTimestampFormat),
+      lineTimestampColor: normalizeTimestampColor(parsed.lineTimestampColor),
       scrollback:
         typeof parsed.scrollback === "number" &&
         Number.isFinite(parsed.scrollback) &&
@@ -229,6 +260,9 @@ export const useTerminalStore = defineStore("terminal", () => {
   const ligaturesEnabled = ref<boolean>(initial.ligaturesEnabled)
   const progressEnabled = ref<boolean>(initial.progressEnabled)
   const commandSuggestEnabled = ref<boolean>(initial.commandSuggestEnabled)
+  const lineTimestampEnabled = ref<boolean>(initial.lineTimestampEnabled)
+  const lineTimestampFormat = ref<string>(initial.lineTimestampFormat)
+  const lineTimestampColor = ref<string>(initial.lineTimestampColor)
   const scrollback = ref<number>(initial.scrollback)
   const autoReconnect = ref<boolean>(initial.autoReconnect)
   const tabShortcutsEnabled = ref<boolean>(initial.tabShortcutsEnabled)
@@ -416,6 +450,9 @@ export const useTerminalStore = defineStore("terminal", () => {
         ligaturesEnabled: ligaturesEnabled.value,
         progressEnabled: progressEnabled.value,
         commandSuggestEnabled: commandSuggestEnabled.value,
+        lineTimestampEnabled: lineTimestampEnabled.value,
+        lineTimestampFormat: lineTimestampFormat.value,
+        lineTimestampColor: lineTimestampColor.value,
         scrollback: scrollback.value,
         autoReconnect: autoReconnect.value,
         tabShortcutsEnabled: tabShortcutsEnabled.value,
@@ -443,6 +480,9 @@ export const useTerminalStore = defineStore("terminal", () => {
       ligaturesEnabled,
       progressEnabled,
       commandSuggestEnabled,
+      lineTimestampEnabled,
+      lineTimestampFormat,
+      lineTimestampColor,
       scrollback,
       autoReconnect,
       tabShortcutsEnabled,
@@ -468,6 +508,9 @@ export const useTerminalStore = defineStore("terminal", () => {
     ligaturesEnabled.value = DEFAULT_CONFIG.ligaturesEnabled
     progressEnabled.value = DEFAULT_CONFIG.progressEnabled
     commandSuggestEnabled.value = DEFAULT_CONFIG.commandSuggestEnabled
+    lineTimestampEnabled.value = DEFAULT_CONFIG.lineTimestampEnabled
+    lineTimestampFormat.value = DEFAULT_CONFIG.lineTimestampFormat
+    lineTimestampColor.value = DEFAULT_CONFIG.lineTimestampColor
     scrollback.value = DEFAULT_CONFIG.scrollback
     autoReconnect.value = DEFAULT_CONFIG.autoReconnect
     tabShortcutsEnabled.value = DEFAULT_CONFIG.tabShortcutsEnabled
@@ -648,6 +691,9 @@ export const useTerminalStore = defineStore("terminal", () => {
     ligaturesEnabled,
     progressEnabled,
     commandSuggestEnabled,
+    lineTimestampEnabled,
+    lineTimestampFormat,
+    lineTimestampColor,
     scrollback,
     autoReconnect,
     tabShortcutsEnabled,

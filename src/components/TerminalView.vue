@@ -36,6 +36,7 @@ import { useAiSelection } from "@/composables/useAiSelection"
 import { useTerminalSearch } from "@/composables/useTerminalSearch"
 import { useTerminalProgress } from "@/composables/useTerminalProgress"
 import { useCommandSuggest } from "@/composables/useCommandSuggest"
+import { useTerminalTimestamps } from "@/composables/useTerminalTimestamps"
 import HostKeyConfirmModal, { type HostKeyInfo } from "@/components/HostKeyConfirmModal.vue"
 import type { Locale } from "@/data/commandDict"
 import { buildTerminalWsUrl } from "@/api/sftp"
@@ -68,6 +69,9 @@ const emit = defineEmits<{
 const message = useMessage()
 
 const containerRef = ref<HTMLDivElement | null>(null)
+/** 包裹 .xterm 的内层盒：行时间戳开启时通过 margin-left 给左侧 gutter 让位，
+ *  FitAddon 以它为测量基准（term.element.parentElement）自动缩小列数 */
+const fitboxRef = ref<HTMLDivElement | null>(null)
 /** 主题背景色（随壁纸/窗口透明度联动）：涂在 .terminal-host 上填补画布网格外余量 */
 const terminalBackground = ref("transparent")
 
@@ -77,6 +81,8 @@ let webglAddon: WebglAddon | null = null
 let webLinksAddon: WebLinksAddon | null = null
 let unicode11Addon: Unicode11Addon | null = null
 let ligaturesAddon: LigaturesAddon | null = null
+/** 行时间戳控制器：install 后接管 term.write 计账并维护左侧 gutter */
+let timestamps: ReturnType<typeof useTerminalTimestamps> | null = null
 // SerializeAddon 是按需加载（导出会话时才用），所以叫 ensure 拿，不在这里持久化
 let serializeAddon: SerializeAddon | null = null
 let ws: WebSocket | null = null
@@ -1659,7 +1665,7 @@ onMounted(() => {
   })
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
-  term.open(containerRef.value)
+  term.open(fitboxRef.value ?? containerRef.value)
 
   // 按用户设置加载可选 addon。webgl 必须在 term.open 之后才能 loadAddon。
   // ligatures 在 webgl 之后加载：先 webgl 建好渲染器，再 ligatures 触发一次 webgl 重建
@@ -1679,6 +1685,16 @@ onMounted(() => {
 
   installAltScreenScrollFix()
   installCwdReporter()
+
+  // 行时间戳栏：接管 term.write 计账。必须在首个 write（connectWs）之前安装，
+  // 否则开场输出的行拿不到时间戳
+  timestamps = useTerminalTimestamps({
+    getTerm: () => term,
+    hostEl: () => containerRef.value,
+    fitboxEl: () => fitboxRef.value,
+    requestFit: () => scheduleFit(),
+  })
+  timestamps.install()
 
   // 键盘复制粘贴（Ctrl+C 选区 / Ctrl+Shift+C / Ctrl+Shift+V），须在 onData 前注册
   term.attachCustomKeyEventHandler(onTermCustomKey)
@@ -1992,6 +2008,8 @@ onBeforeUnmount(() => {
     themeObserver = null
   }
   teardownWs()
+  timestamps?.dispose()
+  timestamps = null
   if (term) {
     // term.dispose 会释放 fit/search/webgl/webLinks/unicode11 等已加载的 addon。
     // 这里把模块级 ref 主动置 null，避免重新挂载时复用到陈旧引用。
@@ -2047,7 +2065,9 @@ onBeforeUnmount(() => {
       @dragover.prevent
       @drop="onTermFileDrop"
       @ashell-drop="onDroppedPaths"
-    ></div>
+    >
+      <div ref="fitboxRef" class="terminal-fitbox"></div>
+    </div>
     <Transition name="search-fade">
       <div
         v-if="searchOpen"
@@ -2380,6 +2400,7 @@ onBeforeUnmount(() => {
 }
 
 .terminal-host {
+  position: relative;
   flex: 1;
   width: 100%;
   min-height: 0;
@@ -2396,6 +2417,11 @@ onBeforeUnmount(() => {
   width: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* 包裹 .xterm 的内层盒：行时间戳开启时给左侧 gutter 让位（margin-left 动态设置） */
+.terminal-fitbox {
+  height: 100%;
 }
 
 .terminal-host :deep(.xterm canvas) {

@@ -142,6 +142,12 @@ export default {
     commandSuggest: "命令输入建议（历史关键字匹配 + 常用命令前缀补全）",
     clearHistory: "清空命令历史",
     clearHistoryConfirm: "确定清空所有命令历史与已学习的命令？",
+    lineTimestamp: "行时间戳（终端左侧逐行显示时间）",
+    lineTimestampFormat: "时间格式",
+    lineTimestampFormatPlaceholder: "YYYY-MM-DD HH:mm:ss",
+    lineTimestampFormatHint:
+      "支持记号：YYYY 年、MM 月、DD 日、HH 时、mm 分、ss 秒、SSS 毫秒，可穿插任意文字，如 HH:mm:ss、[MM-DD]。",
+    lineTimestampColor: "时间颜色",
     resetDefaults: "恢复默认",
     resetDefaultsConfirm: "确定恢复全部终端设置为默认值吗？",
   },
