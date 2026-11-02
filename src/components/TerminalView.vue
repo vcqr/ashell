@@ -524,6 +524,8 @@ function scheduleFit(focusAfter = false) {
   if (fitRaf !== null) return
   fitRaf = window.requestAnimationFrame(() => {
     fitRaf = null
+    // 容器尺寸可能已变化，先按新宽度收敛 gutter（再 fit，让 fit 用上最新 margin）
+    timestamps?.refreshWidth()
     safeFit()
     // 最大化/最小化/还原后重新聚焦当前 tab，避免窗口控件抢走光标导致下一次输入无响应。
     // 仅激活 tab 才聚焦，否则后台 tab 的 TerminalView 会把焦点抢走。
@@ -1874,6 +1876,8 @@ watch(
       // flush:'post' 确保 v-show 已 patch DOM；rAF 等浏览器完成 layout/paint 后再 fit/focus，
       // 否则容器从 display:none 切回后 xterm textarea 未完成布局，focus 无效。
       requestAnimationFrame(() => {
+        // 隐藏期间 gutter 宽度按估算值限制，激活后按实际容器宽度重新收敛
+        timestamps?.refreshWidth()
         safeFit()
         term?.focus()
       })

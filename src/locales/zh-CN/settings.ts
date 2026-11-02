@@ -145,6 +145,7 @@ export default {
     lineTimestamp: "行时间戳（终端左侧逐行显示时间）",
     lineTimestampFormat: "时间格式",
     lineTimestampFormatPlaceholder: "YYYY-MM-DD HH:mm:ss",
+    lineTimestampPresetPlaceholder: "快速选择常用格式",
     lineTimestampFormatHint:
       "支持记号：YYYY 年、MM 月、DD 日、HH 时、mm 分、ss 秒、SSS 毫秒，可穿插任意文字，如 HH:mm:ss、[MM-DD]。",
     lineTimestampColor: "时间颜色",

@@ -92,6 +92,23 @@ const disconnectPolicyActive = computed(
   () => terminalStore.disconnectAction !== "keep",
 );
 
+/** 行时间戳常用格式预设：选中即填入自定义输入框；当前值不匹配任何预设时显示占位 */
+const timestampFormatPresets = computed(() => [
+  { label: "HH:mm:ss", value: "HH:mm:ss" },
+  { label: "MM-DD HH:mm:ss", value: "MM-DD HH:mm:ss" },
+  { label: "YYYY-MM-DD HH:mm:ss", value: "YYYY-MM-DD HH:mm:ss" },
+  { label: "YYYY-MM-DD HH:mm:ss.SSS", value: "YYYY-MM-DD HH:mm:ss.SSS" },
+]);
+
+const timestampPreset = computed({
+  get: () =>
+    timestampFormatPresets.value.find((p) => p.value === terminalStore.lineTimestampFormat)
+      ?.value ?? null,
+  set: (v: string | null) => {
+    if (v) terminalStore.lineTimestampFormat = v;
+  },
+});
+
 function onDisconnectActionChange(value: DisconnectAction) {
   terminalStore.disconnectAction = value;
   if (value !== "keep" && terminalStore.autoReconnect) {
@@ -260,11 +277,19 @@ function onDisconnectActionChange(value: DisconnectAction) {
       </NFormItem>
       <template v-if="terminalStore.lineTimestampEnabled">
         <NFormItem :label="t('settings.terminal.lineTimestampFormat')" style="margin-top: 12px">
-          <NInput
-            v-model:value="terminalStore.lineTimestampFormat"
-            :placeholder="t('settings.terminal.lineTimestampFormatPlaceholder')"
-            :maxlength="64"
-          />
+          <div class="ts-format-stack">
+            <NSelect
+              v-model:value="timestampPreset"
+              :options="timestampFormatPresets"
+              :placeholder="t('settings.terminal.lineTimestampPresetPlaceholder')"
+              size="small"
+            />
+            <NInput
+              v-model:value="terminalStore.lineTimestampFormat"
+              :placeholder="t('settings.terminal.lineTimestampFormatPlaceholder')"
+              :maxlength="64"
+            />
+          </div>
         </NFormItem>
         <p class="settings-hint">
           {{ t("settings.terminal.lineTimestampFormatHint") }}
@@ -322,5 +347,13 @@ function onDisconnectActionChange(value: DisconnectAction) {
   display: flex;
   gap: 16px;
   align-items: flex-start;
+}
+
+/* 时间格式预设下拉 + 自定义输入的纵向堆叠 */
+.ts-format-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 </style>

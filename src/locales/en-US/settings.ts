@@ -146,6 +146,7 @@ export default {
     lineTimestamp: "Line timestamps (per-line time on the left)",
     lineTimestampFormat: "Time format",
     lineTimestampFormatPlaceholder: "YYYY-MM-DD HH:mm:ss",
+    lineTimestampPresetPlaceholder: "Quick pick a common format",
     lineTimestampFormatHint:
       "Tokens: YYYY (year), MM, DD, HH, mm, ss, SSS (ms); any literal text allowed, e.g. HH:mm:ss.",
     lineTimestampColor: "Timestamp color",

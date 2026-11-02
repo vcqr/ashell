@@ -306,6 +306,33 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     fitbox.style.marginLeft = w > 0 ? `${w}px` : ""
   }
 
+  /** gutter 宽度测量用的离屏 canvas（缓存，避免每次测量重建） */
+  let measureCtx: CanvasRenderingContext2D | null | undefined
+
+  /**
+   * gutter 允许的最大宽度 = 终端区域的 40%。格式串最长 64 字符，不限宽的话
+   * 自定义长格式会把终端内容挤掉半屏。容器不可测（隐藏 tab）时退化为按上次
+   * fit 的列宽估算，两者都拿不到则不限制。
+   */
+  function maxGutterWidth(): number {
+    const host = options.hostEl()
+    if (host && host.clientWidth > 0) {
+      return Math.max(36, Math.floor(host.clientWidth * 0.4))
+    }
+    const t = options.getTerm()
+    try {
+      const cellW = (t as unknown as {
+        _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number } } } } }
+      })._core?._renderService?.dimensions?.css?.cell?.width
+      if (t && typeof cellW === "number" && cellW > 0 && t.cols > 0) {
+        return Math.max(36, Math.floor(t.cols * cellW * 0.4))
+      }
+    } catch {
+      // ignore
+    }
+    return Number.MAX_SAFE_INTEGER
+  }
+
   function measureWidth(): number {
     const fmt = store.lineTimestampFormat
     const sample = fmt.replace(TOKEN_RE, (tok: string) =>
@@ -313,15 +340,18 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     )
     let textW = sample.length * 8
     try {
-      const ctx = document.createElement("canvas").getContext("2d")
-      if (ctx) {
-        ctx.font = `${store.fontSize}px ${store.fontFamily}`
-        textW = ctx.measureText(sample).width
+      if (measureCtx === undefined) {
+        measureCtx = document.createElement("canvas").getContext("2d")
+      }
+      if (measureCtx) {
+        measureCtx.font = `${store.fontSize}px ${store.fontFamily}`
+        textW = measureCtx.measureText(sample).width
       }
     } catch {
       // ignore
     }
-    return Math.max(36, Math.ceil(textW) + GUTTER_PAD_LEFT + GUTTER_PAD_RIGHT)
+    const natural = Math.max(36, Math.ceil(textW) + GUTTER_PAD_LEFT + GUTTER_PAD_RIGHT)
+    return Math.min(natural, maxGutterWidth())
   }
 
   function applyGutterStyle() {
@@ -457,6 +487,17 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     options.requestFit()
   }
 
+  /**
+   * 重新测量并收敛 gutter 宽度。给容器尺寸可能已变化的时机调用（tab 激活、
+   * 窗口尺寸变化）：隐藏期间 host.clientWidth 为 0，宽度上限会走估算值，
+   * 回到可见状态后按实际宽度重新收紧或放宽。
+   */
+  function refreshWidth() {
+    if (!store.lineTimestampEnabled || !gutterEl) return
+    updateWidth()
+    schedulePaint()
+  }
+
   // ===== 安装 / 卸载 =====
 
   function patchWrite() {
@@ -551,5 +592,5 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     times = []
   }
 
-  return { install, dispose }
+  return { install, dispose, refreshWidth }
 }
