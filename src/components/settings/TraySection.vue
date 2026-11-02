@@ -188,6 +188,21 @@ onBeforeUnmount(() => {
 
       <div class="setting-row">
         <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.tray.confirmClose") }}</div>
+          <div class="setting-row-desc">{{ t("settings.tray.confirmCloseHint") }}</div>
+        </div>
+        <div class="setting-row-control">
+          <NSwitch
+            size="small"
+            :value="trayStore.warnOnClose"
+            :disabled="!trayStore.enabled || trayStore.closeAction !== 'quit'"
+            @update:value="(v: boolean) => trayStore.setWarnOnClose(v)"
+          />
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-row-main">
           <div class="setting-row-label">{{ t("settings.tray.autostart") }}</div>
           <div class="setting-row-desc">{{ t("settings.tray.autostartHint") }}</div>
         </div>

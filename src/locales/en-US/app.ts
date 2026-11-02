@@ -20,6 +20,14 @@ export default {
   splitPane: {
     empty: "Click a tab above to open a session in this pane",
   },
+  quitConfirm: {
+    title: "Quit AShell?",
+    desc: "{count} active connection(s) will be disconnected.",
+    remember: "Remember my choice and don't ask again",
+    hide: "Minimize to Tray",
+    cancel: "Cancel",
+    quit: "Quit",
+  },
   theme: {
     dark: "Dark",
     light: "Light",

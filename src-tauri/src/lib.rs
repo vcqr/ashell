@@ -202,8 +202,11 @@ async fn start_api_server() -> anyhow::Result<ApiInfo> {
     // into_make_service_with_connect_info：向 handler 注入对端 SocketAddr
     // （登录端点据此按来源 IP 做防爆破限流）
     tokio::spawn(async move {
-        if let Err(e) =
-            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
         {
             log::error!("axum serve error: {e}");
         }
@@ -224,11 +227,9 @@ pub fn run() {
         )
         .with_ansi(true)
         .init();
-    env_logger::Builder::from_env(
-        env_logger::Env::default().filter_or("RUST_LOG", "info"),
-    )
-    .write_style(env_logger::WriteStyle::Always)
-    .init();
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
+        .write_style(env_logger::WriteStyle::Always)
+        .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -254,19 +255,31 @@ pub fn run() {
         )
         .manage(AppCtx::new())
         .on_window_event(|window, event| {
-            // 主窗口关闭策略：最小化到托盘时拦截关闭，仅隐藏窗口（SSH 会话保活）。
+            // 主窗口关闭策略：最小化到托盘时拦截关闭，仅隐藏窗口（SSH 会话保活）；
+            // 退出策略下若仍有活动连接，交由前端弹窗确认（tray-quit-confirm 事件），
+            // 仅在只剩主窗口时拦截——还有独立窗口时关主窗口并不退出应用。
             // 其余动态窗口（ashell-win/sftp/ai-*）不拦截，照常关闭。
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() != "main" {
-                    return;
-                }
-                let s = tray::settings();
-                if s.enabled && s.close_action == tray::CloseAction::Hide {
-                    api.prevent_close();
-                    if let Err(e) = window.hide() {
-                        log::warn!("hide main window to tray: {e}");
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() != "main" {
+                        return;
+                    }
+                    let s = tray::settings();
+                    if s.enabled && s.close_action == tray::CloseAction::Hide {
+                        api.prevent_close();
+                        if let Err(e) = window.hide() {
+                            log::warn!("hide main window to tray: {e}");
+                        }
+                    } else if window.app_handle().webview_windows().len() == 1
+                        && tray::maybe_intercept_quit(window.app_handle())
+                    {
+                        api.prevent_close();
                     }
                 }
+                tauri::WindowEvent::Destroyed => {
+                    tray::remove_active_conns(window.label());
+                }
+                _ => {}
             }
         })
         .setup(|app| {
@@ -277,7 +290,10 @@ pub fn run() {
                 .version(Some(env!("CARGO_PKG_VERSION").to_string()))
                 .short_version(Some(env!("CARGO_PKG_VERSION").to_string()))
                 .copyright(Some("© 2026 vcqr. All rights reserved.".to_string()))
-                .credits(Some("GitHub: https://github.com/vcqr/ashell\nGitee: https://gitee.com/vcqr/ashell".to_string()))
+                .credits(Some(
+                    "GitHub: https://github.com/vcqr/ashell\nGitee: https://gitee.com/vcqr/ashell"
+                        .to_string(),
+                ))
                 .authors(Some(vec![env!("CARGO_PKG_AUTHORS").to_string()]))
                 .comments(Some(env!("CARGO_PKG_DESCRIPTION").to_string()))
                 .license(Some(env!("CARGO_PKG_LICENSE").to_string()))
@@ -399,6 +415,8 @@ pub fn run() {
             sidecar::has_sidecar,
             tray::tray_get_settings,
             tray::tray_set_settings,
+            tray::tray_report_active_connections,
+            tray::tray_resolve_close,
             tray::tray_get_autostart,
             tray::tray_set_autostart,
             tray::tray_apply_locale,
@@ -413,8 +431,19 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_handle, event| {
             match event {
-                // 应用退出时清理所有 sidecar 子进程，避免僵尸进程
-                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                // code=None：系统发起的退出（macOS Cmd+Q / Dock 退出 / 全部窗口关闭）；
+                // 仍有活动连接且开启确认时拦下，由前端弹窗决定去留。主窗口已不存在
+                // 时（收尾路径）不拦截，避免无窗口的托盘僵尸。code=Some(0) 是
+                // 应用自身调 app.exit(0)（含用户在确认弹窗里选了退出），不再拦。
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    if code.is_none() && tray::maybe_intercept_quit(_handle) {
+                        api.prevent_exit();
+                    } else {
+                        // 应用退出时清理所有 sidecar 子进程，避免僵尸进程
+                        sidecar::kill_all_sidecars();
+                    }
+                }
+                tauri::RunEvent::Exit => {
                     sidecar::kill_all_sidecars();
                 }
                 // macOS：窗口最小化到托盘后点 Dock 图标恢复主窗口

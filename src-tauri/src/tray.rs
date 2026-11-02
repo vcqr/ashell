@@ -3,13 +3,14 @@
 //! 设置持久化在 `~/.ashell/tray.json`（后端权威）：窗口 CloseRequested 拦截
 //! 发生在 Rust 侧，且可能早于前端加载完成，不能依赖 localStorage。
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_autostart::ManagerExt as _;
 
 use crate::config;
@@ -21,6 +22,9 @@ const ID_AUTOSTART: &str = "tray-autostart";
 const ID_QUIT_ON_CLOSE: &str = "tray-quit-on-close";
 const ID_HIDE_ON_CLOSE: &str = "tray-hide-on-close";
 const ID_QUIT: &str = "tray-quit";
+
+/// 退出拦截事件：仅发给主窗口，payload 为活动连接数
+const EVENT_QUIT_CONFIRM: &str = "tray-quit-confirm";
 
 /// 点击主窗口关闭按钮（含 Alt+F4 / 任务栏关闭）时的行为
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,22 +44,32 @@ pub struct TraySettings {
     pub enabled: bool,
     /// 关闭主窗口时的行为
     pub close_action: CloseAction,
+    /// 退出路径（关闭按钮 / Cmd+Q）仍有活动连接时是否先弹窗确认
+    pub warn_on_close: bool,
     /// 托盘菜单语言（前端启动/切换语言时同步过来），如 "zh-CN" / "en-US"
     pub locale: String,
 }
 
 impl Default for TraySettings {
     fn default() -> Self {
-        // 托盘默认开启；关闭策略默认直接退出，与无托盘时代的行为一致
+        // 托盘默认开启；关闭策略默认直接退出，与无托盘时代的行为一致；
+        // 退出确认默认开启（对误触的保护）
         Self {
             enabled: true,
             close_action: CloseAction::Quit,
+            warn_on_close: true,
             locale: "zh-CN".into(),
         }
     }
 }
 
 static SETTINGS: RwLock<Option<TraySettings>> = RwLock::new(None);
+
+/// 各窗口上报的活动终端连接数（label → count）。
+/// 连接状态在前端（TerminalTab.status），退出拦截在 Rust 侧同步事件里，
+/// 无法现场往返查询，只能由前端在状态变化时推送、此处缓存求和。
+static ACTIVE_CONNS: LazyLock<RwLock<HashMap<String, u32>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 fn settings_path() -> anyhow::Result<PathBuf> {
     Ok(config::app_dir()?.join("tray.json"))
@@ -173,6 +187,52 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+// ---------- 活动连接计数（退出确认依据） ----------
+
+fn total_active_conns() -> u32 {
+    ACTIVE_CONNS
+        .read()
+        .map(|guard| guard.values().sum())
+        .unwrap_or(0)
+}
+
+/// 窗口销毁后清掉它的计数，避免残留值让退出确认误判
+pub fn remove_active_conns(label: &str) {
+    if let Ok(mut guard) = ACTIVE_CONNS.write() {
+        guard.remove(label);
+    }
+}
+
+/// 退出路径的统一拦截：仍有活动连接且开启确认时，恢复并聚焦主窗口、
+/// 发确认事件给前端弹窗，返回 true 表示本次关闭/退出已被拦下。
+///
+/// 主窗口不存在（全部窗口已关闭的收尾路径）不再拦截，避免拦出
+/// 一个没有窗口只剩托盘的僵尸进程。
+pub fn maybe_intercept_quit<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let Some(win) = app.get_webview_window("main") else {
+        return false;
+    };
+    let s = settings();
+    if !s.warn_on_close {
+        return false;
+    }
+    let count = total_active_conns();
+    if count == 0 {
+        return false;
+    }
+    // 弹窗宿主必须可见：隐藏（托盘）或最小化状态下先恢复
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+    match app.emit_to("main", EVENT_QUIT_CONFIRM, count) {
+        Ok(_) => true,
+        Err(e) => {
+            log::error!("emit quit-confirm: {e}");
+            false
+        }
+    }
+}
+
 fn rebuild_menu<R: Runtime>(app: &AppHandle<R>) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         match build_menu(app) {
@@ -281,6 +341,7 @@ pub fn tray_set_settings(
     app: AppHandle,
     enabled: bool,
     close_action: String,
+    warn_on_close: Option<bool>,
 ) -> Result<TraySettings, String> {
     let close_action = match close_action.as_str() {
         "hide" => CloseAction::Hide,
@@ -289,7 +350,60 @@ pub fn tray_set_settings(
     let mut s = settings();
     s.enabled = enabled;
     s.close_action = close_action;
+    if let Some(w) = warn_on_close {
+        s.warn_on_close = w;
+    }
     apply_settings(&app, s.clone())?;
+    Ok(s)
+}
+
+/// 各窗口上报自己的活动终端连接数（主窗口与独立终端窗口各报各的，此处求和）
+#[tauri::command]
+pub fn tray_report_active_connections(window: tauri::WebviewWindow, count: u32) {
+    if let Ok(mut guard) = ACTIVE_CONNS.write() {
+        guard.insert(window.label().to_string(), count);
+    }
+}
+
+/// 用户在退出确认弹窗里的决定。
+/// hide：记住则把关闭策略切为"最小化到托盘"（该选项本就不再询问）；
+/// quit：记住则关掉退出确认；随后隐藏窗口或退出应用。
+#[tauri::command]
+pub fn tray_resolve_close(
+    app: AppHandle,
+    action: String,
+    remember: bool,
+) -> Result<TraySettings, String> {
+    let mut s = settings();
+    match action.as_str() {
+        "hide" => {
+            // 未启用托盘时没有托盘图标可点，隐藏会让窗口无法找回，忽略
+            if !s.enabled {
+                return Ok(s);
+            }
+            if remember && s.close_action != CloseAction::Hide {
+                s.close_action = CloseAction::Hide;
+                if let Err(e) = persist(&s) {
+                    log::error!("save tray settings: {e}");
+                }
+                rebuild_menu(&app);
+            }
+            if let Some(win) = app.get_webview_window("main") {
+                if let Err(e) = win.hide() {
+                    log::warn!("hide main window: {e}");
+                }
+            }
+        }
+        _ => {
+            if remember && s.warn_on_close {
+                s.warn_on_close = false;
+                if let Err(e) = persist(&s) {
+                    log::error!("save tray settings: {e}");
+                }
+            }
+            app.exit(0);
+        }
+    }
     Ok(s)
 }
 

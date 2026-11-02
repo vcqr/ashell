@@ -10,11 +10,14 @@ export type TrayCloseAction = "quit" | "hide"
 export interface TraySettings {
   enabled: boolean
   closeAction: TrayCloseAction
+  /** 退出路径仍有活动连接时是否先弹窗确认 */
+  warnOnClose: boolean
 }
 
 export const useTrayStore = defineStore("tray", () => {
   const enabled = ref(true)
   const closeAction = ref<TrayCloseAction>("quit")
+  const warnOnClose = ref(true)
   const autostart = ref(false)
   const loaded = ref(false)
 
@@ -27,6 +30,7 @@ export const useTrayStore = defineStore("tray", () => {
       ])
       enabled.value = settings.enabled
       closeAction.value = settings.closeAction === "hide" ? "hide" : "quit"
+      warnOnClose.value = settings.warnOnClose !== false
       autostart.value = auto
       loaded.value = true
     } catch {
@@ -41,9 +45,11 @@ export const useTrayStore = defineStore("tray", () => {
       const s = await invoke<TraySettings>("tray_set_settings", {
         enabled: v,
         closeAction: closeAction.value,
+        warnOnClose: warnOnClose.value,
       })
       enabled.value = s.enabled
       closeAction.value = s.closeAction === "hide" ? "hide" : "quit"
+      warnOnClose.value = s.warnOnClose !== false
     } catch {
       // ignore
     }
@@ -59,6 +65,21 @@ export const useTrayStore = defineStore("tray", () => {
       await invoke("tray_set_settings", {
         enabled: enabled.value,
         closeAction: v,
+        warnOnClose: warnOnClose.value,
+      })
+    } catch {
+      // ignore
+    }
+  }
+
+  async function setWarnOnClose(v: boolean) {
+    warnOnClose.value = v
+    if (!isTauri) return
+    try {
+      await invoke("tray_set_settings", {
+        enabled: enabled.value,
+        closeAction: closeAction.value,
+        warnOnClose: v,
       })
     } catch {
       // ignore
@@ -89,11 +110,13 @@ export const useTrayStore = defineStore("tray", () => {
   return {
     enabled,
     closeAction,
+    warnOnClose,
     autostart,
     loaded,
     load,
     setEnabled,
     setCloseAction,
+    setWarnOnClose,
     setAutostart,
   }
 })

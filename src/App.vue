@@ -38,6 +38,7 @@ import HostInfoWindow from "@/components/HostInfoWindow.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
 import TemplateDrawer from "@/components/TemplateDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
+import QuitConfirmModal from "@/components/QuitConfirmModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
 import LoginGate from "@/components/LoginGate.vue";
 import NotifyBridge from "@/components/NotifyBridge.vue";
@@ -159,6 +160,51 @@ const {
   splitTab,
   splitGridTab,
 } = useTabs();
+
+// ── 退出确认（托盘关闭策略为"退出应用"时的误触保护）──
+// 本窗口的活动终端连接数推送给后端（主窗口与各独立终端窗口各报各的，
+// 后端求和）；退出路径被后端拦截后经 tray-quit-confirm 事件唤起弹窗。
+// 事件只发给主窗口，独立窗口虽复用本组件但收不到，不会重复弹。
+const activeConnCount = computed(
+  () =>
+    tabs.value.filter(
+      (t) => t.status === "connected" || t.status === "connecting",
+    ).length,
+);
+watch(activeConnCount, (count) => {
+  if (!isTauri) return;
+  void import("@tauri-apps/api/core").then(({ invoke }) =>
+    invoke("tray_report_active_connections", { count }).catch(() => {}),
+  );
+}, { immediate: true });
+
+const quitConfirmOpen = ref(false);
+const quitConfirmCount = ref(0);
+
+if (isTauri) {
+  void import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<number>("tray-quit-confirm", (e) => {
+      quitConfirmCount.value = e.payload ?? 0;
+      quitConfirmOpen.value = true;
+    }).catch(() => {}),
+  );
+}
+
+function onQuitResolve(
+  action: "quit" | "hide" | "cancel",
+  remember: boolean,
+) {
+  quitConfirmOpen.value = false;
+  if (!isTauri || action === "cancel") return;
+  void import("@tauri-apps/api/core").then(({ invoke }) =>
+    invoke("tray_resolve_close", { action, remember })
+      .then(() => {
+        // hide + 记住会改写关闭策略，重新拉一次保持 store 与后端一致
+        if (action === "hide") void trayStore.load();
+      })
+      .catch(() => {}),
+  );
+}
 
 // 主机会话状态下发给主机树/卡片视图(状态点);HostsDrawer 中间层无需透传
 provide(HOST_SESSION_STATUS_KEY, hostSessionStatus);
@@ -793,6 +839,13 @@ if (!isTauri) {
                 :resolved-theme="resolvedTheme"
                 :theme-title="themeTitle"
                 :initial-tab="settingsInitialTab"
+              />
+
+              <QuitConfirmModal
+                v-model:show="quitConfirmOpen"
+                :count="quitConfirmCount"
+                :can-hide="trayStore.enabled"
+                @resolve="onQuitResolve"
               />
             </div>
           </LoginGate>

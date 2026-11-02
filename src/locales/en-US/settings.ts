@@ -231,6 +231,9 @@ export default {
     closeActionHide: "Minimize to tray (keep terminal sessions connected)",
     closeActionHint:
       "After minimizing to tray, the window disappears from the taskbar but keeps running in the background with sessions alive. Click the tray icon or use its menu to reopen the window.",
+    confirmClose: "Confirm before quitting",
+    confirmCloseHint:
+      "When \"Quit the app\" is selected and sessions are still active, ask for confirmation before quitting. You can choose to minimize to tray instead, avoiding accidental disconnects.",
     autostart: "Launch at login",
     autostartHint: "Start AShell automatically when you log in.",
     autostartFailed: "Failed to set launch at login. Please check system permissions.",

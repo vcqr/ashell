@@ -20,6 +20,14 @@ export default {
   splitPane: {
     empty: "点击上方标签页，在此窗格打开会话",
   },
+  quitConfirm: {
+    title: "退出 AShell？",
+    desc: "还有 {count} 个活动连接，退出将断开这些会话。",
+    remember: "记住我的选择，不再询问",
+    hide: "最小化到托盘",
+    cancel: "取消",
+    quit: "退出",
+  },
   theme: {
     dark: "深色",
     light: "浅色",

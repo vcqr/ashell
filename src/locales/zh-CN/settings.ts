@@ -229,6 +229,9 @@ export default {
     closeActionHide: "最小化到托盘（终端会话保持连接）",
     closeActionHint:
       "最小化到托盘后窗口从任务栏消失，但后台保持运行、会话不断开；点击托盘图标或右键菜单可重新打开窗口。",
+    confirmClose: "退出前确认",
+    confirmCloseHint:
+      "选择“退出应用”时，若仍有活动连接，退出前先弹窗确认，可选择最小化到托盘，避免误触断开会话。",
     autostart: "开机自启",
     autostartHint: "登录系统后自动启动 AShell。",
     autostartFailed: "设置开机自启失败，请检查系统权限",
