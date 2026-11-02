@@ -459,12 +459,8 @@ async function exportCurrent() {
   color: var(--ashell-text-strong);
 }
 
-.settings-subgroup {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.4));
-}
-
+/* .settings-subgroup 已抽到 src/assets/main.css；
+   .settings-hint 保留本地覆盖：主题页 hint 用更弱的 subtle 色、无上边距 */
 .settings-hint {
   color: var(--ashell-text-subtle);
   font-size: 12px;

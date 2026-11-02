@@ -151,3 +151,71 @@ body.ashell-dragging * {
 :root[data-ashell-theme="light"] ::-webkit-scrollbar-thumb:hover {
   background: rgba(20, 24, 33, 0.32);
 }
+
+/* ---------- 设置页共享样式 ----------
+ * 原先在 TerminalSection / ThemeSection / ShortcutsSection / BackupSection
+ * 的 scoped 样式里各复制一份，抽到这里统一维护。
+ * .setting-row 是行式设置项：左侧标签+可选描述、右侧控件，
+ * 替代"标签一行+控件一行"的表单排版，纵向减半。 */
+.settings-subgroup {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ashell-text-subtle);
+}
+
+.settings-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ashell-text-muted);
+  line-height: 1.6;
+}
+
+/* 分组卡片：一组设置项聚合成一块圆角卡片，组内行用细分隔线隔开
+ * （iOS/macOS 设置的 inset grouped 风格）；组标题用 .settings-subgroup 浮在卡片上方 */
+.settings-block {
+  margin-top: 8px;
+  padding: 4px 16px;
+  background: var(--ashell-panel-bg-soft);
+  border-radius: 10px;
+}
+
+.settings-block > .setting-row {
+  padding: 10px 0;
+}
+
+.settings-block > .setting-row + .setting-row {
+  border-top: 1px solid var(--ashell-border-soft);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 28px;
+}
+
+.setting-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-row-label {
+  font-size: 13px;
+  color: var(--ashell-text);
+  line-height: 1.5;
+}
+
+.setting-row-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ashell-text-muted);
+  line-height: 1.5;
+}
+
+.setting-row-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -2,7 +2,6 @@
 import { computed } from "vue";
 import {
   NForm,
-  NFormItem,
   NSelect,
   NInput,
   NInputNumber,
@@ -120,188 +119,283 @@ function onDisconnectActionChange(value: DisconnectAction) {
 <template>
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.terminal.title") }}</div>
-    <NForm
-      label-placement="top"
-      require-mark-placement="right-hanging"
-      size="small"
-      :show-feedback="false"
-    >
+    <NForm size="small" :show-feedback="false">
       <div class="settings-subgroup">{{ t("settings.terminal.groupFont") }}</div>
-      <NFormItem :label="t('settings.terminal.fontFamily')">
-        <NSelect
-          v-model:value="terminalStore.fontFamily"
-          :options="fontFamilyOptions"
-          :loading="terminalStore.systemFontsLoading"
-          filterable
-          tag
-          :placeholder="t('settings.terminal.fontFamilyPlaceholder')"
-        />
-      </NFormItem>
-      <div class="form-row" style="margin-top: 12px">
-        <NFormItem :label="t('settings.terminal.fontSize')" style="flex: 1">
-          <NInputNumber
-            v-model:value="terminalStore.fontSize"
-            :min="FONT_SIZE_MIN"
-            :max="FONT_SIZE_MAX"
-            :step="1"
-            style="width: 100%"
-          />
-        </NFormItem>
-        <NFormItem :label="t('settings.terminal.scrollback')" style="flex: 1">
-          <NInputNumber
-            v-model:value="terminalStore.scrollback"
-            :min="SCROLLBACK_MIN"
-            :max="SCROLLBACK_MAX"
-            :step="1000"
-            style="width: 100%"
-          />
-        </NFormItem>
-      </div>
-
-      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupCursor") }}</div>
-      <div class="form-row" style="margin-top: 12px">
-        <NFormItem :label="t('settings.terminal.cursorStyle')" style="flex: 1">
-          <NRadioGroup v-model:value="terminalStore.cursorStyle">
-            <NRadioButton
-              v-for="opt in cursorStyleOptions"
-              :key="opt.value"
-              :value="opt.value"
-            >
-              {{ opt.label }}
-            </NRadioButton>
-          </NRadioGroup>
-        </NFormItem>
-        <NFormItem :label="t('settings.terminal.cursorBlink')">
-          <NSwitch v-model:value="terminalStore.cursorBlink" />
-        </NFormItem>
-      </div>
-      <div class="form-row" style="margin-top: 4px">
-        <NFormItem :label="t('settings.terminal.cursorWidth')" style="flex: 1">
-          <NInputNumber
-            v-model:value="terminalStore.cursorWidth"
-            :min="CURSOR_WIDTH_MIN"
-            :max="CURSOR_WIDTH_MAX"
-            :step="1"
-            style="width: 100%"
-          />
-        </NFormItem>
-        <p class="settings-hint" style="flex: 1; align-self: flex-end; margin: 0 0 18px">
-          {{ t("settings.terminal.cursorWidthHint") }}
-        </p>
-      </div>
-
-      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupMouse") }}</div>
-      <div class="form-row" style="margin-top: 12px">
-        <NFormItem :label="t('settings.terminal.rightClick')" style="flex: 1">
-          <NSelect
-            v-model:value="terminalStore.rightClickAction"
-            :options="rightClickOptions"
-          />
-        </NFormItem>
-        <NFormItem :label="t('settings.terminal.leftClick')" style="flex: 1">
-          <NSelect
-            v-model:value="terminalStore.leftClickAction"
-            :options="leftClickOptions"
-          />
-        </NFormItem>
-      </div>
-
-      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupConnection") }}</div>
-      <NFormItem :label="t('settings.terminal.disconnectAction')" style="margin-top: 12px">
-        <NSelect
-          :value="terminalStore.disconnectAction"
-          :options="disconnectOptions"
-          @update:value="onDisconnectActionChange"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.autoReconnect')" style="margin-top: 12px">
-        <NSwitch
-          v-model:value="terminalStore.autoReconnect"
-          :disabled="disconnectPolicyActive"
-        />
-      </NFormItem>
-      <p class="settings-hint">
-        {{
-          disconnectPolicyActive
-            ? t("settings.terminal.autoReconnectDisabledHint")
-            : t("settings.terminal.autoReconnectHint")
-        }}
-      </p>
-
-      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.terminal.groupShortcuts") }}</div>
-      <NFormItem :label="t('settings.terminal.tabShortcuts')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.tabShortcutsEnabled" />
-      </NFormItem>
-      <p class="settings-hint">{{ t("settings.terminal.tabShortcutsHint") }}</p>
-    </NForm>
-    <div class="settings-section-title" style="margin-top: 16px">{{ t("settings.terminal.rendering") }}</div>
-    <NForm
-      label-placement="top"
-      require-mark-placement="right-hanging"
-      size="small"
-      :show-feedback="false"
-    >
-      <NFormItem :label="t('settings.terminal.webgl')">
-        <NSwitch v-model:value="terminalStore.webglEnabled" />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.webLinks')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.webLinksEnabled" />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.unicode11')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.unicode11Enabled" />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.searchHotkey')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.searchHotkeyEnabled" />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.ligatures')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.ligaturesEnabled" />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.progress')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.progressEnabled" />
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.commandSuggest')" style="margin-top: 12px">
-        <NSpace align="center">
-          <NSwitch v-model:value="terminalStore.commandSuggestEnabled" />
-          <NPopconfirm @positive-click="clearCommandSuggestData">
-            <template #trigger>
-              <NButton size="small" secondary>
-                {{ t("settings.terminal.clearHistory") }}
-              </NButton>
-            </template>
-            {{ t("settings.terminal.clearHistoryConfirm") }}
-          </NPopconfirm>
-        </NSpace>
-      </NFormItem>
-      <NFormItem :label="t('settings.terminal.lineTimestamp')" style="margin-top: 12px">
-        <NSwitch v-model:value="terminalStore.lineTimestampEnabled" />
-      </NFormItem>
-      <template v-if="terminalStore.lineTimestampEnabled">
-        <NFormItem :label="t('settings.terminal.lineTimestampFormat')" style="margin-top: 12px">
-          <div class="ts-format-stack">
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.fontFamily") }}</div>
+          </div>
+          <div class="setting-row-control w-font">
             <NSelect
-              v-model:value="timestampPreset"
-              :options="timestampFormatPresets"
-              :placeholder="t('settings.terminal.lineTimestampPresetPlaceholder')"
-              size="small"
-            />
-            <NInput
-              v-model:value="terminalStore.lineTimestampFormat"
-              :placeholder="t('settings.terminal.lineTimestampFormatPlaceholder')"
-              :maxlength="64"
+              v-model:value="terminalStore.fontFamily"
+              :options="fontFamilyOptions"
+              :loading="terminalStore.systemFontsLoading"
+              filterable
+              tag
+              :placeholder="t('settings.terminal.fontFamilyPlaceholder')"
             />
           </div>
-        </NFormItem>
-        <p class="settings-hint">
-          {{ t("settings.terminal.lineTimestampFormatHint") }}
-        </p>
-        <NFormItem :label="t('settings.terminal.lineTimestampColor')" style="margin-top: 12px">
-          <NColorPicker
-            v-model:value="terminalStore.lineTimestampColor"
-            :show-alpha="false"
-            :modes="['hex']"
-            style="width: 140px"
-          />
-        </NFormItem>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.fontSize") }}</div>
+          </div>
+          <div class="setting-row-control w-num">
+            <NInputNumber
+              v-model:value="terminalStore.fontSize"
+              :min="FONT_SIZE_MIN"
+              :max="FONT_SIZE_MAX"
+              :step="1"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.scrollback") }}</div>
+          </div>
+          <div class="setting-row-control w-num">
+            <NInputNumber
+              v-model:value="terminalStore.scrollback"
+              :min="SCROLLBACK_MIN"
+              :max="SCROLLBACK_MAX"
+              :step="1000"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-subgroup">{{ t("settings.terminal.groupCursor") }}</div>
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.cursorStyle") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NRadioGroup v-model:value="terminalStore.cursorStyle">
+              <NRadioButton
+                v-for="opt in cursorStyleOptions"
+                :key="opt.value"
+                :value="opt.value"
+              >
+                {{ opt.label }}
+              </NRadioButton>
+            </NRadioGroup>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.cursorBlink") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.cursorBlink" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.cursorWidth") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.cursorWidthHint") }}</div>
+          </div>
+          <div class="setting-row-control w-num">
+            <NInputNumber
+              v-model:value="terminalStore.cursorWidth"
+              :min="CURSOR_WIDTH_MIN"
+              :max="CURSOR_WIDTH_MAX"
+              :step="1"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-subgroup">{{ t("settings.terminal.groupMouse") }}</div>
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.rightClick") }}</div>
+          </div>
+          <div class="setting-row-control w-action">
+            <NSelect
+              v-model:value="terminalStore.rightClickAction"
+              :options="rightClickOptions"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.leftClick") }}</div>
+          </div>
+          <div class="setting-row-control w-action">
+            <NSelect
+              v-model:value="terminalStore.leftClickAction"
+              :options="leftClickOptions"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-subgroup">{{ t("settings.terminal.groupConnection") }}</div>
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.disconnectAction") }}</div>
+          </div>
+          <div class="setting-row-control w-disconnect">
+            <NSelect
+              :value="terminalStore.disconnectAction"
+              :options="disconnectOptions"
+              @update:value="onDisconnectActionChange"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.autoReconnect") }}</div>
+            <div class="setting-row-desc">
+              {{
+                disconnectPolicyActive
+                  ? t("settings.terminal.autoReconnectDisabledHint")
+                  : t("settings.terminal.autoReconnectHint")
+              }}
+            </div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch
+              v-model:value="terminalStore.autoReconnect"
+              :disabled="disconnectPolicyActive"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-subgroup">{{ t("settings.terminal.groupShortcuts") }}</div>
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.tabShortcuts") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.tabShortcutsHint") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.tabShortcutsEnabled" />
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-subgroup">{{ t("settings.terminal.rendering") }}</div>
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.webgl") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.webglDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.webglEnabled" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.webLinks") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.webLinksDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.webLinksEnabled" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.unicode11") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.unicode11Desc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.unicode11Enabled" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.searchHotkey") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.searchHotkeyDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.searchHotkeyEnabled" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.ligatures") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.ligaturesDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.ligaturesEnabled" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.progress") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.progressDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.progressEnabled" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.commandSuggest") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.commandSuggestDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NPopconfirm @positive-click="clearCommandSuggestData">
+              <template #trigger>
+                <NButton size="small" secondary>
+                  {{ t("settings.terminal.clearHistory") }}
+                </NButton>
+              </template>
+              {{ t("settings.terminal.clearHistoryConfirm") }}
+            </NPopconfirm>
+            <NSwitch v-model:value="terminalStore.commandSuggestEnabled" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.terminal.lineTimestamp") }}</div>
+            <div class="setting-row-desc">{{ t("settings.terminal.lineTimestampDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch v-model:value="terminalStore.lineTimestampEnabled" />
+          </div>
+        </div>
+      </div>
+      <template v-if="terminalStore.lineTimestampEnabled">
+        <div class="settings-block ts-sub">
+          <div class="setting-row">
+            <div class="setting-row-main">
+              <div class="setting-row-label">{{ t("settings.terminal.lineTimestampFormat") }}</div>
+              <div class="setting-row-desc">{{ t("settings.terminal.lineTimestampFormatHint") }}</div>
+            </div>
+            <div class="setting-row-control ts-format">
+              <NSelect
+                v-model:value="timestampPreset"
+                :options="timestampFormatPresets"
+                :placeholder="t('settings.terminal.lineTimestampPresetPlaceholder')"
+              />
+              <NInput
+                v-model:value="terminalStore.lineTimestampFormat"
+                :placeholder="t('settings.terminal.lineTimestampFormatPlaceholder')"
+                :maxlength="64"
+              />
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-row-main">
+              <div class="setting-row-label">{{ t("settings.terminal.lineTimestampColor") }}</div>
+            </div>
+            <div class="setting-row-control ts-color">
+              <NColorPicker
+                v-model:value="terminalStore.lineTimestampColor"
+                :show-alpha="false"
+                :modes="['hex']"
+              />
+            </div>
+          </div>
+        </div>
       </template>
     </NForm>
     <NSpace style="margin-top: 16px">
@@ -321,7 +415,6 @@ function onDisconnectActionChange(value: DisconnectAction) {
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
 }
 
 .settings-section-title {
@@ -330,30 +423,50 @@ function onDisconnectActionChange(value: DisconnectAction) {
   color: var(--ashell-text-strong);
 }
 
+/* 分组标题统一节奏：跟上一组内容隔开，首个分组贴近页标题 */
 .settings-subgroup {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.4));
+  margin-top: 18px;
+}
+.settings-section-title + .settings-subgroup {
+  margin-top: 12px;
 }
 
-.settings-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  line-height: 1.6;
+.w-font {
+  width: 320px;
 }
 
-.form-row {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
+.w-num {
+  width: 140px;
 }
 
-/* 时间格式预设下拉 + 自定义输入的纵向堆叠 */
-.ts-format-stack {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.w-action {
+  width: 280px;
+}
+
+.w-disconnect {
+  width: 320px;
+}
+
+/* 行时间戳展开的从属子项：紧跟主卡片之下的独立卡片 */
+.ts-sub {
+  margin-top: 10px;
+}
+
+/* 预设下拉 + 自定义输入并排；颜色块用容器限宽（NColorPicker 上的
+   width 内联样式落不到根元素，见会话记录） */
+.ts-format {
+  width: 420px;
+}
+.ts-format > :first-child {
+  width: 170px;
+  flex-shrink: 0;
+}
+.ts-format > :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.ts-color {
+  width: 140px;
 }
 </style>

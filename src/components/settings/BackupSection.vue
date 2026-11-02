@@ -667,18 +667,7 @@ function formatTime(timestamp: string): string {
   color: var(--ashell-text-strong);
 }
 
-.settings-subgroup {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ashell-text-subtle, rgba(255, 255, 255, 0.4));
-}
-
-.settings-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  line-height: 1.5;
-}
+/* .settings-subgroup / .settings-hint 已抽到 src/assets/main.css 统一维护 */
 
 .form-row {
   display: flex;
