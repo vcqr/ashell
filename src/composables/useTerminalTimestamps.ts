@@ -72,9 +72,9 @@ interface TerminalTimestampsOptions {
   requestFit: () => void
 }
 
-/** gutter 左/右内边距（右留 10px 间隔让时间与终端内容分开） */
+/** gutter 左/右内边距（右侧另有 .terminal-host 的 8px padding-left，共同构成与内容的间隔） */
 const GUTTER_PAD_LEFT = 6
-const GUTTER_PAD_RIGHT = 10
+const GUTTER_PAD_RIGHT = 0
 
 export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
   const store = useTerminalStore()
