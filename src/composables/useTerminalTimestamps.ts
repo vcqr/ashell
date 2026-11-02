@@ -116,8 +116,21 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     const t = options.getTerm()
     if (!t) return null
     try {
-      const core = (t as unknown as { _core?: { bufferService?: { buffers?: { normal?: { lines?: CircularListLike } } } } })._core
-      return core?.bufferService?.buffers?.normal?.lines ?? null
+      // xterm 6 内核服务的字段名带下划线（CoreTerminal._bufferService）；
+      // bufferService / buffers（公开 getter）作为新旧版本兼容的备选路径
+      const core = (t as unknown as {
+        _core?: {
+          _bufferService?: { buffers?: { normal?: { lines?: CircularListLike } } }
+          bufferService?: { buffers?: { normal?: { lines?: CircularListLike } } }
+          buffers?: { normal?: { lines?: CircularListLike } }
+        }
+      })._core
+      return (
+        core?._bufferService?.buffers?.normal?.lines ??
+        core?.bufferService?.buffers?.normal?.lines ??
+        core?.buffers?.normal?.lines ??
+        null
+      )
     } catch {
       return null
     }
@@ -218,15 +231,22 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     }
     if (active.type === "alternate") return
     const lines = normalLines()
-    if (!lines) return
-    if (lines !== subbedLines) resubscribe(lines)
+    if (lines && lines !== subbedLines) resubscribe(lines)
+    // 长度来源优先内部 normal buffer；内部结构不可达时退回公开 API，
+    // 保证时间戳计账永不静默失效（此时裁剪跟踪走启发式）
+    let len: number
+    try {
+      len = lines ? lines.length : active.length
+    } catch {
+      return
+    }
 
     if (!trimSupported) {
       // 退化路径：scrollback 满后行数不变，无法从长度差发现裁剪。
       // 光标停在底行且本批数据含换行 → 认为发生了滚动，按换行数平移。
       try {
         const scrollback = typeof t.options.scrollback === "number" ? t.options.scrollback : 0
-        const atCap = lines.length >= scrollback + t.rows
+        const atCap = len >= scrollback + t.rows
         if (atCap && data && active.cursorY >= t.rows - 1) {
           const nl = countNewlines(data)
           if (nl > 0) times.splice(0, Math.min(nl, times.length))
@@ -242,13 +262,13 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
       }
     }
 
-    const appended = lines.length - times.length
+    const appended = len - times.length
     if (appended > 0) {
       const now = Date.now()
       for (let i = 0; i < appended; i++) times.push(now)
     } else if (appended < 0) {
       // 行数骤减且无对应 trim 事件：clear()/reset() 换了新 lines，全部行按新建记录
-      times = new Array<number | undefined>(lines.length).fill(Date.now())
+      times = new Array<number | undefined>(len).fill(Date.now())
       trimBase = cumTrim
     }
     schedulePaint()
@@ -265,8 +285,14 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
       return
     }
     const lines = normalLines()
-    if (!lines) return
-    if (lines !== subbedLines) resubscribe(lines)
+    if (lines && lines !== subbedLines) resubscribe(lines)
+    // 与 onBatchParsed 相同的长度兜底：内部不可达时用公开 API
+    let len: number
+    try {
+      len = lines ? lines.length : t.buffer.active.length
+    } catch {
+      return
+    }
 
     // windowsPty(conpty) 下 xterm 关闭了 reflow（本地 Windows 终端），列数变化
     // 不会重排行内容，按"仅行数变化"处理；其余情况列数变化视为 reflow
@@ -280,18 +306,18 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     if (lastCols !== -1 && lastCols !== t.cols && !reflowDisabled) {
       // 列数变化触发 reflow，行与旧数组的对应关系按比例重映射（近似）
       const old = times
-      const next = new Array<number | undefined>(lines.length)
-      if (old.length > 0 && lines.length > 0) {
-        for (let i = 0; i < lines.length; i++) {
-          const src = Math.min(old.length - 1, Math.floor((i * old.length) / lines.length))
+      const next = new Array<number | undefined>(len)
+      if (old.length > 0 && len > 0) {
+        for (let i = 0; i < len; i++) {
+          const src = Math.min(old.length - 1, Math.floor((i * old.length) / len))
           next[i] = old[src]
         }
       }
       times = next
-    } else if (lines.length !== times.length) {
+    } else if (len !== times.length) {
       // 仅行数变化（无重排）：内容行不变，尾部补空/裁剪
-      while (times.length > lines.length) times.pop()
-      while (times.length < lines.length) times.push(undefined)
+      while (times.length > len) times.pop()
+      while (times.length < len) times.push(undefined)
     }
     lastCols = t.cols
     trimBase = cumTrim
