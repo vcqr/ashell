@@ -13,7 +13,6 @@ import {
   NInput,
   NSelect,
   NForm,
-  NFormItem,
   NSpin,
   NPopconfirm,
   NEmpty,
@@ -193,26 +192,28 @@ onMounted(() => {
 <template>
   <section class="providers-section">
     <div class="provider-layout">
-      <!-- Left: provider list -->
+      <!-- Left: provider list（增删交互块保持原有内部结构，整体入卡） -->
       <div class="provider-sidebar">
         <div class="provider-list">
-          <NSpin :show="loading" size="small">
-            <button
-              v-for="p in providers"
-              :key="p.id"
-              class="provider-item"
-              :class="{ active: p.id === selectedId }"
-              type="button"
-              @click="selectedId = p.id"
-            >
-              <span class="provider-item-name">{{ p.name }}</span>
-            </button>
-            <NEmpty
-              v-if="!loading && providers.length === 0"
-              :description="t('settings.ai.provider.emptyHint')"
-              size="small"
-            />
-          </NSpin>
+          <div class="settings-block list-card">
+            <NSpin :show="loading" size="small">
+              <button
+                v-for="p in providers"
+                :key="p.id"
+                class="provider-item"
+                :class="{ active: p.id === selectedId }"
+                type="button"
+                @click="selectedId = p.id"
+              >
+                <span class="provider-item-name">{{ p.name }}</span>
+              </button>
+              <NEmpty
+                v-if="!loading && providers.length === 0"
+                :description="t('settings.ai.provider.emptyHint')"
+                size="small"
+              />
+            </NSpin>
+          </div>
         </div>
         <NButton block dashed size="small" @click="addProvider">
           <template #icon><NIcon><RiAddLine /></NIcon></template>
@@ -220,41 +221,65 @@ onMounted(() => {
         </NButton>
       </div>
 
-      <!-- Right: provider detail -->
+      <!-- Right: provider detail（表单项转行式入卡） -->
       <div class="provider-detail">
         <template v-if="selectedProvider">
           <NScrollbar class="detail-scroll">
-            <NForm label-placement="top" size="small">
-              <NFormItem :label="t('settings.ai.provider.name')">
-                <NInput v-model:value="draft.name" :placeholder="t('settings.ai.provider.namePlaceholder')" />
-              </NFormItem>
-
-              <NFormItem :label="t('settings.ai.provider.apiType')">
-                <NSelect
-                  v-model:value="draft.apiType"
-                  :options="apiTypeOptions"
-                  :placeholder="t('settings.ai.provider.apiTypePlaceholder')"
-                />
-              </NFormItem>
-              <NFormItem :label="t('settings.ai.provider.baseUrl')">
-                <NInput v-model:value="draft.baseUrl" placeholder="https://api.openai.com/v1" clearable />
-              </NFormItem>
-              <NFormItem :label="t('settings.ai.provider.apiKey')">
-                <NInput v-model:value="draft.apiKey" type="password" show-password-on="click" placeholder="sk-..." clearable />
-              </NFormItem>
-              <NFormItem>
-                <NButton size="small" :loading="fetching" :disabled="!canFetchModels" @click="fetchModels">
-                  <template #icon><NIcon><RiDownloadCloudLine /></NIcon></template>
-                  {{ fetching ? t("settings.ai.provider.fetching") : t("settings.ai.provider.fetchModels") }}
-                </NButton>
-              </NFormItem>
-              <NFormItem :label="t('settings.ai.provider.modelIds')">
-                <NInput
-                  v-model:value="draft.modelIds" type="textarea"
-                  :autosize="{ minRows: 2, maxRows: 4 }"
-                  placeholder="deepseek-chat, deepseek-coder"
-                />
-              </NFormItem>
+            <NForm size="small" :show-feedback="false">
+              <div class="settings-block detail-card">
+                <div class="setting-row">
+                  <div class="setting-row-main">
+                    <div class="setting-row-label">{{ t("settings.ai.provider.name") }}</div>
+                  </div>
+                  <div class="setting-row-control w-input">
+                    <NInput v-model:value="draft.name" :placeholder="t('settings.ai.provider.namePlaceholder')" />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-row-main">
+                    <div class="setting-row-label">{{ t("settings.ai.provider.apiType") }}</div>
+                  </div>
+                  <div class="setting-row-control w-input">
+                    <NSelect
+                      v-model:value="draft.apiType"
+                      :options="apiTypeOptions"
+                      :placeholder="t('settings.ai.provider.apiTypePlaceholder')"
+                    />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-row-main">
+                    <div class="setting-row-label">{{ t("settings.ai.provider.baseUrl") }}</div>
+                  </div>
+                  <div class="setting-row-control w-input">
+                    <NInput v-model:value="draft.baseUrl" placeholder="https://api.openai.com/v1" clearable />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-row-main">
+                    <div class="setting-row-label">{{ t("settings.ai.provider.apiKey") }}</div>
+                  </div>
+                  <div class="setting-row-control w-input">
+                    <NInput v-model:value="draft.apiKey" type="password" show-password-on="click" placeholder="sk-..." clearable />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-row-main">
+                    <div class="setting-row-label">{{ t("settings.ai.provider.modelIds") }}</div>
+                  </div>
+                  <div class="setting-row-control model-ids-control">
+                    <NButton size="small" :loading="fetching" :disabled="!canFetchModels" @click="fetchModels">
+                      <template #icon><NIcon><RiDownloadCloudLine /></NIcon></template>
+                      {{ fetching ? t("settings.ai.provider.fetching") : t("settings.ai.provider.fetchModels") }}
+                    </NButton>
+                    <NInput
+                      v-model:value="draft.modelIds" type="textarea"
+                      :autosize="{ minRows: 2, maxRows: 4 }"
+                      placeholder="deepseek-chat, deepseek-coder"
+                    />
+                  </div>
+                </div>
+              </div>
             </NForm>
           </NScrollbar>
 
@@ -369,5 +394,27 @@ onMounted(() => {
   gap: 12px;
   padding-top: 12px;
   flex-shrink: 0;
+}
+
+/* 本分区对全局卡片的两处布局微调（不重定义全局类） */
+/* 列表卡贴住侧栏顶部与详情卡对齐；横向内边距收窄给列表项留空间 */
+.list-card {
+  margin-top: 0;
+  padding: 4px 8px;
+}
+
+.detail-card {
+  margin-top: 0;
+}
+
+.w-input {
+  width: 280px;
+}
+
+/* 「获取模型列表」按钮在上、候选模型 textarea 在下，纵向堆叠 */
+.model-ids-control {
+  width: 320px;
+  flex-direction: column;
+  align-items: flex-start;
 }
 </style>

@@ -50,77 +50,66 @@ async function refresh() {
 <template>
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.icons.title") }}</div>
-    <div class="settings-hint">
-      {{ t("settings.icons.hint") }}
-    </div>
 
-    <NSpace size="small">
-      <NButton v-if="isTauri" size="small" @click="openDir">
-        <template #icon>
-          <NIcon><RiFolderOpenLine /></NIcon>
-        </template>
-        {{ t("settings.icons.openDir") }}
-      </NButton>
-      <NButton
-        size="small"
-        :loading="iconStore.loading"
-        @click="refresh"
-      >
-        <template #icon>
-          <NIcon><RiRefreshLine /></NIcon>
-        </template>
-        {{ t("settings.icons.refresh") }}
-      </NButton>
-    </NSpace>
+    <div class="settings-block">
+      <div class="icons-actions">
+        <NSpace size="small">
+          <NButton v-if="isTauri" size="small" @click="openDir">
+            <template #icon>
+              <NIcon><RiFolderOpenLine /></NIcon>
+            </template>
+            {{ t("settings.icons.openDir") }}
+          </NButton>
+          <NButton
+            size="small"
+            :loading="iconStore.loading"
+            @click="refresh"
+          >
+            <template #icon>
+              <NIcon><RiRefreshLine /></NIcon>
+            </template>
+            {{ t("settings.icons.refresh") }}
+          </NButton>
+        </NSpace>
+      </div>
 
-    <div class="icons-block">
-      <NSpin v-if="iconStore.loading && iconStore.items.length === 0" />
-      <NEmpty
-        v-else-if="iconStore.items.length === 0"
-        :description="t('settings.icons.empty')"
-        size="small"
-      >
-        <template #icon>
-          <NIcon><RiImageLine /></NIcon>
-        </template>
-      </NEmpty>
-      <div v-else class="icons-grid">
-        <div
-          v-for="it in iconStore.items"
-          :key="it.name"
-          class="icon-item"
-          :title="`${it.name} · ${it.size}B`"
+      <div class="icons-block">
+        <NSpin v-if="iconStore.loading && iconStore.items.length === 0" />
+        <NEmpty
+          v-else-if="iconStore.items.length === 0"
+          :description="t('settings.icons.empty')"
+          size="small"
         >
-          <img
-            class="icon-thumb"
-            :src="iconStore.urlOf(it.name) ?? ''"
-            :alt="it.name"
-          />
-          <span class="icon-name">{{ it.name }}</span>
+          <template #icon>
+            <NIcon><RiImageLine /></NIcon>
+          </template>
+        </NEmpty>
+        <div v-else class="icons-grid">
+          <div
+            v-for="it in iconStore.items"
+            :key="it.name"
+            class="icon-item"
+            :title="`${it.name} · ${it.size}B`"
+          >
+            <img
+              class="icon-thumb"
+              :src="iconStore.urlOf(it.name) ?? ''"
+              :alt="it.name"
+            />
+            <span class="icon-name">{{ it.name }}</span>
+          </div>
         </div>
       </div>
+    </div>
+
+    <div class="settings-hint">
+      {{ t("settings.icons.hint") }}
     </div>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-}
-
-.settings-hint {
-  color: var(--ashell-text-subtle);
-  font-size: 12px;
-  line-height: 1.6;
-}
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
 
 .settings-hint code {
   background: var(--ashell-hover);
@@ -129,9 +118,13 @@ async function refresh() {
   font-size: 11.5px;
 }
 
+/* 卡片内非行式子块的留白容器：.settings-block 只给 4px 上下内边距 */
+.icons-actions {
+  padding: 10px 0 8px;
+}
+
 .icons-block {
-  margin-top: 8px;
-  padding-top: 12px;
+  padding: 12px 0;
   border-top: 1px solid var(--ashell-border-soft);
   min-height: 80px;
 }

@@ -1,13 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import {
-  NForm,
-  NFormItem,
-  NInput,
-  NSelect,
-  NSwitch,
-  type SelectOption,
-} from "naive-ui";
+import { NForm, NInput, NSelect, NSwitch, type SelectOption } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import {
   localePreference,
@@ -90,109 +83,99 @@ function saveProxyNoProxy() {
 <template>
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.general.title") }}</div>
-    <NForm label-placement="top" size="small" :show-feedback="false">
-      <NFormItem :label="t('settings.general.language')">
-        <NSelect
-          :value="localePreference"
-          :options="languageOptions"
-          style="width: 240px"
-          @update:value="onChange"
-        />
-      </NFormItem>
-      <p class="settings-hint">{{ t("settings.general.languageDesc") }}</p>
-    </NForm>
-
-    <div v-if="isTauri" class="sub-block">
-      <div class="settings-section-title">
-        {{ t("settings.general.proxyTitle") }}
+    <NForm size="small" :show-feedback="false">
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.general.language") }}</div>
+            <div class="setting-row-desc">{{ t("settings.general.languageDesc") }}</div>
+          </div>
+          <div class="setting-row-control w-select">
+            <NSelect
+              :value="localePreference"
+              :options="languageOptions"
+              @update:value="onChange"
+            />
+          </div>
+        </div>
       </div>
-      <NForm label-placement="top" size="small" :show-feedback="false">
-        <NFormItem :label="t('settings.general.proxyMode')">
-          <NSelect
-            :value="proxyStore.mode"
-            :options="proxyModeOptions"
-            style="width: 240px"
-            @update:value="onProxyModeChange"
-          />
-        </NFormItem>
-        <template v-if="proxyStore.mode === 'custom'">
-          <NFormItem :label="t('settings.general.proxyUrl')">
-            <NInput
-              v-model:value="proxyStore.url"
-              :placeholder="t('settings.general.proxyUrlPlaceholder')"
-              style="width: 320px"
-              @blur="saveProxyUrl"
-              @keyup.enter="saveProxyUrl"
-            />
-          </NFormItem>
-          <NFormItem :label="t('settings.general.proxyNoProxy')">
-            <NInput
-              v-model:value="proxyStore.noProxy"
-              :placeholder="t('settings.general.proxyNoProxyPlaceholder')"
-              style="width: 320px"
-              @blur="saveProxyNoProxy"
-              @keyup.enter="saveProxyNoProxy"
-            />
-          </NFormItem>
-          <p class="settings-hint">
-            {{ t("settings.general.proxyNoProxyDesc") }}
-          </p>
-        </template>
+
+      <template v-if="isTauri">
+        <div class="settings-subgroup">{{ t("settings.general.proxyTitle") }}</div>
+        <div class="settings-block">
+          <div class="setting-row">
+            <div class="setting-row-main">
+              <div class="setting-row-label">{{ t("settings.general.proxyMode") }}</div>
+            </div>
+            <div class="setting-row-control w-select">
+              <NSelect
+                :value="proxyStore.mode"
+                :options="proxyModeOptions"
+                @update:value="onProxyModeChange"
+              />
+            </div>
+          </div>
+          <template v-if="proxyStore.mode === 'custom'">
+            <div class="setting-row">
+              <div class="setting-row-main">
+                <div class="setting-row-label">{{ t("settings.general.proxyUrl") }}</div>
+              </div>
+              <div class="setting-row-control w-url">
+                <NInput
+                  v-model:value="proxyStore.url"
+                  :placeholder="t('settings.general.proxyUrlPlaceholder')"
+                  @blur="saveProxyUrl"
+                  @keyup.enter="saveProxyUrl"
+                />
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-row-main">
+                <div class="setting-row-label">{{ t("settings.general.proxyNoProxy") }}</div>
+                <div class="setting-row-desc">{{ t("settings.general.proxyNoProxyDesc") }}</div>
+              </div>
+              <div class="setting-row-control w-url">
+                <NInput
+                  v-model:value="proxyStore.noProxy"
+                  :placeholder="t('settings.general.proxyNoProxyPlaceholder')"
+                  @blur="saveProxyNoProxy"
+                  @keyup.enter="saveProxyNoProxy"
+                />
+              </div>
+            </div>
+          </template>
+        </div>
         <p v-if="proxyError" class="settings-hint proxy-error">
           {{ proxyError }}
         </p>
         <p class="settings-hint">{{ t("settings.general.proxyDesc") }}</p>
-      </NForm>
-    </div>
 
-    <div v-if="isTauri" class="sub-block">
-      <div class="settings-section-title">
-        {{ t("settings.general.developerTitle") }}
-      </div>
-      <NForm label-placement="top" size="small" :show-feedback="false">
-        <NFormItem :label="t('settings.general.devtools')">
-          <NSwitch :value="devtoolsOn" @update:value="onDevtoolsChange" />
-        </NFormItem>
-        <p class="settings-hint">{{ t("settings.general.devtoolsDesc") }}</p>
-      </NForm>
-    </div>
+        <div class="settings-subgroup">{{ t("settings.general.developerTitle") }}</div>
+        <div class="settings-block">
+          <div class="setting-row">
+            <div class="setting-row-main">
+              <div class="setting-row-label">{{ t("settings.general.devtools") }}</div>
+              <div class="setting-row-desc">{{ t("settings.general.devtoolsDesc") }}</div>
+            </div>
+            <div class="setting-row-control">
+              <NSwitch :value="devtoolsOn" @update:value="onDevtoolsChange" />
+            </div>
+          </div>
+        </div>
+      </template>
+    </NForm>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
+
+.w-select {
+  width: 240px;
 }
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-}
-
-.sub-block {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* show-feedback 关闭后表单项之间没有空隙，补回呼吸感 */
-.sub-block :deep(.n-form-item) {
-  margin-bottom: 14px;
-}
-
-.settings-hint + .settings-hint {
-  margin-top: 12px;
-}
-
-.settings-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  line-height: 1.6;
+.w-url {
+  width: 320px;
 }
 
 .proxy-error {

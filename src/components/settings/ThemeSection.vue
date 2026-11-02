@@ -187,197 +187,219 @@ async function exportCurrent() {
 <template>
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.theme.appearance") }}</div>
-    <NRadioGroup
-      :value="themeMode"
-      name="theme-mode"
-      @update:value="setMode"
-    >
-      <NRadioButton value="system">
-        <span class="theme-option">
-          <NIcon :size="15"><RiComputerLine /></NIcon>
-          {{ t("settings.theme.followSystem") }}
-        </span>
-      </NRadioButton>
-      <NRadioButton value="dark">
-        <span class="theme-option">
-          <NIcon :size="15"><RiMoonLine /></NIcon>
-          {{ t("settings.theme.dark") }}
-        </span>
-      </NRadioButton>
-      <NRadioButton value="light">
-        <span class="theme-option">
-          <NIcon :size="15"><RiSunLine /></NIcon>
-          {{ t("settings.theme.light") }}
-        </span>
-      </NRadioButton>
-    </NRadioGroup>
-    <div class="settings-hint">{{ themeTitle }}</div>
-
-    <div class="terminal-theme-block">
-      <div class="settings-section-title">{{ t("settings.theme.terminalColors") }}</div>
-      <NRadioGroup v-model:value="themeEditTarget" size="small">
-        <NRadioButton value="dark">{{ t("settings.theme.darkTheme") }}</NRadioButton>
-        <NRadioButton value="light">{{ t("settings.theme.lightTheme") }}</NRadioButton>
-      </NRadioGroup>
-      <div class="settings-hint">
-        {{ t("settings.theme.editingHint", { name: themeEditTarget === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }) }}
-      </div>
-
-      <div class="preset-head">
-        <div>
-          <div class="settings-subgroup">{{ t("settings.theme.presets") }}</div>
-          <div class="settings-hint">{{ t("settings.theme.presetsSourceHint") }}</div>
+    <div class="settings-block">
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-desc">{{ themeTitle }}</div>
         </div>
-        <NSpace :size="8">
-          <NButton size="small" @click="openImport">
-            <template #icon>
-              <NIcon :size="14"><RiDownloadLine /></NIcon>
-            </template>
-            {{ t("settings.theme.importTheme") }}
-          </NButton>
-          <NButton size="small" @click="exportCurrent">
-            <template #icon>
-              <NIcon :size="14"><RiShareLine /></NIcon>
-            </template>
-            {{ t("settings.theme.exportTheme") }}
-          </NButton>
-        </NSpace>
-      </div>
-
-      <div class="preset-grid">
-        <button
-          v-for="preset in visiblePresets"
-          :key="preset.id"
-          type="button"
-          class="preset-card"
-          :class="{ active: isThemeActive(preset.theme) }"
-          :title="preset.name"
-          @click="applyPreset(preset)"
-        >
-          <span
-            class="preset-swatch"
-            :style="{ background: preset.theme.background }"
+        <div class="setting-row-control">
+          <NRadioGroup
+            :value="themeMode"
+            name="theme-mode"
+            @update:value="setMode"
           >
-            <span
-              class="preset-swatch-text"
-              :style="{ color: preset.theme.foreground }"
-            >$ ssh host</span>
-            <span class="preset-swatch-dots">
-              <i
-                v-for="(c, i) in swatchColors(preset.theme)"
-                :key="i"
-                :style="{ background: c }"
-              />
-            </span>
-          </span>
-          <span class="preset-name">{{ preset.name }}</span>
-        </button>
-      </div>
-
-      <template v-if="customCards.length > 0">
-        <div class="settings-subgroup" style="margin-top: 6px">
-          {{ t("settings.theme.customThemes") }}
+            <NRadioButton value="system">
+              <span class="theme-option">
+                <NIcon :size="15"><RiComputerLine /></NIcon>
+                {{ t("settings.theme.followSystem") }}
+              </span>
+            </NRadioButton>
+            <NRadioButton value="dark">
+              <span class="theme-option">
+                <NIcon :size="15"><RiMoonLine /></NIcon>
+                {{ t("settings.theme.dark") }}
+              </span>
+            </NRadioButton>
+            <NRadioButton value="light">
+              <span class="theme-option">
+                <NIcon :size="15"><RiSunLine /></NIcon>
+                {{ t("settings.theme.light") }}
+              </span>
+            </NRadioButton>
+          </NRadioGroup>
         </div>
-        <div class="preset-grid">
-          <div
-            v-for="item in customCards"
-            :key="item.id"
-            class="preset-card custom"
-            :class="{ active: isThemeActive(item.theme) }"
-            :title="item.name"
-          >
-            <button type="button" class="preset-card-main" @click="applyCustom(item)">
-              <span
-                class="preset-swatch"
-                :style="{ background: item.theme.background }"
-              >
-                <span
-                  class="preset-swatch-text"
-                  :style="{ color: item.theme.foreground }"
-                >$ ssh host</span>
-                <span class="preset-swatch-dots">
-                  <i
-                    v-for="(c, i) in swatchColors(item.theme)"
-                    :key="i"
-                    :style="{ background: c }"
-                  />
-                </span>
-              </span>
-            </button>
-            <span class="preset-name">
-              <span class="preset-name-text">{{ item.name }}</span>
-              <span class="preset-variant">
-                {{ item.variant === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }}
-              </span>
-            </span>
-            <NPopconfirm
-              @positive-click="removeCustom(item.id)"
-            >
-              <template #trigger>
-                <NButton
-                  class="preset-delete"
-                  quaternary
-                  circle
-                  size="tiny"
-                  :title="t('settings.theme.deleteTheme')"
-                >
-                  <template #icon>
-                    <NIcon :size="12"><RiCloseLine /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              {{ t("settings.theme.deleteThemeConfirm", { name: item.name }) }}
-            </NPopconfirm>
+      </div>
+    </div>
+
+    <div class="settings-subgroup">{{ t("settings.theme.terminalColors") }}</div>
+    <div class="settings-block">
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-desc">
+            {{ t("settings.theme.editingHint", { name: themeEditTarget === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }) }}
           </div>
         </div>
-      </template>
-
-      <div class="theme-color-grid">
-        <div
-          v-for="field in TERMINAL_THEME_FIELDS"
-          :key="field.key"
-          class="theme-color-item"
-        >
-          <NColorPicker
-            :value="
-              (themeEditTarget === 'dark'
-                ? terminalStore.darkTheme
-                : terminalStore.lightTheme)[field.key] ?? ''
-            "
-            :modes="['hex', 'rgb', 'hsl']"
-            size="small"
-            @update:value="
-              (v: string) => {
-                const target =
-                  themeEditTarget === 'dark'
-                    ? terminalStore.darkTheme
-                    : terminalStore.lightTheme;
-                target[field.key] = v;
-              }
-            "
-          />
-          <span class="theme-color-label">{{ t(field.label) }}</span>
+        <div class="setting-row-control">
+          <NRadioGroup v-model:value="themeEditTarget" size="small">
+            <NRadioButton value="dark">{{ t("settings.theme.darkTheme") }}</NRadioButton>
+            <NRadioButton value="light">{{ t("settings.theme.lightTheme") }}</NRadioButton>
+          </NRadioGroup>
         </div>
       </div>
-      <NSpace>
-        <NPopconfirm @positive-click="terminalStore.resetTerminalTheme(themeEditTarget)">
-          <template #trigger>
-            <NButton size="small">
-              {{ t("settings.theme.resetCurrent", { name: themeEditTarget === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }) }}
-            </NButton>
-          </template>
-          {{ t("settings.theme.resetCurrentConfirm") }}
-        </NPopconfirm>
-        <NPopconfirm @positive-click="terminalStore.resetTerminalThemes()">
-          <template #trigger>
-            <NButton size="small">
-              {{ t("settings.theme.resetAll") }}
-            </NButton>
-          </template>
-          {{ t("settings.theme.resetAllConfirm") }}
-        </NPopconfirm>
-      </NSpace>
+      <div class="block-body">
+        <div class="theme-color-grid">
+          <div
+            v-for="field in TERMINAL_THEME_FIELDS"
+            :key="field.key"
+            class="theme-color-item"
+          >
+            <NColorPicker
+              :value="
+                (themeEditTarget === 'dark'
+                  ? terminalStore.darkTheme
+                  : terminalStore.lightTheme)[field.key] ?? ''
+              "
+              :modes="['hex', 'rgb', 'hsl']"
+              size="small"
+              @update:value="
+                (v: string) => {
+                  const target =
+                    themeEditTarget === 'dark'
+                      ? terminalStore.darkTheme
+                      : terminalStore.lightTheme;
+                  target[field.key] = v;
+                }
+              "
+            />
+            <span class="theme-color-label">{{ t(field.label) }}</span>
+          </div>
+        </div>
+        <NSpace>
+          <NPopconfirm @positive-click="terminalStore.resetTerminalTheme(themeEditTarget)">
+            <template #trigger>
+              <NButton size="small">
+                {{ t("settings.theme.resetCurrent", { name: themeEditTarget === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }) }}
+              </NButton>
+            </template>
+            {{ t("settings.theme.resetCurrentConfirm") }}
+          </NPopconfirm>
+          <NPopconfirm @positive-click="terminalStore.resetTerminalThemes()">
+            <template #trigger>
+              <NButton size="small">
+                {{ t("settings.theme.resetAll") }}
+              </NButton>
+            </template>
+            {{ t("settings.theme.resetAllConfirm") }}
+          </NPopconfirm>
+        </NSpace>
+      </div>
     </div>
+
+    <div class="settings-subgroup">{{ t("settings.theme.presets") }}</div>
+    <div class="settings-block">
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-desc">{{ t("settings.theme.presetsSourceHint") }}</div>
+        </div>
+        <div class="setting-row-control">
+          <NSpace :size="8">
+            <NButton size="small" @click="openImport">
+              <template #icon>
+                <NIcon :size="14"><RiDownloadLine /></NIcon>
+              </template>
+              {{ t("settings.theme.importTheme") }}
+            </NButton>
+            <NButton size="small" @click="exportCurrent">
+              <template #icon>
+                <NIcon :size="14"><RiShareLine /></NIcon>
+              </template>
+              {{ t("settings.theme.exportTheme") }}
+            </NButton>
+          </NSpace>
+        </div>
+      </div>
+      <div class="block-body">
+        <div class="preset-grid">
+          <button
+            v-for="preset in visiblePresets"
+            :key="preset.id"
+            type="button"
+            class="preset-card"
+            :class="{ active: isThemeActive(preset.theme) }"
+            :title="preset.name"
+            @click="applyPreset(preset)"
+          >
+            <span
+              class="preset-swatch"
+              :style="{ background: preset.theme.background }"
+            >
+              <span
+                class="preset-swatch-text"
+                :style="{ color: preset.theme.foreground }"
+              >$ ssh host</span>
+              <span class="preset-swatch-dots">
+                <i
+                  v-for="(c, i) in swatchColors(preset.theme)"
+                  :key="i"
+                  :style="{ background: c }"
+                />
+              </span>
+            </span>
+            <span class="preset-name">{{ preset.name }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <template v-if="customCards.length > 0">
+      <div class="settings-subgroup">{{ t("settings.theme.customThemes") }}</div>
+      <div class="settings-block">
+        <div class="block-body">
+          <div class="preset-grid">
+            <div
+              v-for="item in customCards"
+              :key="item.id"
+              class="preset-card custom"
+              :class="{ active: isThemeActive(item.theme) }"
+              :title="item.name"
+            >
+              <button type="button" class="preset-card-main" @click="applyCustom(item)">
+                <span
+                  class="preset-swatch"
+                  :style="{ background: item.theme.background }"
+                >
+                  <span
+                    class="preset-swatch-text"
+                    :style="{ color: item.theme.foreground }"
+                  >$ ssh host</span>
+                  <span class="preset-swatch-dots">
+                    <i
+                      v-for="(c, i) in swatchColors(item.theme)"
+                      :key="i"
+                      :style="{ background: c }"
+                    />
+                  </span>
+                </span>
+              </button>
+              <span class="preset-name">
+                <span class="preset-name-text">{{ item.name }}</span>
+                <span class="preset-variant">
+                  {{ item.variant === "dark" ? t("settings.theme.dark") : t("settings.theme.light") }}
+                </span>
+              </span>
+              <NPopconfirm
+                @positive-click="removeCustom(item.id)"
+              >
+                <template #trigger>
+                  <NButton
+                    class="preset-delete"
+                    quaternary
+                    circle
+                    size="tiny"
+                    :title="t('settings.theme.deleteTheme')"
+                  >
+                    <template #icon>
+                      <NIcon :size="12"><RiCloseLine /></NIcon>
+                    </template>
+                  </NButton>
+                </template>
+                {{ t("settings.theme.deleteThemeConfirm", { name: item.name }) }}
+              </NPopconfirm>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
 
     <NModal
       v-model:show="importShow"
@@ -447,23 +469,16 @@ async function exportCurrent() {
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-}
-
-/* .settings-subgroup 已抽到 src/assets/main.css；
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护；
    .settings-hint 保留本地覆盖：主题页 hint 用更弱的 subtle 色、无上边距 */
 .settings-hint {
   color: var(--ashell-text-subtle);
   font-size: 12px;
+}
+
+/* 页标题下第一张卡片（外观模式）与标题的间距，对齐其他分区 */
+.settings-section-title + .settings-block {
+  margin-top: 12px;
 }
 
 .theme-option {
@@ -472,26 +487,20 @@ async function exportCurrent() {
   gap: 6px;
 }
 
-.terminal-theme-block {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--ashell-border-soft);
+/* 卡片内的非行式内容（配色网格 / 预设网格）：纵向留白 */
+.block-body {
+  padding: 12px 0 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.preset-head {
-  margin-top: 4px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+/* 网格体紧跟标题行时补一条与行分隔线一致的细线 */
+.settings-block > .setting-row + .block-body {
+  border-top: 1px solid var(--ashell-border-soft);
 }
 
 .preset-grid {
-  margin-top: 2px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
   gap: 10px;
@@ -602,9 +611,6 @@ async function exportCurrent() {
 }
 
 .theme-color-grid {
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--ashell-border-soft);
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px 10px;

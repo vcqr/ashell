@@ -134,61 +134,63 @@ onBeforeUnmount(() => {
     <p class="settings-hint">{{ t("settings.shortcuts.hint") }}</p>
 
     <div v-for="cat in categories" :key="cat.id">
-      <div class="settings-subgroup" style="margin-top: 16px">
+      <div class="settings-subgroup">
         {{ t(`settings.shortcuts.category.${cat.id}`) }}
       </div>
-      <div class="shortcut-list">
-        <div
-          v-for="action in cat.actions"
-          :key="action.id"
-          class="shortcut-row"
-          :class="{ recording: recordingId === action.id }"
-        >
-          <span class="shortcut-label">
-            {{ t(`settings.shortcuts.action.${action.id}`) }}
-          </span>
-          <div class="shortcut-binding">
-            <template v-if="recordingId === action.id">
-              <span class="recording-hint">
-                {{ t("settings.shortcuts.recording") }}
-              </span>
-            </template>
-            <template v-else-if="store.getBinding(action.id)">
-              <NTag
-                v-for="(part, i) in formatBinding(store.getBinding(action.id))"
-                :key="i"
-                size="small"
-                :bordered="true"
-                type="info"
+      <div class="settings-block">
+        <div class="shortcut-list">
+          <div
+            v-for="action in cat.actions"
+            :key="action.id"
+            class="shortcut-row"
+            :class="{ recording: recordingId === action.id }"
+          >
+            <span class="shortcut-label">
+              {{ t(`settings.shortcuts.action.${action.id}`) }}
+            </span>
+            <div class="shortcut-binding">
+              <template v-if="recordingId === action.id">
+                <span class="recording-hint">
+                  {{ t("settings.shortcuts.recording") }}
+                </span>
+              </template>
+              <template v-else-if="store.getBinding(action.id)">
+                <NTag
+                  v-for="(part, i) in formatBinding(store.getBinding(action.id))"
+                  :key="i"
+                  size="small"
+                  :bordered="true"
+                  type="info"
+                >
+                  {{ part }}
+                </NTag>
+              </template>
+              <template v-else>
+                <span class="shortcut-unset">
+                  {{ t("settings.shortcuts.notSet") }}
+                </span>
+              </template>
+            </div>
+            <div class="shortcut-actions">
+              <NButton
+                size="tiny"
+                :type="recordingId === action.id ? 'warning' : 'default'"
+                secondary
+                @click="handleRecord(action.id)"
               >
-                {{ part }}
-              </NTag>
-            </template>
-            <template v-else>
-              <span class="shortcut-unset">
-                {{ t("settings.shortcuts.notSet") }}
-              </span>
-            </template>
-          </div>
-          <div class="shortcut-actions">
-            <NButton
-              size="tiny"
-              :type="recordingId === action.id ? 'warning' : 'default'"
-              secondary
-              @click="handleRecord(action.id)"
-            >
-              {{ recordingId === action.id
-                ? t("settings.shortcuts.cancel")
-                : t("settings.shortcuts.record") }}
-            </NButton>
-            <NButton
-              size="tiny"
-              quaternary
-              :disabled="!store.getBinding(action.id)"
-              @click="store.resetBinding(action.id)"
-            >
-              {{ t("settings.shortcuts.reset") }}
-            </NButton>
+                {{ recordingId === action.id
+                  ? t("settings.shortcuts.cancel")
+                  : t("settings.shortcuts.record") }}
+              </NButton>
+              <NButton
+                size="tiny"
+                quaternary
+                :disabled="!store.getBinding(action.id)"
+                @click="store.resetBinding(action.id)"
+              >
+                {{ t("settings.shortcuts.reset") }}
+              </NButton>
+            </div>
           </div>
         </div>
       </div>
@@ -208,25 +210,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-}
-
-/* .settings-subgroup / .settings-hint 已抽到 src/assets/main.css 统一维护 */
-
+/* 列表放进 .settings-block 后用上下留白撑开（卡片本身只给 4px 16px） */
 .shortcut-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 8px;
+  padding: 12px 0;
 }
 
 .shortcut-row {

@@ -11,7 +11,6 @@ import {
 import { ref, reactive, onMounted, watch, computed } from "vue";
 import {
   NForm,
-  NFormItem,
   NInput,
   NButton,
   NIcon,
@@ -21,7 +20,6 @@ import {
   NTabs,
   NTabPane,
   NSelect,
-  NText,
   NModal,
   NCard,
   useMessage,
@@ -436,34 +434,64 @@ function formatTime(timestamp: string): string {
     <NSpin :show="loading" size="small">
       <NTabs v-model:value="activeBackend" type="line" size="small">
         <NTabPane name="s3" :tab="t('settings.backup.providerS3')">
-          <NForm label-placement="top" size="small" :show-feedback="false">
-            <NFormItem :label="t('settings.backup.endpoint')" style="margin-top: 12px">
-              <NInput v-model:value="config.endpoint" placeholder="https://s3.amazonaws.com" />
-            </NFormItem>
-            <NFormItem :label="t('settings.backup.bucket')" style="margin-top: 12px">
-              <NInput v-model:value="config.bucket" placeholder="my-backup-bucket" />
-            </NFormItem>
-            <div class="form-row" style="margin-top: 12px">
-              <NFormItem :label="t('settings.backup.region')" style="flex: 1">
-                <NInput v-model:value="config.region" placeholder="us-east-1" />
-              </NFormItem>
-              <NFormItem :label="t('settings.backup.pathPrefix')" style="flex: 1">
-                <NInput v-model:value="config.path_prefix" placeholder="ashell/" />
-              </NFormItem>
+          <NForm size="small" :show-feedback="false">
+            <div class="settings-block">
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.endpoint") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="config.endpoint" placeholder="https://s3.amazonaws.com" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.bucket") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="config.bucket" placeholder="my-backup-bucket" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.region") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="config.region" placeholder="us-east-1" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.pathPrefix") }}</div>
+                  <div class="setting-row-desc">{{ t("settings.backup.pathPrefixHint") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="config.path_prefix" placeholder="ashell/" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.accessKey") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="config.access_key" placeholder="AKIAIOSFODNN7EXAMPLE" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.secretKey") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput
+                    v-model:value="config.secret_key"
+                    type="password"
+                    show-password-on="click"
+                    placeholder="••••••••••••••••"
+                  />
+                </div>
+              </div>
             </div>
-            <NFormItem :label="t('settings.backup.accessKey')" style="margin-top: 12px">
-              <NInput v-model:value="config.access_key" placeholder="AKIAIOSFODNN7EXAMPLE" />
-            </NFormItem>
-            <NFormItem :label="t('settings.backup.secretKey')" style="margin-top: 12px">
-              <NInput
-                v-model:value="config.secret_key"
-                type="password"
-                show-password-on="click"
-                placeholder="••••••••••••••••"
-              />
-            </NFormItem>
           </NForm>
-          <p class="settings-hint">{{ t("settings.backup.pathPrefixHint") }}</p>
           <div class="form-row" style="margin-top: 12px">
             <NButton size="small" :loading="saving" @click="handleSave">
               <template #icon><NIcon><RiSaveLine /></NIcon></template>
@@ -486,26 +514,46 @@ function formatTime(timestamp: string): string {
         </NTabPane>
 
         <NTabPane name="webdav" :tab="t('settings.backup.providerWebDav')">
-          <NForm label-placement="top" size="small" :show-feedback="false">
-            <NFormItem :label="t('settings.backup.webdavUrl')" style="margin-top: 12px">
-              <NInput v-model:value="webdavConfig.url" placeholder="https://dav.jianguoyun.com/dav/" />
-            </NFormItem>
-            <div class="form-row" style="margin-top: 12px">
-              <NFormItem :label="t('settings.backup.webdavUsername')" style="flex: 1">
-                <NInput v-model:value="webdavConfig.username" placeholder="user@example.com" />
-              </NFormItem>
-              <NFormItem :label="t('settings.backup.webdavPassword')" style="flex: 1">
-                <NInput
-                  v-model:value="webdavConfig.password"
-                  type="password"
-                  show-password-on="click"
-                  placeholder="••••••••••••••••"
-                />
-              </NFormItem>
+          <NForm size="small" :show-feedback="false">
+            <div class="settings-block">
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.webdavUrl") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="webdavConfig.url" placeholder="https://dav.jianguoyun.com/dav/" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.webdavUsername") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="webdavConfig.username" placeholder="user@example.com" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.webdavPassword") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput
+                    v-model:value="webdavConfig.password"
+                    type="password"
+                    show-password-on="click"
+                    placeholder="••••••••••••••••"
+                  />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.pathPrefix") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="webdavConfig.path_prefix" placeholder="ashell/" />
+                </div>
+              </div>
             </div>
-            <NFormItem :label="t('settings.backup.pathPrefix')" style="margin-top: 12px">
-              <NInput v-model:value="webdavConfig.path_prefix" placeholder="ashell/" />
-            </NFormItem>
           </NForm>
           <p class="settings-hint">{{ t("settings.backup.webdavHint") }}</p>
           <div class="form-row" style="margin-top: 12px">
@@ -530,18 +578,30 @@ function formatTime(timestamp: string): string {
         </NTabPane>
 
         <NTabPane name="sftp" :tab="t('settings.backup.providerSftp')">
-          <NForm label-placement="top" size="small" :show-feedback="false">
-            <NFormItem :label="t('settings.backup.sftpHost')" style="margin-top: 12px">
-              <NSelect
-                v-model:value="sftpConfig.host_id"
-                :options="sftpHostOptions"
-                :placeholder="t('settings.backup.sftpHostPlaceholder')"
-                clearable
-              />
-            </NFormItem>
-            <NFormItem :label="t('settings.backup.pathPrefix')" style="margin-top: 12px">
-              <NInput v-model:value="sftpConfig.path_prefix" placeholder="ashell/" />
-            </NFormItem>
+          <NForm size="small" :show-feedback="false">
+            <div class="settings-block">
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.sftpHost") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NSelect
+                    v-model:value="sftpConfig.host_id"
+                    :options="sftpHostOptions"
+                    :placeholder="t('settings.backup.sftpHostPlaceholder')"
+                    clearable
+                  />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-row-main">
+                  <div class="setting-row-label">{{ t("settings.backup.pathPrefix") }}</div>
+                </div>
+                <div class="setting-row-control w-field">
+                  <NInput v-model:value="sftpConfig.path_prefix" placeholder="ashell/" />
+                </div>
+              </div>
+            </div>
           </NForm>
           <p class="settings-hint">{{ t("settings.backup.sftpHint") }}</p>
           <div class="form-row" style="margin-top: 12px">
@@ -567,25 +627,27 @@ function formatTime(timestamp: string): string {
       </NTabs>
 
       <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.backup.operationTitle") }}</div>
+      <div class="settings-block">
+        <div class="form-row op-actions">
+          <NButton type="primary" size="small" :loading="backing" @click="handleBackup">
+            <template #icon><NIcon><RiUploadCloudLine /></NIcon></template>
+            {{ t("settings.backup.createBackup") }}
+          </NButton>
+          <NButton size="small" :loading="exporting" @click="handleExport">
+            <template #icon><NIcon><RiDownloadLine /></NIcon></template>
+            {{ t("settings.backup.exportLocal") }}
+          </NButton>
+          <NButton size="small" :loading="importing" @click="handleImport">
+            <template #icon><NIcon><RiFolderOpenLine /></NIcon></template>
+            {{ t("settings.backup.importLocal") }}
+          </NButton>
+        </div>
+      </div>
       <p class="settings-hint">{{ t("settings.backup.scopeHint") }}</p>
       <p class="settings-hint">{{ t("settings.backup.credentialHint") }}</p>
-      <div class="form-row" style="margin-top: 12px">
-        <NButton type="primary" size="small" :loading="backing" @click="handleBackup">
-          <template #icon><NIcon><RiUploadCloudLine /></NIcon></template>
-          {{ t("settings.backup.createBackup") }}
-        </NButton>
-        <NButton size="small" :loading="exporting" @click="handleExport">
-          <template #icon><NIcon><RiDownloadLine /></NIcon></template>
-          {{ t("settings.backup.exportLocal") }}
-        </NButton>
-        <NButton size="small" :loading="importing" @click="handleImport">
-          <template #icon><NIcon><RiFolderOpenLine /></NIcon></template>
-          {{ t("settings.backup.importLocal") }}
-        </NButton>
-      </div>
 
-      <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.backup.historyTitle") }}</div>
-      <div class="history-header" style="margin-top: 12px">
+      <div class="history-head">
+        <div class="settings-subgroup" style="margin-top: 16px">{{ t("settings.backup.historyTitle") }}</div>
         <NButton quaternary size="tiny" :loading="loading" @click="loadBackups">
           <template #icon><NIcon><RiRefreshLine /></NIcon></template>
           {{ t("settings.backup.refresh") }}
@@ -597,13 +659,13 @@ function formatTime(timestamp: string): string {
         size="small"
         style="margin-top: 8px"
       />
-      <div v-else class="backup-list" style="margin-top: 8px">
-        <div v-for="item in backups" :key="item.key" class="backup-item">
-          <div class="backup-info">
-            <div class="backup-name">{{ formatTime(item.timestamp) }}</div>
-            <NText depth="3" class="backup-size">{{ formatSize(item.size) }}</NText>
+      <div v-else class="settings-block">
+        <div v-for="item in backups" :key="item.key" class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ formatTime(item.timestamp) }}</div>
+            <div class="setting-row-desc">{{ formatSize(item.size) }}</div>
           </div>
-          <div class="backup-actions">
+          <div class="setting-row-control">
             <NPopconfirm @positive-click="handleRestore(item.key)">
               <template #trigger>
                 <NButton size="tiny" type="warning">
@@ -655,19 +717,12 @@ function formatTime(timestamp: string): string {
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
+/* 卡片内输入框 / 下拉限宽 */
+.w-field {
+  width: 320px;
 }
-
-/* .settings-subgroup / .settings-hint 已抽到 src/assets/main.css 统一维护 */
 
 .form-row {
   display: flex;
@@ -675,51 +730,17 @@ function formatTime(timestamp: string): string {
   align-items: center;
 }
 
-.history-header {
-  display: flex;
-  align-items: center;
+/* 卡片内的按钮组：补纵向留白（全局只给 .setting-row 行加了 padding） */
+.op-actions {
+  padding: 10px 0;
 }
 
-.backup-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.backup-item {
+/* 备份历史：分组标题与刷新按钮同行 */
+.history-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--ashell-hover);
-}
-
-.backup-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.backup-name {
-  font-size: 13px;
-  color: var(--ashell-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.backup-size {
-  font-size: 11px;
-}
-
-.backup-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+  gap: 12px;
 }
 
 .pwd-hint {

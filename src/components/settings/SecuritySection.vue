@@ -3,7 +3,6 @@ import { ref, onMounted } from "vue"
 import {
   NButton,
   NSpace,
-  NText,
   NTag,
   useMessage,
   useDialog,
@@ -105,34 +104,32 @@ function onDeleteKnownHost(item: KnownHost) {
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.security.title") }}</div>
 
-    <div class="security-row">
-      <div class="security-status">
-        <NText depth="2" style="font-size: 13px">
-          {{ t("settings.security.status") }}
-        </NText>
-        <NTag :type="isSet ? 'success' : 'default'" size="small" round>
-          {{ isSet ? t("settings.security.statusSet") : t("settings.security.statusNotSet") }}
-        </NTag>
+    <div class="settings-subgroup">{{ t("settings.security.status") }}</div>
+    <div class="settings-block">
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <NTag :type="isSet ? 'success' : 'default'" size="small" round>
+            {{ isSet ? t("settings.security.statusSet") : t("settings.security.statusNotSet") }}
+          </NTag>
+        </div>
+        <div class="setting-row-control">
+          <NSpace>
+            <NButton v-if="!isSet" size="small" type="primary" :loading="loading" @click="onSet">
+              {{ t("settings.security.setBtn") }}
+            </NButton>
+            <template v-else>
+              <NButton size="small" @click="onChange">
+                {{ t("settings.security.changeBtn") }}
+              </NButton>
+              <NButton size="small" quaternary type="error" @click="onClear">
+                {{ t("settings.security.clearBtn") }}
+              </NButton>
+            </template>
+          </NSpace>
+        </div>
       </div>
-
-      <NSpace>
-        <NButton v-if="!isSet" size="small" type="primary" :loading="loading" @click="onSet">
-          {{ t("settings.security.setBtn") }}
-        </NButton>
-        <template v-else>
-          <NButton size="small" @click="onChange">
-            {{ t("settings.security.changeBtn") }}
-          </NButton>
-          <NButton size="small" quaternary type="error" @click="onClear">
-            {{ t("settings.security.clearBtn") }}
-          </NButton>
-        </template>
-      </NSpace>
     </div>
-
-    <NText depth="3" style="font-size: 12px; line-height: 1.6; display: block">
-      {{ t("settings.security.hint") }}
-    </NText>
+    <p class="settings-hint">{{ t("settings.security.hint") }}</p>
 
     <OpPasswordModal
       v-model:show="modalShow"
@@ -140,74 +137,42 @@ function onDeleteKnownHost(item: KnownHost) {
       @done="onModalDone"
     />
 
-    <div class="known-hosts-block">
-      <div class="known-hosts-title">{{ t("settings.security.knownHosts") }}</div>
-      <NText depth="3" style="font-size: 12px; line-height: 1.6; display: block">
-        {{ t("settings.security.knownHostsHint") }}
-      </NText>
-      <div v-if="knownHosts.length === 0" class="known-hosts-empty">
-        {{ t("settings.security.knownHostsEmpty") }}
-      </div>
-      <div v-else class="known-hosts-list">
-        <div v-for="item in knownHosts" :key="item.id" class="known-host-row">
-          <div class="known-host-info">
-            <span class="known-host-addr">{{ item.addr }}:{{ item.port }}</span>
-            <NTag size="tiny" :bordered="true">{{ item.key_type }}</NTag>
+    <div class="settings-subgroup">{{ t("settings.security.knownHosts") }}</div>
+    <div class="settings-block">
+      <div class="known-hosts-body">
+        <div v-if="knownHosts.length === 0" class="known-hosts-empty">
+          {{ t("settings.security.knownHostsEmpty") }}
+        </div>
+        <div v-else class="known-hosts-list">
+          <div v-for="item in knownHosts" :key="item.id" class="known-host-row">
+            <div class="known-host-info">
+              <span class="known-host-addr">{{ item.addr }}:{{ item.port }}</span>
+              <NTag size="tiny" :bordered="true">{{ item.key_type }}</NTag>
+            </div>
+            <span class="known-host-fp">{{ item.fingerprint }}</span>
+            <NButton
+              size="tiny"
+              quaternary
+              type="error"
+              :loading="knownHostsLoading"
+              @click="onDeleteKnownHost(item)"
+            >
+              {{ t("common.delete") }}
+            </NButton>
           </div>
-          <span class="known-host-fp">{{ item.fingerprint }}</span>
-          <NButton
-            size="tiny"
-            quaternary
-            type="error"
-            :loading="knownHostsLoading"
-            @click="onDeleteKnownHost(item)"
-          >
-            {{ t("common.delete") }}
-          </NButton>
         </div>
       </div>
     </div>
+    <p class="settings-hint">{{ t("settings.security.knownHostsHint") }}</p>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-}
-
-.security-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.security-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.known-hosts-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--ashell-border, rgba(255, 255, 255, 0.08));
-}
-
-.known-hosts-title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ashell-text);
+/* 卡片内列表区域的上下留白（卡片本身只有 4px 16px 内边距） */
+.known-hosts-body {
+  padding: 12px 0;
 }
 
 .known-hosts-empty {

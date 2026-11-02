@@ -153,14 +153,32 @@ body.ashell-dragging * {
 }
 
 /* ---------- 设置页共享样式 ----------
- * 原先在 TerminalSection / ThemeSection / ShortcutsSection / BackupSection
- * 的 scoped 样式里各复制一份，抽到这里统一维护。
- * .setting-row 是行式设置项：左侧标签+可选描述、右侧控件，
- * 替代"标签一行+控件一行"的表单排版，纵向减半。 */
+ * 原先在各 settings section 的 scoped 样式里各复制一份，抽到这里统一维护。
+ * .settings-block 是分组卡片：一组设置项聚合成一块圆角卡片，组内行用细分隔线
+ * 隔开（iOS/macOS 设置的 inset grouped 风格）；组标题用 .settings-subgroup
+ * 浮在卡片上方。.setting-row 是行式设置项：左侧标签+可选描述、右侧控件。 */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+}
+
 .settings-subgroup {
+  margin-top: 18px;
   font-size: 12px;
   font-weight: 500;
   color: var(--ashell-text-subtle);
+}
+
+/* 页标题后紧跟的第一个分组贴近标题 */
+.settings-section-title + .settings-subgroup,
+.settings-section-title + .settings-block {
+  margin-top: 12px;
 }
 
 .settings-hint {

@@ -412,24 +412,7 @@ function onDisconnectActionChange(value: DisconnectAction) {
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-}
-
-/* 分组标题统一节奏：跟上一组内容隔开，首个分组贴近页标题 */
-.settings-subgroup {
-  margin-top: 18px;
-}
-.settings-section-title + .settings-subgroup {
-  margin-top: 12px;
-}
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
 
 .w-font {
   width: 320px;

@@ -2,8 +2,6 @@
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import {
   NButton,
-  NForm,
-  NFormItem,
   NRadio,
   NRadioGroup,
   NSwitch,
@@ -153,116 +151,136 @@ onBeforeUnmount(() => {
 <template>
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.tray.title") }}</div>
-    <NForm label-placement="top" size="small" :show-feedback="false">
-      <NFormItem :label="t('settings.tray.enable')">
-        <NSwitch
-          :value="trayStore.enabled"
-          @update:value="(v: boolean) => trayStore.setEnabled(v)"
-        />
-      </NFormItem>
-      <p class="settings-hint">{{ t("settings.tray.enableHint") }}</p>
-
-      <NFormItem :label="t('settings.tray.closeAction')">
-        <NRadioGroup
-          :value="trayStore.closeAction"
-          :disabled="!trayStore.enabled"
-          @update:value="(v: TrayCloseAction) => trayStore.setCloseAction(v)"
-        >
-          <div class="tray-radio-col">
-            <NRadio value="quit">{{ t("settings.tray.closeActionQuit") }}</NRadio>
-            <NRadio value="hide">{{ t("settings.tray.closeActionHide") }}</NRadio>
-          </div>
-        </NRadioGroup>
-      </NFormItem>
-      <p class="settings-hint">{{ t("settings.tray.closeActionHint") }}</p>
-
-      <NFormItem :label="t('settings.tray.autostart')">
-        <NSwitch :value="trayStore.autostart" @update:value="onAutostartChange" />
-      </NFormItem>
-      <p class="settings-hint">{{ t("settings.tray.autostartHint") }}</p>
-
-      <NFormItem :label="t('settings.tray.hotkey')">
-        <div class="hotkey-row">
-          <NSwitch :value="hotkeyStore.enabled" @update:value="onHotkeyEnable" />
-          <div
-            class="hotkey-binding"
-            :class="{ recording }"
-            @click="startRecording"
-          >
-            <span v-if="recording" class="hotkey-recording-hint">
-              {{ t("settings.tray.hotkeyRecording") }}
-            </span>
-            <template v-else-if="hotkeyStore.accelerator">
-              <NTag
-                v-for="part in hotkeyStore.accelerator.split('+')"
-                :key="part"
-                size="small"
-                :bordered="true"
-                type="info"
-              >
-                {{ part }}
-              </NTag>
-            </template>
-            <span v-else class="hotkey-unset">
-              {{ t("settings.tray.hotkeyNotSet") }}
-            </span>
-          </div>
-          <NButton
-            size="tiny"
-            :type="recording ? 'warning' : 'default'"
-            secondary
-            @click="startRecording"
-          >
-            {{
-              recording
-                ? t("settings.tray.hotkeyCancel")
-                : t("settings.tray.hotkeyRecord")
-            }}
-          </NButton>
-          <NButton
-            v-if="!recording && hotkeyStore.accelerator"
-            size="tiny"
-            quaternary
-            type="error"
-            @click="clearHotkey"
-          >
-            {{ t("settings.tray.hotkeyClear") }}
-          </NButton>
+    <div class="settings-block">
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.tray.enable") }}</div>
+          <div class="setting-row-desc">{{ t("settings.tray.enableHint") }}</div>
         </div>
-      </NFormItem>
-      <p class="settings-hint">{{ t("settings.tray.hotkeyHint") }}</p>
+        <div class="setting-row-control">
+          <NSwitch
+            size="small"
+            :value="trayStore.enabled"
+            @update:value="(v: boolean) => trayStore.setEnabled(v)"
+          />
+        </div>
+      </div>
 
-      <NText depth="3" class="tray-menu-hint">
-        {{ t("settings.tray.menuHint") }}
-      </NText>
-    </NForm>
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.tray.closeAction") }}</div>
+          <div class="setting-row-desc">{{ t("settings.tray.closeActionHint") }}</div>
+        </div>
+        <div class="setting-row-control">
+          <NRadioGroup
+            size="small"
+            :value="trayStore.closeAction"
+            :disabled="!trayStore.enabled"
+            @update:value="(v: TrayCloseAction) => trayStore.setCloseAction(v)"
+          >
+            <div class="tray-radio-col">
+              <NRadio value="quit">{{ t("settings.tray.closeActionQuit") }}</NRadio>
+              <NRadio value="hide">{{ t("settings.tray.closeActionHide") }}</NRadio>
+            </div>
+          </NRadioGroup>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.tray.autostart") }}</div>
+          <div class="setting-row-desc">{{ t("settings.tray.autostartHint") }}</div>
+        </div>
+        <div class="setting-row-control">
+          <NSwitch
+            size="small"
+            :value="trayStore.autostart"
+            @update:value="onAutostartChange"
+          />
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.tray.hotkey") }}</div>
+          <div class="setting-row-desc">{{ t("settings.tray.hotkeyHint") }}</div>
+        </div>
+        <div class="setting-row-control hotkey-control">
+          <div class="hotkey-row">
+            <NSwitch
+              size="small"
+              :value="hotkeyStore.enabled"
+              @update:value="onHotkeyEnable"
+            />
+            <div
+              class="hotkey-binding"
+              :class="{ recording }"
+              @click="startRecording"
+            >
+              <span v-if="recording" class="hotkey-recording-hint">
+                {{ t("settings.tray.hotkeyRecording") }}
+              </span>
+              <template v-else-if="hotkeyStore.accelerator">
+                <NTag
+                  v-for="part in hotkeyStore.accelerator.split('+')"
+                  :key="part"
+                  size="small"
+                  :bordered="true"
+                  type="info"
+                >
+                  {{ part }}
+                </NTag>
+              </template>
+              <span v-else class="hotkey-unset">
+                {{ t("settings.tray.hotkeyNotSet") }}
+              </span>
+            </div>
+            <NButton
+              size="tiny"
+              :type="recording ? 'warning' : 'default'"
+              secondary
+              @click="startRecording"
+            >
+              {{
+                recording
+                  ? t("settings.tray.hotkeyCancel")
+                  : t("settings.tray.hotkeyRecord")
+              }}
+            </NButton>
+            <NButton
+              v-if="!recording && hotkeyStore.accelerator"
+              size="tiny"
+              quaternary
+              type="error"
+              @click="clearHotkey"
+            >
+              {{ t("settings.tray.hotkeyClear") }}
+            </NButton>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <NText depth="3" class="tray-menu-hint">
+      {{ t("settings.tray.menuHint") }}
+    </NText>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
-}
-
-.settings-hint {
-  margin: 0 0 12px;
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  line-height: 1.6;
-}
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
 
 .tray-radio-col {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* 热键簇较宽：允许该行控件收缩，内部 .hotkey-row 靠 flex-wrap 换行
+   （全局 .setting-row-control 默认 flex-shrink: 0） */
+.hotkey-control {
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .hotkey-row {
@@ -297,6 +315,7 @@ onBeforeUnmount(() => {
 
 .tray-menu-hint {
   display: block;
+  margin-top: 8px;
   font-size: 12px;
   line-height: 1.6;
 }

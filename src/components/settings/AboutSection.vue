@@ -108,116 +108,129 @@ function handleReleaseNotesClick(e: MouseEvent) {
 <template>
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.about.title") }}</div>
-    <div class="about-header">
-      <img src="/icon.png" alt="AShell" class="about-icon" />
-      <p class="intro">
-        {{ t("settings.about.intro") }}
-      </p>
+
+    <div class="settings-block about-info-card">
+      <div class="about-header">
+        <img src="/icon.png" alt="AShell" class="about-icon" />
+        <p class="intro">
+          {{ t("settings.about.intro") }}
+        </p>
+      </div>
+      <NDescriptions :column="1" size="small" label-placement="left">
+        <NDescriptionsItem :label="t('settings.about.appName')">AShell</NDescriptionsItem>
+        <NDescriptionsItem :label="t('settings.about.version')">{{
+          version || t("settings.about.loadingVersion")
+        }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('settings.about.github')">
+          <NButton text type="primary" @click="open(GITHUB_URL)">
+            <template #icon>
+              <NIcon><RiGithubLine /></NIcon>
+            </template>
+            {{ GITHUB_URL }}
+          </NButton>
+        </NDescriptionsItem>
+        <NDescriptionsItem :label="t('settings.about.gitee')">
+          <NButton text type="primary" @click="open(GITEE_URL)">
+            <template #icon>
+              <NIcon><RiGitBranchLine /></NIcon>
+            </template>
+            {{ GITEE_URL }}
+          </NButton>
+        </NDescriptionsItem>
+        <NDescriptionsItem :label="t('settings.about.docker')">
+          <NButton text type="primary" @click="open(DOCKER_URL)">
+            <template #icon>
+              <NIcon><RiBox3Line /></NIcon>
+            </template>
+            {{ DOCKER_URL }}
+          </NButton>
+        </NDescriptionsItem>
+      </NDescriptions>
     </div>
-    <NDescriptions :column="1" size="small" label-placement="left">
-      <NDescriptionsItem :label="t('settings.about.appName')">AShell</NDescriptionsItem>
-      <NDescriptionsItem :label="t('settings.about.version')">{{
-        version || t("settings.about.loadingVersion")
-      }}</NDescriptionsItem>
-      <NDescriptionsItem :label="t('settings.about.github')">
-        <NButton text type="primary" @click="open(GITHUB_URL)">
-          <template #icon>
-            <NIcon><RiGithubLine /></NIcon>
-          </template>
-          {{ GITHUB_URL }}
-        </NButton>
-      </NDescriptionsItem>
-      <NDescriptionsItem :label="t('settings.about.gitee')">
-        <NButton text type="primary" @click="open(GITEE_URL)">
-          <template #icon>
-            <NIcon><RiGitBranchLine /></NIcon>
-          </template>
-          {{ GITEE_URL }}
-        </NButton>
-      </NDescriptionsItem>
-      <NDescriptionsItem :label="t('settings.about.docker')">
-        <NButton text type="primary" @click="open(DOCKER_URL)">
-          <template #icon>
-            <NIcon><RiBox3Line /></NIcon>
-          </template>
-          {{ DOCKER_URL }}
-        </NButton>
-      </NDescriptionsItem>
-    </NDescriptions>
 
-    <div class="update-area">
-      <NButton
-        size="small"
-        :loading="updateState === 'checking'"
-        :disabled="updateState === 'downloading'"
-        @click="handleCheck"
-      >
-        <template #icon>
-          <NIcon><RiLoopLeftLine /></NIcon>
-        </template>
-        {{
-          updateState === "checking"
-            ? t("settings.about.checking")
-            : t("settings.about.checkUpdate")
-        }}
-      </NButton>
-
-      <template
-        v-if="updateState === 'available' || updateState === 'downloading'"
-      >
-        <NText depth="2" class="update-version">
-          {{ t("settings.about.newVersionAvailable", { version: newVersion }) }}
-        </NText>
+    <div class="settings-block update-card">
+      <div class="update-area">
         <NButton
-          v-if="updateState === 'available'"
-          type="primary"
           size="small"
-          @click="handleDownload"
+          :loading="updateState === 'checking'"
+          :disabled="updateState === 'downloading'"
+          @click="handleCheck"
         >
           <template #icon>
-            <NIcon><RiDownloadCloudLine /></NIcon>
+            <NIcon><RiLoopLeftLine /></NIcon>
           </template>
-          {{ t("settings.about.downloadInstall") }}
+          {{
+            updateState === "checking"
+              ? t("settings.about.checking")
+              : t("settings.about.checkUpdate")
+          }}
         </NButton>
-      </template>
 
-      <NProgress
-        v-if="updateState === 'downloading'"
-        type="line"
-        :percentage="downloadProgress"
-        :height="6"
-        :show-indicator="false"
-        class="update-progress"
-      />
-    </div>
+        <template
+          v-if="updateState === 'available' || updateState === 'downloading'"
+        >
+          <NText depth="2" class="update-version">
+            {{ t("settings.about.newVersionAvailable", { version: newVersion }) }}
+          </NText>
+          <NButton
+            v-if="updateState === 'available'"
+            type="primary"
+            size="small"
+            @click="handleDownload"
+          >
+            <template #icon>
+              <NIcon><RiDownloadCloudLine /></NIcon>
+            </template>
+            {{ t("settings.about.downloadInstall") }}
+          </NButton>
+        </template>
 
-    <div
-      v-if="
-        (updateState === 'available' || updateState === 'downloading') &&
-        renderedReleaseNotes
-      "
-      class="release-notes"
-    >
-      <div class="release-notes-title">
-        {{ t("settings.about.releaseNotes") }}
+        <NProgress
+          v-if="updateState === 'downloading'"
+          type="line"
+          :percentage="downloadProgress"
+          :height="6"
+          :show-indicator="false"
+          class="update-progress"
+        />
       </div>
-      <!-- eslint-disable-next-line vue/no-v-html -- DOMPurify 已对 marked 输出做消毒 -->
-      <div class="release-notes-body" @click="handleReleaseNotesClick" v-html="renderedReleaseNotes"></div>
+
+      <div
+        v-if="
+          (updateState === 'available' || updateState === 'downloading') &&
+          renderedReleaseNotes
+        "
+        class="release-notes"
+      >
+        <div class="release-notes-title">
+          {{ t("settings.about.releaseNotes") }}
+        </div>
+        <!-- eslint-disable-next-line vue/no-v-html -- DOMPurify 已对 marked 输出做消毒 -->
+        <div class="release-notes-body" @click="handleReleaseNotesClick" v-html="renderedReleaseNotes"></div>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
+
+/* 信息卡：Logo、简介与版本/链接描述列表整体入卡，内部布局保持原样 */
+.about-info-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
+/* 更新卡：检查/下载安装操作与更新日志 */
+.update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
 .intro {
@@ -256,7 +269,6 @@ function handleReleaseNotesClick(e: MouseEvent) {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-top: 4px;
 }
 
 .update-version {

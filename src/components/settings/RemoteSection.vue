@@ -202,9 +202,9 @@ onBeforeUnmount(() => {
     <p class="settings-hint">{{ t("settings.remote.description") }}</p>
 
     <NSpin :show="loading">
-      <div class="remote-body">
-        <!-- 未登录：引导扫码 -->
-        <template v-if="!loggedIn && !loggingIn">
+      <!-- 未登录：引导扫码 -->
+      <template v-if="!loggedIn && !loggingIn">
+        <div class="settings-block guide-card">
           <NAlert type="info" :show-icon="false" class="hint-block">
             {{ t("settings.remote.notLoggedIn") }}
           </NAlert>
@@ -218,139 +218,156 @@ onBeforeUnmount(() => {
               {{ t("settings.remote.startLogin") }}
             </NButton>
           </div>
-        </template>
+        </div>
+      </template>
 
       <!-- 登录中：二维码 + 状态 + 登录链接 -->
       <template v-if="loggingIn">
-        <div class="login-panel">
-          <div v-if="qrDataUrl" class="qr-wrap">
-            <img :src="qrDataUrl" :alt="t('settings.remote.qrAlt')" class="qr-img" />
-          </div>
-          <div class="login-status">
-            <template v-if="login?.status === 'need_verifycode'">
-              <p class="settings-hint">{{ t("settings.remote.verifyPrompt") }}</p>
-              <NForm inline :show-feedback="false">
-                <NFormItem>
-                  <NInput
-                    v-model:value="verifyCode"
-                    :placeholder="t('settings.remote.verifyPlaceholder')"
-                    style="max-width: 140px"
-                    @keyup.enter="handleSubmitCode"
-                  />
-                </NFormItem>
-                <NFormItem>
-                  <NButton size="small" type="primary" @click="handleSubmitCode">
-                    {{ t("settings.remote.verifySubmit") }}
-                  </NButton>
-                </NFormItem>
-              </NForm>
-            </template>
-            <template v-else>
-              <p class="settings-hint">
-                {{
-                  login?.message || t(`settings.remote.loginStatus_${login?.status || "waiting"}`)
-                }}
-              </p>
-            </template>
-            <div v-if="login?.qr_url" class="login-link-row">
-              <span class="login-link-label">{{ t("settings.remote.loginLink") }}</span>
-              <span class="login-link">{{ login.qr_url }}</span>
-              <NButton size="tiny" quaternary type="primary" @click="handleCopyLink">
-                {{ t("common.copy") }}
+        <div class="settings-block login-card">
+          <div class="login-panel">
+            <div v-if="qrDataUrl" class="qr-wrap">
+              <img :src="qrDataUrl" :alt="t('settings.remote.qrAlt')" class="qr-img" />
+            </div>
+            <div class="login-status">
+              <template v-if="login?.status === 'need_verifycode'">
+                <p class="settings-hint">{{ t("settings.remote.verifyPrompt") }}</p>
+                <NForm inline :show-feedback="false">
+                  <NFormItem>
+                    <NInput
+                      v-model:value="verifyCode"
+                      :placeholder="t('settings.remote.verifyPlaceholder')"
+                      style="max-width: 140px"
+                      @keyup.enter="handleSubmitCode"
+                    />
+                  </NFormItem>
+                  <NFormItem>
+                    <NButton size="small" type="primary" @click="handleSubmitCode">
+                      {{ t("settings.remote.verifySubmit") }}
+                    </NButton>
+                  </NFormItem>
+                </NForm>
+              </template>
+              <template v-else>
+                <p class="settings-hint">
+                  {{
+                    login?.message || t(`settings.remote.loginStatus_${login?.status || "waiting"}`)
+                  }}
+                </p>
+              </template>
+              <div v-if="login?.qr_url" class="login-link-row">
+                <span class="login-link-label">{{ t("settings.remote.loginLink") }}</span>
+                <span class="login-link">{{ login.qr_url }}</span>
+                <NButton size="tiny" quaternary type="primary" @click="handleCopyLink">
+                  {{ t("common.copy") }}
+                </NButton>
+              </div>
+              <NButton size="small" quaternary @click="handleCancelLogin">
+                {{ t("settings.remote.cancelLogin") }}
               </NButton>
             </div>
-            <NButton size="small" quaternary @click="handleCancelLogin">
-              {{ t("settings.remote.cancelLogin") }}
-            </NButton>
           </div>
         </div>
       </template>
 
       <!-- 已登录：状态 + 操作 -->
       <template v-if="loggedIn">
-        <div class="status-grid">
-          <div class="status-item">
-            <span class="status-label">{{ t("settings.remote.accountLabel") }}</span>
-            <NTag :type="status?.polling ? 'success' : 'warning'" size="small" :bordered="false">
-              {{ status?.polling ? t("settings.remote.stateOnline") : t("settings.remote.stateIdle") }}
-            </NTag>
+        <div class="settings-block status-card">
+          <div class="status-grid">
+            <div class="status-item">
+              <span class="status-label">{{ t("settings.remote.accountLabel") }}</span>
+              <NTag :type="status?.polling ? 'success' : 'warning'" size="small" :bordered="false">
+                {{ status?.polling ? t("settings.remote.stateOnline") : t("settings.remote.stateIdle") }}
+              </NTag>
+            </div>
+            <div class="status-item">
+              <span class="status-label">{{ t("settings.remote.botLabel") }}</span>
+              <span class="status-value">{{ status?.bot_id || "-" }}</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">{{ t("settings.remote.loginTimeLabel") }}</span>
+              <span class="status-value">{{ formatTime(status?.saved_at || 0) }}</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">{{ t("settings.remote.peersLabel") }}</span>
+              <span class="status-value">{{ status?.peers?.length || 0 }}</span>
+            </div>
           </div>
-          <div class="status-item">
-            <span class="status-label">{{ t("settings.remote.botLabel") }}</span>
-            <span class="status-value">{{ status?.bot_id || "-" }}</span>
-          </div>
-          <div class="status-item">
-            <span class="status-label">{{ t("settings.remote.loginTimeLabel") }}</span>
-            <span class="status-value">{{ formatTime(status?.saved_at || 0) }}</span>
-          </div>
-          <div class="status-item">
-            <span class="status-label">{{ t("settings.remote.peersLabel") }}</span>
-            <span class="status-value">{{ status?.peers?.length || 0 }}</span>
-          </div>
+
+          <NAlert
+            v-if="status?.paused_remaining_ms"
+            type="warning"
+            :show-icon="false"
+            class="hint-block"
+          >
+            {{ t("settings.remote.pausedHint", { minutes: Math.ceil((status.paused_remaining_ms || 0) / 60000) }) }}
+          </NAlert>
+          <NAlert v-else-if="!status?.peers?.length" type="info" :show-icon="false" class="hint-block">
+            {{ t("settings.remote.pairHint") }}
+          </NAlert>
         </div>
 
-        <NAlert
-          v-if="status?.paused_remaining_ms"
-          type="warning"
-          :show-icon="false"
-          class="hint-block"
-        >
-          {{ t("settings.remote.pausedHint", { minutes: Math.ceil((status.paused_remaining_ms || 0) / 60000) }) }}
-        </NAlert>
-        <NAlert v-else-if="!status?.peers?.length" type="info" :show-icon="false" class="hint-block">
-          {{ t("settings.remote.pairHint") }}
-        </NAlert>
-
-        <NForm label-placement="top" require-mark-placement="left">
-          <NFormItem :label="t('settings.remote.notifyEnabled')">
-            <NSwitch
-              :value="status?.notify_enabled"
-              :loading="savingNotify"
-              @update:value="handleNotifyToggle"
-            />
-          </NFormItem>
-          <p class="settings-hint switch-hint">{{ t("settings.remote.notifyHint") }}</p>
-          <NFormItem :show-label="false">
-            <div class="form-actions">
-              <NButton size="small" type="primary" :loading="testing" @click="handleTest">
-                {{ t("settings.remote.testPush") }}
-              </NButton>
-              <NButton size="small" quaternary type="error" @click="handleLogout">
-                {{ t("settings.remote.logout") }}
-              </NButton>
+        <div class="settings-block">
+          <div class="setting-row">
+            <div class="setting-row-main">
+              <div class="setting-row-label">{{ t("settings.remote.notifyEnabled") }}</div>
+              <div class="setting-row-desc">{{ t("settings.remote.notifyHint") }}</div>
             </div>
-          </NFormItem>
-        </NForm>
+            <div class="setting-row-control">
+              <NSwitch
+                :value="status?.notify_enabled"
+                :loading="savingNotify"
+                @update:value="handleNotifyToggle"
+              />
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-row-main">
+              <div class="form-actions">
+                <NButton size="small" type="primary" :loading="testing" @click="handleTest">
+                  {{ t("settings.remote.testPush") }}
+                </NButton>
+                <NButton size="small" quaternary type="error" @click="handleLogout">
+                  {{ t("settings.remote.logout") }}
+                </NButton>
+              </div>
+            </div>
+          </div>
+        </div>
       </template>
-      </div>
     </NSpin>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
+/* 分组标题、页面骨架与行式设置项样式已抽到 src/assets/main.css 统一维护 */
+
+/* 未登录引导卡：非行式内容整体入卡，自行控制上下留白 */
+.guide-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
+/* 登录中：二维码面板整体入卡，仅补充卡片上下留白 */
+.login-card {
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
-.settings-hint {
+/* 已登录状态卡：状态栅格与提示整体入卡 */
+.status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+/* 面板内提示文字处于 flex gap 容器中，抵消全局 .settings-hint 的顶部外边距 */
+.login-status .settings-hint {
   margin: 0;
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  line-height: 1.5;
-}
-
-.remote-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
 .hint-block {
@@ -442,10 +459,6 @@ onBeforeUnmount(() => {
 .status-value {
   color: var(--ashell-text-strong);
   word-break: break-all;
-}
-
-.switch-hint {
-  margin-top: -14px;
 }
 
 .form-actions {

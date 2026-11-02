@@ -2,8 +2,6 @@
 import { computed, onMounted, ref, watch } from "vue";
 import {
   NButton,
-  NForm,
-  NFormItem,
   NInput,
   NSelect,
   NSwitch,
@@ -180,97 +178,111 @@ onMounted(loadConfig);
 <template>
   <section class="settings-section">
     <div class="settings-section-title">{{ t("settings.notify.title") }}</div>
-    <p class="settings-hint">{{ t("settings.notify.description") }}</p>
-    <NForm label-placement="top" require-mark-placement="left">
-      <NFormItem :label="t('settings.notify.enabled')">
-        <NSwitch v-model:value="config.enabled" />
-      </NFormItem>
-      <NFormItem :label="t('settings.notify.platform')">
-        <NSelect
-          :value="config.platform"
-          :options="platformOptions"
-          :disabled="loading"
-          style="max-width: 320px"
-          @update:value="onPlatformChange"
-        />
-      </NFormItem>
-      <NFormItem
-        :label="t('settings.notify.webhook')"
-        :feedback="t('settings.notify.webhookHint')"
-      >
-        <NInput
-          v-model:value="config.webhook"
-          :placeholder="t('settings.notify.webhookPlaceholder')"
-          :disabled="loading"
-        />
-      </NFormItem>
-      <NFormItem
-        v-if="config.platform === 'custom'"
-        :label="t('settings.notify.customTemplate')"
-        :feedback="t('settings.notify.customTemplateHint')"
-      >
-        <NInput
-          v-model:value="config.custom_template"
-          type="textarea"
-          :placeholder="CUSTOM_TEMPLATE_EXAMPLE"
-          :autosize="{ minRows: 6, maxRows: 14 }"
-          :disabled="loading"
-          class="template-input"
-        />
-      </NFormItem>
-      <NFormItem
-        v-if="needSecret"
-        :label="t('settings.notify.secret')"
-        :feedback="secretHint"
-      >
-        <NInput
-          v-model:value="config.secret"
-          :placeholder="t('settings.notify.secretPlaceholder')"
-          :disabled="loading"
-        />
-      </NFormItem>
-      <NFormItem :show-label="false">
-        <div class="form-actions">
-          <NButton
-            size="small"
-            type="primary"
-            :loading="saving"
-            @click="handleSave"
-          >
-            {{ t("settings.notify.save") }}
-          </NButton>
-          <NButton size="small" :loading="testing" @click="handleTest">
-            {{ t("settings.notify.testConnection") }}
-          </NButton>
+    <div class="settings-block">
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.notify.enabled") }}</div>
         </div>
-      </NFormItem>
-    </NForm>
+        <div class="setting-row-control">
+          <NSwitch v-model:value="config.enabled" />
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.notify.platform") }}</div>
+        </div>
+        <div class="setting-row-control w-platform">
+          <NSelect
+            :value="config.platform"
+            :options="platformOptions"
+            :disabled="loading"
+            @update:value="onPlatformChange"
+          />
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.notify.webhook") }}</div>
+          <div class="setting-row-desc">{{ t("settings.notify.webhookHint") }}</div>
+        </div>
+        <div class="setting-row-control w-webhook">
+          <NInput
+            v-model:value="config.webhook"
+            :placeholder="t('settings.notify.webhookPlaceholder')"
+            :disabled="loading"
+          />
+        </div>
+      </div>
+      <div v-if="config.platform === 'custom'" class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.notify.customTemplate") }}</div>
+          <div class="setting-row-desc">{{ t("settings.notify.customTemplateHint") }}</div>
+        </div>
+        <div class="setting-row-control w-template">
+          <NInput
+            v-model:value="config.custom_template"
+            type="textarea"
+            :placeholder="CUSTOM_TEMPLATE_EXAMPLE"
+            :autosize="{ minRows: 6, maxRows: 14 }"
+            :disabled="loading"
+            class="template-input"
+          />
+        </div>
+      </div>
+      <div v-if="needSecret" class="setting-row">
+        <div class="setting-row-main">
+          <div class="setting-row-label">{{ t("settings.notify.secret") }}</div>
+          <div class="setting-row-desc">{{ secretHint }}</div>
+        </div>
+        <div class="setting-row-control w-webhook">
+          <NInput
+            v-model:value="config.secret"
+            :placeholder="t('settings.notify.secretPlaceholder')"
+            :disabled="loading"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-hint">{{ t("settings.notify.description") }}</div>
+
+    <div class="form-actions">
+      <NButton
+        size="small"
+        type="primary"
+        :loading="saving"
+        @click="handleSave"
+      >
+        {{ t("settings.notify.save") }}
+      </NButton>
+      <NButton size="small" :loading="testing" @click="handleTest">
+        {{ t("settings.notify.testConnection") }}
+      </NButton>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
+
+.w-platform {
+  width: 280px;
 }
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
+/* 长文本输入（webhook / 密钥）限宽，避免在宽屏下拉散 */
+.w-webhook {
+  width: 420px;
 }
 
-.settings-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  line-height: 1.5;
+/* 消息体模板 JSON 输入，与上方输入框同宽对齐 */
+.w-template {
+  width: 420px;
 }
 
 .form-actions {
   display: flex;
   gap: 8px;
+  margin-top: 16px;
 }
 
 .template-input :deep(textarea) {

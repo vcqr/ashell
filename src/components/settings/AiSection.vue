@@ -8,7 +8,6 @@ import { ref, computed, onMounted, watch } from "vue";
 import { storeToRefs } from "pinia";
 import {
   NForm,
-  NFormItem,
   NInput,
   NInputNumber,
   NSelect,
@@ -16,7 +15,6 @@ import {
   NSpace,
   NSwitch,
   NIcon,
-  NText,
   NTag,
   useMessage,
 } from "naive-ui";
@@ -178,163 +176,208 @@ onMounted(async () => {
 
 <template>
   <section class="settings-section">
-    <NForm label-placement="top" size="small">
-      <NFormItem
-        :label="t('settings.ai.enabled')"
-        :feedback="t('settings.ai.enabledDesc')"
-      >
-        <NSwitch
-          :value="startupStore.aiAssistantEnabled"
-          @update:value="(v: boolean) => startupStore.setAiAssistantEnabled(v)"
-        />
-      </NFormItem>
-    </NForm>
+    <div class="settings-section-title">{{ t("settings.ai.title") }}</div>
+    <NForm size="small" :show-feedback="false">
+      <!-- 启用开关：应用级开关，独立小卡（无现成组标题 key，不新增） -->
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.enabled") }}</div>
+            <div class="setting-row-desc">{{ t("settings.ai.enabledDesc") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch
+              :value="startupStore.aiAssistantEnabled"
+              @update:value="(v: boolean) => startupStore.setAiAssistantEnabled(v)"
+            />
+          </div>
+        </div>
+      </div>
 
-    <div class="settings-section-title">{{ t("settings.ai.engine.title") }}</div>
-    <NForm label-placement="top" size="small">
-      <NFormItem :label="t('settings.ai.engine.active')">
-        <NSelect
-          :value="enginesState?.active_engine ?? null"
-          :options="sidecarTypeOptions"
-          :loading="engineSaving"
-          :disabled="!enginesState"
-          @update:value="switchEngine"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.ai.engine.provider')">
-        <NSelect
-          :value="currentEngine?.provider_id ?? null"
-          :options="providerOptions"
-          clearable
-          :loading="engineSaving"
-          :disabled="!enginesState"
-          :placeholder="t('settings.ai.engine.providerPlaceholder')"
-          @update:value="(v: string | null) => patchEngine({ provider_id: v ?? '' })"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.ai.provider.activeModel')">
-        <NSelect
-          :value="currentEngine?.active_model_id || null"
-          :options="modelOptions"
-          :disabled="modelOptions.length === 0 || engineSaving"
-          :placeholder="t('settings.ai.provider.activeModelPlaceholder')"
-          @update:value="(v: string | null) => v && patchEngine({ active_model_id: v })"
-        />
-      </NFormItem>
-      <template v-if="isPiEngine">
-        <NFormItem :label="t('settings.ai.engine.thinkingLevel')">
-          <NSelect
-            :value="currentEngine?.thinking_level || 'off'"
-            :options="thinkingLevelOptions"
-            :disabled="engineSaving"
-            @update:value="(v: string) => patchEngine({ thinking_level: v })"
-          />
-        </NFormItem>
-      </template>
+      <div class="settings-subgroup">{{ t("settings.ai.engine.title") }}</div>
+      <div class="settings-block">
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.engine.active") }}</div>
+          </div>
+          <div class="setting-row-control w-select">
+            <NSelect
+              :value="enginesState?.active_engine ?? null"
+              :options="sidecarTypeOptions"
+              :loading="engineSaving"
+              :disabled="!enginesState"
+              @update:value="switchEngine"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.engine.provider") }}</div>
+          </div>
+          <div class="setting-row-control w-select">
+            <NSelect
+              :value="currentEngine?.provider_id ?? null"
+              :options="providerOptions"
+              clearable
+              :loading="engineSaving"
+              :disabled="!enginesState"
+              :placeholder="t('settings.ai.engine.providerPlaceholder')"
+              @update:value="(v: string | null) => patchEngine({ provider_id: v ?? '' })"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.provider.activeModel") }}</div>
+          </div>
+          <div class="setting-row-control w-select">
+            <NSelect
+              :value="currentEngine?.active_model_id || null"
+              :options="modelOptions"
+              :disabled="modelOptions.length === 0 || engineSaving"
+              :placeholder="t('settings.ai.provider.activeModelPlaceholder')"
+              @update:value="(v: string | null) => v && patchEngine({ active_model_id: v })"
+            />
+          </div>
+        </div>
+        <div v-if="isPiEngine" class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.engine.thinkingLevel") }}</div>
+          </div>
+          <div class="setting-row-control w-select">
+            <NSelect
+              :value="currentEngine?.thinking_level || 'off'"
+              :options="thinkingLevelOptions"
+              :disabled="engineSaving"
+              @update:value="(v: string) => patchEngine({ thinking_level: v })"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.engine.contextWindow") }}</div>
+            <div class="setting-row-desc">{{ t("settings.ai.engine.tokenFieldHint") }}</div>
+          </div>
+          <div class="setting-row-control w-num">
+            <NInputNumber
+              v-model:value="ctxWindowInput"
+              :update-value-on-input="false"
+              :min="1"
+              :step="1000"
+              :disabled="engineSaving"
+              clearable
+              :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
+              @update:value="(v: number | null) => patchTokenField('context_window', v)"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.engine.maxTokens") }}</div>
+            <div class="setting-row-desc">{{ t("settings.ai.engine.tokenFieldHint") }}</div>
+          </div>
+          <div class="setting-row-control w-num">
+            <NInputNumber
+              v-model:value="maxTokensInput"
+              :update-value-on-input="false"
+              :min="1"
+              :step="1000"
+              :disabled="engineSaving"
+              clearable
+              :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
+              @update:value="(v: number | null) => patchTokenField('max_tokens', v)"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.engine.maxRounds") }}</div>
+            <div class="setting-row-desc">{{ t("settings.ai.engine.maxRoundsHint") }}</div>
+          </div>
+          <div class="setting-row-control w-num">
+            <NInputNumber
+              v-model:value="maxRoundsInput"
+              :update-value-on-input="false"
+              :min="1"
+              :step="1"
+              :disabled="engineSaving"
+              clearable
+              :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
+              @update:value="(v: number | null) => patchTokenField('max_rounds', v)"
+            />
+          </div>
+        </div>
+      </div>
+      <p class="settings-hint">{{ t("settings.ai.engine.hint") }}</p>
 
-      <NFormItem :label="t('settings.ai.engine.contextWindow')" :feedback="t('settings.ai.engine.tokenFieldHint')">
-        <NInputNumber
-          v-model:value="ctxWindowInput"
-          :update-value-on-input="false"
-          :min="1"
-          :step="1000"
-          :disabled="engineSaving"
-          clearable
-          :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
-          @update:value="(v: number | null) => patchTokenField('context_window', v)"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.ai.engine.maxTokens')" :feedback="t('settings.ai.engine.tokenFieldHint')">
-        <NInputNumber
-          v-model:value="maxTokensInput"
-          :update-value-on-input="false"
-          :min="1"
-          :step="1000"
-          :disabled="engineSaving"
-          clearable
-          :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
-          @update:value="(v: number | null) => patchTokenField('max_tokens', v)"
-        />
-      </NFormItem>
-      <NFormItem :label="t('settings.ai.engine.maxRounds')" :feedback="t('settings.ai.engine.maxRoundsHint')">
-        <NInputNumber
-          v-model:value="maxRoundsInput"
-          :update-value-on-input="false"
-          :min="1"
-          :step="1"
-          :disabled="engineSaving"
-          clearable
-          :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
-          @update:value="(v: number | null) => patchTokenField('max_rounds', v)"
-        />
-      </NFormItem>
-
+      <!-- Claude Code 路径（仅非 pi 引擎） -->
       <template v-if="!isPiEngine">
-        <NFormItem :label="t('settings.ai.claudePath')">
-          <NInput
-            v-model:value="claudePath"
-            :placeholder="t('settings.ai.claudePathPlaceholder')"
-            clearable
-            @blur="saveClaudePath"
-          />
-        </NFormItem>
-        <NFormItem>
-          <NSpace align="center" :size="8">
-            <NButton size="small" :loading="detecting" @click="detectClaude">
-              <template #icon>
-                <NIcon><RiSearchLine /></NIcon>
-              </template>
-              {{ t("settings.ai.detect") }}
-            </NButton>
-            <template v-if="detectedPath !== null">
-              <NTag size="small" type="success" :bordered="false">
-                <template #icon>
-                  <NIcon><RiCheckboxCircleLine /></NIcon>
+        <div class="settings-block">
+          <div class="setting-row">
+            <div class="setting-row-main">
+              <div class="setting-row-label">{{ t("settings.ai.claudePath") }}</div>
+              <div class="setting-row-desc">{{ t("settings.ai.claudePathHint") }}</div>
+            </div>
+            <div class="setting-row-control w-path">
+              <NInput
+                v-model:value="claudePath"
+                :placeholder="t('settings.ai.claudePathPlaceholder')"
+                clearable
+                @blur="saveClaudePath"
+              />
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-row-main"></div>
+            <div class="setting-row-control">
+              <NSpace align="center" :size="8">
+                <NButton size="small" :loading="detecting" @click="detectClaude">
+                  <template #icon>
+                    <NIcon><RiSearchLine /></NIcon>
+                  </template>
+                  {{ t("settings.ai.detect") }}
+                </NButton>
+                <template v-if="detectedPath !== null">
+                  <NTag size="small" type="success" :bordered="false">
+                    <template #icon>
+                      <NIcon><RiCheckboxCircleLine /></NIcon>
+                    </template>
+                    {{ detectedPath }}
+                  </NTag>
+                  <NButton size="tiny" quaternary type="primary" @click="applyDetectedPath">
+                    {{ t("settings.ai.applyDetected") }}
+                  </NButton>
                 </template>
-                {{ detectedPath }}
-              </NTag>
-              <NButton size="tiny" quaternary type="primary" @click="applyDetectedPath">
-                {{ t("settings.ai.applyDetected") }}
-              </NButton>
-            </template>
-            <template v-else-if="detectionAttempted && !detecting">
-              <NTag size="small" type="warning" :bordered="false">
-                <template #icon>
-                  <NIcon><RiCloseCircleLine /></NIcon>
+                <template v-else-if="detectionAttempted && !detecting">
+                  <NTag size="small" type="warning" :bordered="false">
+                    <template #icon>
+                      <NIcon><RiCloseCircleLine /></NIcon>
+                    </template>
+                    {{ t("settings.ai.notDetected") }}
+                  </NTag>
                 </template>
-                {{ t("settings.ai.notDetected") }}
-              </NTag>
-            </template>
-          </NSpace>
-          <template #feedback>{{ t("settings.ai.claudePathHint") }}</template>
-        </NFormItem>
+              </NSpace>
+            </div>
+          </div>
+        </div>
+        <p class="settings-hint">{{ t("settings.ai.configFileHint") }}</p>
       </template>
     </NForm>
-    <p class="field-hint">{{ t("settings.ai.engine.hint") }}</p>
-
-    <NText v-if="!isPiEngine" depth="3" style="font-size: 12px; line-height: 1.6; margin-top: 4px">
-      {{ t("settings.ai.configFileHint") }}
-    </NText>
   </section>
 </template>
 
 <style scoped>
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* 分组标题、页面骨架样式已抽到 src/assets/main.css 统一维护 */
+
+.w-select {
+  width: 280px;
 }
 
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ashell-text-strong);
+.w-num {
+  width: 140px;
 }
 
-.field-hint {
-  margin: -4px 0 8px;
-  font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  line-height: 1.5;
+.w-path {
+  width: 320px;
 }
 </style>
