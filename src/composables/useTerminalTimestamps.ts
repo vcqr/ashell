@@ -274,6 +274,40 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     schedulePaint()
   }
 
+  /**
+   * onRender 脏行补记：时间戳只靠"缓冲区增长"记录的话，初始屏幕的预建空行
+   * （prompt / 首屏输出落在这些行上）永远不增长、永远没有时间。这里对每次
+   * 重渲染的行区间补记：该行对应缓冲区行内容非空且尚无时间戳 → 记为当前
+   * 时间。已有时间戳的行不覆盖（进度条 \r 重绘保留首写时间）。
+   */
+  function onRenderRows(start: number, end: number) {
+    const t = options.getTerm()
+    if (!t || !gutterEl || !store.lineTimestampEnabled) return
+    let active: Terminal["buffer"]["active"]
+    try {
+      active = t.buffer.active
+    } catch {
+      return
+    }
+    if (active.type === "alternate") return
+    const off = active.length - times.length
+    if (off < 0) return
+    const now = Date.now()
+    let changed = false
+    for (let r = start; r <= end; r++) {
+      const abs = active.viewportY + r
+      if (abs < 0 || abs >= active.length) continue
+      const idx = abs - off
+      if (idx >= times.length || times[idx] !== undefined) continue
+      const line = active.getLine(abs)
+      if (!line) continue
+      if (line.translateToString(true).length === 0) continue
+      times[idx] = now
+      changed = true
+    }
+    if (changed) schedulePaint()
+  }
+
   // ===== resize / reflow =====
 
   function onTermResized() {
@@ -556,6 +590,7 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
       try {
         termDisposers.push(t.onScroll(() => schedulePaint()))
         termDisposers.push(t.onResize(() => onTermResized()))
+        termDisposers.push(t.onRender(({ start, end }) => onRenderRows(start, end)))
       } catch {
         // ignore
       }
