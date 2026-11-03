@@ -17,6 +17,9 @@ import { useTerminalStore } from "@/stores/terminal"
  *   "缓冲区行数 - 数组长度" 差值兜底补齐剩余的新增行。
  * - resize 触发 reflow 后按比例重映射（近似）；仅行数变化（无重排）时在数组
  *   尾部补空/裁剪。
+ * - clear / Ctrl+L 的 CSI 2J 被 xterm 原地清空视口（行数不变、不触发任何事件），
+ *   只能从 write 数据流里识别：检测到清屏后把视口行时间戳置空，新内容写入时
+ *   由 onRenderRows 重新补记，旧滚动区的时间戳保持不变。
  * - alternate screen（vim/less 等 TUI）下隐藏 gutter 并暂停记录，normal
  *   buffer 在此期间不变，切回后无需补算。
  *
@@ -27,6 +30,11 @@ import { useTerminalStore } from "@/stores/terminal"
 
 /** 格式串记号。注意大小写：MM 月 / mm 分。 */
 const TOKEN_RE = /YYYY|SSS|MM|DD|HH|mm|ss/g
+
+/** ED 整屏/局部擦除序列（CSI Ps J）。只认纯数字参数，DEC 私有的 CSI ?J（DECSED）不算。 */
+const ED_RE = /\x1b\[(\d*)J/g
+/** 光标回原点序列（CUP/HVP 到 1;1）：ED0 本是擦除光标以下区域，回原点后执行才等效整屏清除 */
+const HOME_RE = /\x1b\[(?:[01]?[Hf]|[01]?;[01]?[Hf])/g
 
 /** 把毫秒时间按格式串格式化。未知记号原样保留。 */
 export function formatLineTime(ms: number, fmt: string): string {
@@ -216,6 +224,72 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     return n
   }
 
+  // ===== 清屏序列检测 =====
+
+  /** 上一个 write 分片末尾的少量字节，用于识别被分片截断的 CSI 序列 */
+  let scanCarry = ""
+
+  function bytesToLatin1(data: Uint8Array): string {
+    let out = ""
+    for (let i = 0; i < data.length; i += 0x8000) {
+      out += String.fromCharCode(...(data.subarray(i, Math.min(i + 0x8000, data.length)) as unknown as number[]))
+    }
+    return out
+  }
+
+  /**
+   * 扫描一批写入数据，判断是否包含"整屏清除"：
+   * - CSI 2J（clear / Ctrl+L 的标准序列）；
+   * - 回原点之后的 CSI J / CSI 0J（linux console 一类 terminfo 的 clear=\E[H\E[J）。
+   *
+   * xterm 处理 ED2 时把视口各行原地清空（scrollOnEraseInDisplay 未开启）：
+   * 行数不变、不触发 onTrim/onDelete/onInsert，长度差也察觉不到 —— 时间戳只能
+   * 从数据流里识别清屏来失效。CSI 3J（清滚动区）不需要这里管：xterm 走
+   * trimStart，onTrim 事件会把 times 数组同步平移。
+   *
+   * carry 技巧：分片边界可能把序列截成两半，携带上一分片末尾 16 字节重新扫描；
+   * 只认末端越过 carry 边界的匹配 —— 完整落在 carry 内的序列上一分片已处理过，
+   * 重复识别会在跨帧渲染时把刚补记的新时间戳误抹掉。
+   */
+  function scanDisplayClear(data: string | Uint8Array | null): boolean {
+    if (data === null) return false
+    const carryLen = scanCarry.length
+    const text = scanCarry + (typeof data === "string" ? data : bytesToLatin1(data))
+    scanCarry = text.length > 16 ? text.slice(-16) : text
+
+    ED_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = ED_RE.exec(text)) !== null) {
+      // 完整落在 carry 区内的序列上一分片已处理过，跳过（否则跨帧渲染时会把
+      // 上一分片刚补记的新时间戳误抹掉）
+      if (m.index + m[0].length <= carryLen) continue
+      const n = Number(m[1])
+      if (n === 2) return true
+      if (n === 0) {
+        // ED0 = 擦除光标以下：同一分片内此前回过原点，等效整屏清除
+        HOME_RE.lastIndex = 0
+        let h: RegExpExecArray | null
+        while ((h = HOME_RE.exec(text)) !== null) {
+          if (h.index >= m.index) break
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  /** 整屏清除后把视口各行时间戳置空；新内容写入时由 onRenderRows 按新时间补记 */
+  function invalidateViewportTimes(len: number) {
+    const t = options.getTerm()
+    if (!t) return
+    const off = len - times.length
+    const start = Math.max(0, len - t.rows)
+    for (let abs = start; abs < len; abs++) {
+      const idx = abs - off
+      if (idx >= 0 && idx < times.length) times[idx] = undefined
+    }
+  }
+
   /**
    * 每次 write 解析完成后的同步：把缓冲区行数与 times 数组长度的差值补齐。
    * 差值为正 → 追加新行时间；为负 → 缓冲区整体重置（clear/reset）。
@@ -261,6 +335,9 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
         trimBase = cumTrim
       }
     }
+
+    // clear / Ctrl+L 的整屏清除：视口行时间戳失效，等新内容写入时重新补记
+    if (scanDisplayClear(data)) invalidateViewportTimes(len)
 
     const appended = len - times.length
     if (appended > 0) {
@@ -522,6 +599,7 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
       const lines = normalLines()
       if (lines) resubscribe(lines)
       times = []
+      scanCarry = ""
       if (!ensureGutter()) return
       lastGutterW = -1
       updateWidth()
