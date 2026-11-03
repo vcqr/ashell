@@ -209,6 +209,7 @@ export default {
       },
       panel: {
         hosts: "主机列表",
+        quickConnect: "快速连接面板",
         settings: "设置",
         ai: "AI 助手",
         sftp: "SFTP 文件管理",

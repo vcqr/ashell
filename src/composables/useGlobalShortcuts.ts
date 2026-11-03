@@ -11,6 +11,7 @@ export interface GlobalShortcutDeps {
   openLocal: () => void;
   closeTab: (key: string) => void;
   toggleHosts: () => void;
+  toggleQuickConnect: () => void;
   toggleSettings: () => void;
   toggleAi: () => void;
   toggleSftp: () => void;
@@ -54,6 +55,12 @@ export function useGlobalShortcuts(deps: GlobalShortcutDeps) {
       e.preventDefault();
       e.stopPropagation();
       deps.toggleHosts();
+      return;
+    }
+    if (matchesBinding(keybindingStore.getBinding("panel.quickConnect"), e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      deps.toggleQuickConnect();
       return;
     }
     if (matchesBinding(keybindingStore.getBinding("panel.settings"), e)) {

@@ -210,6 +210,7 @@ export default {
       },
       panel: {
         hosts: "Host list",
+        quickConnect: "Quick Connect Palette",
         settings: "Settings",
         ai: "AI Assistant",
         sftp: "SFTP File Manager",

@@ -28,6 +28,7 @@ export type ShortcutActionId =
   | "font.zoomReset"
   | "search.toggle"
   | "panel.hosts"
+  | "panel.quickConnect"
   | "panel.settings"
   | "panel.ai"
   | "panel.sftp"
@@ -184,6 +185,14 @@ export const SHORTCUT_ACTIONS: ShortcutActionDef[] = [
     defaults: {
       mac: { key: "h", ctrl: false, meta: true, shift: true, alt: false },
       win: { key: "h", ctrl: true, meta: false, shift: true, alt: false },
+    },
+  },
+  {
+    id: "panel.quickConnect",
+    category: "panels",
+    defaults: {
+      mac: { key: "k", ctrl: false, meta: true, shift: true, alt: false },
+      win: { key: "k", ctrl: true, meta: false, shift: true, alt: false },
     },
   },
   {

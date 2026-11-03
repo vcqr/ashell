@@ -17,6 +17,7 @@ import { isTauri } from "@/utils/platform";
 import { useTerminalStore } from "@/stores/terminal";
 import { openTabInNewWindow } from "@/utils/newWindow";
 import { useHostsPin } from "@/composables/useHostsPin";
+import { recordRecentHost } from "@/composables/useRecentHosts";
 import { notify } from "@/utils/notify";
 import i18n from "@/locales";
 
@@ -599,6 +600,8 @@ export function useTabs() {
 
   function openHost(node: HostNode, forceNew = false) {
     if (node.type !== "host") return;
+    // 记录最近连接（MRU）：快速连接面板默认列表用；会话恢复不走 openHost，不会误记
+    recordRecentHost(node.id);
     if (!forceNew) {
       const existing = tabs.value.find((t) => t.hostKey === node.key);
       if (existing) {

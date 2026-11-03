@@ -42,6 +42,7 @@ import QuitConfirmModal from "@/components/QuitConfirmModal.vue";
 import UpdateChecker from "@/components/UpdateChecker.vue";
 import LoginGate from "@/components/LoginGate.vue";
 import NotifyBridge from "@/components/NotifyBridge.vue";
+import QuickConnectPalette from "@/components/QuickConnectPalette.vue";
 import { isTauri } from "@/utils/platform";
 import { installTauriDblclickGuard, onTitlebarDblclick } from "@/utils/titlebar";
 import { installCrossWindowPathDropTarget, installFileDropBridge } from "@/composables/useFileDropBridge";
@@ -481,6 +482,13 @@ function onLocalOpenInTerminal(path: string) {
 // （开关在 设置-通用-开发者选项；Web 形态内部自动跳过）
 installDevtoolsShortcut();
 
+// ── 快速连接面板（Ctrl/Cmd+Shift+K）──
+// 居中浮层不参与抽屉互斥，状态留在 App 局部即可
+const quickConnectOpen = ref(false);
+function toggleQuickConnect() {
+  quickConnectOpen.value = !quickConnectOpen.value;
+}
+
 useGlobalShortcuts({
   isMac,
   tabs,
@@ -488,6 +496,7 @@ useGlobalShortcuts({
   openLocal,
   closeTab,
   toggleHosts,
+  toggleQuickConnect,
   toggleSettings,
   toggleAi,
   toggleSftp,
@@ -796,6 +805,10 @@ if (!isTauri) {
               />
 
               <HostsDrawer v-model:open="hostsOpen" @open-host="openHost" />
+              <QuickConnectPalette
+                v-model:open="quickConnectOpen"
+                @open-host="openHost"
+              />
               <LocalFilesDrawer
                 v-model:open="localFilesOpen"
                 :cwd="activeLocalTab?.cwd ?? ''"
