@@ -103,6 +103,7 @@ export default {
   transferBar: {
     up: "上传选中的本地文件/目录到远程当前目录",
     dragGhost: "{count} 项 → 本地",
+    dragGhostTerm: "{count} 项 → 终端（填路径）",
   },
   columns: {
     name: "名称",

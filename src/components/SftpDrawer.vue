@@ -2486,10 +2486,10 @@ function rowProps(row: SftpFile) {
       .filter(Boolean)
       .join(" "),
     style: {
-      // 双栏模式下文件/目录行可拖到本地栏（目录为整树下载），提示 grab
+      // 文件/目录行都可拖（双栏拖到本地栏下载；单栏/双栏均可拖到终端填路径），
+      // 提示 grab
       cursor:
-        dualPane.value &&
-        (row.file_type === "file" || row.file_type === "dir")
+        row.file_type === "file" || row.file_type === "dir"
           ? "grab"
           : "default",
     },
@@ -2499,7 +2499,7 @@ function rowProps(row: SftpFile) {
       // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
       // （click 阶段已经选完了）
       if (e.shiftKey) e.preventDefault()
-      if (dualPane.value) remoteDrag.onRowPointerdown(row, e)
+      remoteDrag.onRowPointerdown(row, e)
       cursorKey.value = row.full_path
     },
     onClick: (e: MouseEvent) => {
@@ -3652,7 +3652,11 @@ function openInStandaloneWindow() {
                 top: `${remoteDrag.ghostY.value}px`,
               }"
             >
-              {{ t("sftp.transferBar.dragGhost", { count: remoteDrag.dragCount.value }) }}
+              {{
+                dualPane
+                  ? t("sftp.transferBar.dragGhost", { count: remoteDrag.dragCount.value })
+                  : t("sftp.transferBar.dragGhostTerm", { count: remoteDrag.dragCount.value })
+              }}
             </div>
           </Teleport>
         </div>

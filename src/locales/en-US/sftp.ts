@@ -108,6 +108,7 @@ export default {
   transferBar: {
     up: "Upload the selected local file(s)/folder(s) to the current remote directory",
     dragGhost: "{count} item(s) → local",
+    dragGhostTerm: "{count} item(s) → terminal (fill path)",
   },
   columns: {
     name: "Name",
