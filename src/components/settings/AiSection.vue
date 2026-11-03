@@ -27,7 +27,7 @@ import { useStartupStore } from "@/stores/startup";
 import {
   sidecarTypeOptions,
   thinkingLevelOptions,
-  parseModelIds,
+  enabledModelIds,
 } from "@/composables/useAiConfig";
 
 const { t } = useI18n();
@@ -51,7 +51,8 @@ const providerOptions = computed(() =>
 );
 
 const modelOptions = computed(() => {
-  const list = parseModelIds(currentProvider.value?.model_ids ?? "");
+  // 只列启用的候选模型（禁用的对引擎不可见）；激活模型兜底保留展示
+  const list = enabledModelIds(currentProvider.value);
   const activeId = currentEngine.value?.active_model_id;
   if (activeId && !list.includes(activeId)) {
     list.unshift(activeId);

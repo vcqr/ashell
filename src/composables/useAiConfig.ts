@@ -1,17 +1,32 @@
 import { request } from "@/api/client";
 import { isTauri } from "@/utils/platform";
+import type { AiProvider } from "@/types";
 
 export type SidecarType = "claude" | "pi";
 
 export function parseModelIds(value: string): string[] {
+  const seen = new Set<string>();
   return value
-    .split(",")
+    .split(/[,，]/)
     .map((item) => item.trim())
-    .filter(Boolean);
+    .filter((item) => {
+      if (!item || seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
 }
 
 export function normalizeModelIds(value: string): string {
   return parseModelIds(value).join(", ");
+}
+
+/** 启用的候选模型 = 全量 − 禁用子集（保序），模型选择类 UI 统一从这里取列表 */
+export function enabledModelIds(
+  p: Pick<AiProvider, "model_ids" | "disabled_model_ids"> | null | undefined,
+): string[] {
+  if (!p) return [];
+  const disabled = new Set(parseModelIds(p.disabled_model_ids ?? ""));
+  return parseModelIds(p.model_ids).filter((id) => !disabled.has(id));
 }
 
 export function resolveActiveModelId(

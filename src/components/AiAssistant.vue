@@ -66,7 +66,7 @@ import { useAiConfigStore } from "@/stores/aiConfig";
 import { usePhraseStore } from "@/stores/phrases";
 import { getApiInfo } from "@/api/client";
 import { openAiInNewWindow } from "@/utils/newWindow";
-import { parseModelIds } from "@/composables/useAiConfig";
+import { enabledModelIds } from "@/composables/useAiConfig";
 import { useAiPin } from "@/composables/useAiPin";
 import { usePanelSwitchClosed } from "@/composables/usePanels";
 import { useDrawerWidth } from "@/composables/useDrawerWidth";
@@ -133,16 +133,18 @@ const pickerParts = computed(() => {
   };
 });
 
-/** 模型选择器选项：两级级联--供应商为顶级（hover 展开子菜单），模型为叶子 */
+/** 模型选择器选项：两级级联--供应商为顶级（hover 展开子菜单），模型为叶子。
+ * 只列启用的候选模型：全部禁用的供应商从选择器隐藏 */
 const modelPickerOptions = computed(() =>
   providers.value
-    .filter((p) => parseModelIds(p.model_ids).length > 0)
-    .map((p) => ({
-      label: p.name,
-      key: p.id,
-      children: parseModelIds(p.model_ids).map((mid) => ({
+    .map((p) => ({ provider: p, models: enabledModelIds(p) }))
+    .filter(({ models }) => models.length > 0)
+    .map(({ provider, models }) => ({
+      label: provider.name,
+      key: provider.id,
+      children: models.map((mid) => ({
         label: mid,
-        key: `${p.id}::${mid}`,
+        key: `${provider.id}::${mid}`,
       })),
     })),
 );
@@ -184,7 +186,7 @@ const providerOptions = computed(() =>
 );
 
 const setupModelOptions = computed(() =>
-  parseModelIds(aiConfig.activeProvider?.model_ids ?? "").map((id) => ({
+  enabledModelIds(aiConfig.activeProvider).map((id) => ({
     label: id,
     value: id,
   })),

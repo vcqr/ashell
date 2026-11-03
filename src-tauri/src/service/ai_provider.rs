@@ -36,12 +36,45 @@ fn decrypt_provider_key(key: &[u8; 32], p: &mut AiProvider) -> AppResult<()> {
 
 /// 候选模型列表中解析有效模型 ID：在列表中则保留，否则取第一个
 fn resolve_model_id(model_ids: &str, want: &str) -> String {
-    let list: Vec<&str> = model_ids.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    if list.contains(&want) {
+    let list = parse_model_list(model_ids);
+    if list.iter().any(|s| s == want) {
         want.to_string()
     } else {
-        list.first().map(|s| s.to_string()).unwrap_or_default()
+        list.first().cloned().unwrap_or_default()
     }
+}
+
+/// 解析候选模型 ID 列表：中英文逗号分隔，去空白去空项，保序去重
+fn parse_model_list(value: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    value
+        .split([',', '，'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| seen.insert(s.to_string()))
+        .map(String::from)
+        .collect()
+}
+
+/// 启用列表 = 候选全量 − 禁用子集（保序），供引擎解析与 .env 物化使用
+fn enabled_model_ids(model_ids: &str, disabled_model_ids: &str) -> String {
+    let disabled = parse_model_list(disabled_model_ids);
+    parse_model_list(model_ids)
+        .into_iter()
+        .filter(|id| !disabled.contains(id))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 禁用列表归一化：只保留仍存在于候选全量中的项（prune），保序去重。
+/// 随 model_ids 的增删保持「禁用 ⊆ 全量」不变量。
+fn prune_disabled_model_ids(model_ids: &str, disabled_model_ids: &str) -> String {
+    let all = parse_model_list(model_ids);
+    parse_model_list(disabled_model_ids)
+        .into_iter()
+        .filter(|id| all.contains(id))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// 从供应商名称派生 Pi sidecar 的 PI_PROVIDER（注册表 key）：
@@ -120,26 +153,53 @@ pub async fn update(
         }
     }
 
+    // 读旧值后合并再写回：候选模型与禁用列表需在本侧 prune，
+    // 维持「禁用 ⊆ 全量」不变量（COALESCE 写法做不到跨列约束）
+    let current: AiProvider =
+        sqlx::query_as("SELECT * FROM ai_providers WHERE id = ? AND is_del = 0")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => AppError::NotFound("AI provider not found".into()),
+                other => AppError::Db(other),
+            })?;
+
+    let name = input.name.as_deref().map(str::trim).unwrap_or(&current.name);
+    let api_type = input.api_type.as_deref().unwrap_or(&current.api_type);
+    let base_url = input.base_url.as_deref().unwrap_or(&current.base_url);
+    // current.api_key 仍是密文（未走 get_by_id 解密），无新值时原样写回
     let api_key_enc = match input.api_key.as_deref() {
-        Some(v) => Some(enc_str(key, v)?),
-        None => None,
+        Some(v) => enc_str(key, v)?,
+        None => current.api_key.clone(),
     };
+    let model_ids = match input.model_ids.as_deref() {
+        Some(v) => parse_model_list(v).join(", "),
+        None => current.model_ids.clone(),
+    };
+    let disabled_model_ids = match input.disabled_model_ids.as_deref() {
+        Some(v) => v.to_string(),
+        None => current.disabled_model_ids.clone(),
+    };
+    let disabled_model_ids = prune_disabled_model_ids(&model_ids, &disabled_model_ids);
 
     sqlx::query(
         r#"UPDATE ai_providers SET
-             name = COALESCE(?, name),
-             api_type = COALESCE(?, api_type),
-             base_url = COALESCE(?, base_url),
-             api_key = COALESCE(?, api_key),
-             model_ids = COALESCE(?, model_ids),
+             name = ?,
+             api_type = ?,
+             base_url = ?,
+             api_key = ?,
+             model_ids = ?,
+             disabled_model_ids = ?,
              updated_at = datetime('now')
            WHERE id = ? AND is_del = 0"#,
     )
-    .bind(input.name.as_deref().map(str::trim))
-    .bind(input.api_type.as_deref())
-    .bind(input.base_url.as_deref())
-    .bind(api_key_enc.as_deref())
-    .bind(input.model_ids.as_deref())
+    .bind(name)
+    .bind(api_type)
+    .bind(base_url)
+    .bind(&api_key_enc)
+    .bind(&model_ids)
+    .bind(&disabled_model_ids)
     .bind(id)
     .execute(pool)
     .await?;
@@ -306,15 +366,17 @@ pub async fn update_engine(
         None => current.provider_id.clone(),
     };
 
-    // 激活模型：显式指定优先；否则在（可能变更后的）供应商模型列表中解析
+    // 激活模型：显式指定优先；否则在（可能变更后的）供应商启用列表中解析
+    // （禁用的候选模型不可选，被禁用的激活模型自动回退到第一个启用模型）
     let model_ids = match provider_id.as_deref() {
         Some(pid) => {
-            let v: Option<String> =
-                sqlx::query_scalar("SELECT model_ids FROM ai_providers WHERE id = ? AND is_del = 0")
-                    .bind(pid)
-                    .fetch_optional(pool)
-                    .await?;
-            v.unwrap_or_default()
+            let row: Option<(String, String)> = sqlx::query_as(
+                "SELECT model_ids, disabled_model_ids FROM ai_providers WHERE id = ? AND is_del = 0",
+            )
+            .bind(pid)
+            .fetch_optional(pool)
+            .await?;
+            row.map(|(m, d)| enabled_model_ids(&m, &d)).unwrap_or_default()
         }
         None => String::new(),
     };
@@ -433,12 +495,12 @@ async fn materialize_env(pool: &DbPool, key: &[u8; 32]) -> AppResult<()> {
                     cfg.pi_api_key = provider.api_key;
                     cfg.pi_api = provider.api_type;
                     cfg.pi_model = row.active_model_id.clone();
-                    cfg.pi_model_ids = provider.model_ids;
+                    cfg.pi_model_ids = enabled_model_ids(&provider.model_ids, &provider.disabled_model_ids);
                     cfg.pi_thinking_level = row.thinking_level.clone();
                 } else {
                     cfg.url = provider.base_url;
                     cfg.key = provider.api_key;
-                    cfg.model_ids = provider.model_ids;
+                    cfg.model_ids = enabled_model_ids(&provider.model_ids, &provider.disabled_model_ids);
                     cfg.active_model_id = row.active_model_id.clone();
                 }
             }
@@ -553,4 +615,46 @@ async fn migrate_from_env_if_needed(pool: &DbPool, key: &[u8; 32]) -> AppResult<
 
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_model_list_splits_and_dedupes() {
+        assert_eq!(
+            parse_model_list("m-a, m-b，m-c ,m-a,,  "),
+            vec!["m-a", "m-b", "m-c"]
+        );
+        assert_eq!(parse_model_list(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn enabled_model_ids_excludes_disabled_and_keeps_order() {
+        assert_eq!(
+            enabled_model_ids("m-a, m-b, m-c", "m-c, m-a"),
+            "m-b"
+        );
+        // 禁用列表里的未知项不影响全量
+        assert_eq!(enabled_model_ids("m-a, m-b", "m-x"), "m-a, m-b");
+        // 全部禁用 → 空
+        assert_eq!(enabled_model_ids("m-a, m-b", "m-a,m-b"), "");
+        // 未禁用 → 原样（归一化）
+        assert_eq!(enabled_model_ids("m-a,m-b", ""), "m-a, m-b");
+    }
+
+    #[test]
+    fn prune_disabled_keeps_only_existing_entries() {
+        assert_eq!(prune_disabled_model_ids("m-a, m-b", "m-b, m-x"), "m-b");
+        assert_eq!(prune_disabled_model_ids("m-a", "m-a, m-b"), "m-a");
+        assert_eq!(prune_disabled_model_ids("", "m-a"), "");
+    }
+
+    #[test]
+    fn resolve_model_id_falls_back_to_first_enabled() {
+        assert_eq!(resolve_model_id("m-a, m-b", "m-b"), "m-b");
+        assert_eq!(resolve_model_id("m-a, m-b", "m-x"), "m-a");
+        assert_eq!(resolve_model_id("", "m-a"), "");
+    }
 }

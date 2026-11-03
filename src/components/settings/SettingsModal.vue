@@ -225,7 +225,7 @@ function close() {
 }
 
 .settings-tabs {
-  width: 168px;
+  width: 190px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -261,6 +261,7 @@ function close() {
   display: flex;
   align-items: center;
   gap: 9px;
+  white-space: nowrap;
   transition:
     background 0.15s ease,
     color 0.15s ease;

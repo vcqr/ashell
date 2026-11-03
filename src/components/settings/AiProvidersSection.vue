@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import {
   RiAddLine,
+  RiCloseLine,
   RiDeleteBinLine,
   RiDownloadCloudLine,
   RiSaveLine,
+  RiSearchLine,
 } from "@remixicon/vue";
 import { ref, computed, onMounted, watch } from "vue";
 import { storeToRefs } from "pinia";
 import {
   NButton,
+  NCheckbox,
   NIcon,
   NInput,
+  NInputGroup,
   NSelect,
   NForm,
   NSpin,
@@ -31,6 +35,7 @@ import { useAiConfigStore } from "@/stores/aiConfig";
 import {
   apiTypeOptions,
   normalizeModelIds,
+  parseModelIds,
   inferFetchApiType,
   fetchModelList,
 } from "@/composables/useAiConfig";
@@ -62,6 +67,7 @@ type Draft = {
   baseUrl: string;
   apiKey: string;
   modelIds: string;
+  disabledIds: string[];
 };
 
 function emptyDraft(): Draft {
@@ -71,6 +77,7 @@ function emptyDraft(): Draft {
     baseUrl: "",
     apiKey: "",
     modelIds: "",
+    disabledIds: [],
   };
 }
 
@@ -81,10 +88,70 @@ function providerToDraft(p: AiProvider): Draft {
     baseUrl: p.base_url,
     apiKey: p.api_key,
     modelIds: p.model_ids,
+    disabledIds: parseModelIds(p.disabled_model_ids ?? ""),
   };
 }
 
 const draft = ref<Draft>(emptyDraft());
+
+// ── 候选模型列表（textarea 的结构化镜像：筛选 / 勾选启停 / 手动添加）──
+
+const modelFilter = ref("");
+const newModelId = ref("");
+
+/** 候选全量：与 textarea 双向镜像（textarea 手改实时反映到这里） */
+const modelList = computed(() => parseModelIds(draft.value.modelIds));
+
+const disabledSet = computed(() => new Set(draft.value.disabledIds));
+
+const enabledCount = computed(
+  () => modelList.value.filter((id) => !disabledSet.value.has(id)).length,
+);
+
+const filteredModels = computed(() => {
+  const kw = modelFilter.value.trim().toLowerCase();
+  if (!kw) return modelList.value;
+  return modelList.value.filter((id) => id.toLowerCase().includes(kw));
+});
+
+/** 勾选/取消勾选 = 加入/移出禁用子集 */
+function toggleModel(id: string, enabled: boolean) {
+  const rest = draft.value.disabledIds.filter((m) => m !== id);
+  if (!enabled) rest.push(id);
+  draft.value.disabledIds = rest;
+}
+
+/** 批量启停：只作用于当前筛选可见的行（与搜索框组合：搜到什么选什么） */
+function bulkToggleModel(mode: "all" | "none" | "invert") {
+  const disabled = new Set(draft.value.disabledIds);
+  for (const id of filteredModels.value) {
+    if (mode === "all") {
+      disabled.delete(id);
+    } else if (mode === "none") {
+      disabled.add(id);
+    } else if (disabled.has(id)) {
+      disabled.delete(id);
+    } else {
+      disabled.add(id);
+    }
+  }
+  draft.value.disabledIds = [...disabled];
+}
+
+/** 从候选列表移除该模型（同步清掉禁用标记） */
+function removeModel(id: string) {
+  draft.value.modelIds = modelList.value.filter((m) => m !== id).join(", ");
+  draft.value.disabledIds = draft.value.disabledIds.filter((m) => m !== id);
+}
+
+/** 手动添加：支持一次粘多个（逗号分隔），已存在的跳过 */
+function addManualModel() {
+  const parts = parseModelIds(newModelId.value);
+  if (parts.length === 0) return;
+  const merged = [...modelList.value, ...parts.filter((p) => !modelList.value.includes(p))];
+  draft.value.modelIds = merged.join(", ");
+  newModelId.value = "";
+}
 
 watch(selectedId, (id) => {
   const p = providers.value.find((x) => x.id === id);
@@ -133,6 +200,10 @@ async function saveProvider() {
       base_url: draft.value.baseUrl.trim(),
       api_key: draft.value.apiKey.trim(),
       model_ids: normalizeModelIds(draft.value.modelIds),
+      // 禁用子集按当前候选全量 prune（textarea 手删的模型不再残留禁用标记）
+      disabled_model_ids: draft.value.disabledIds
+        .filter((id) => modelList.value.includes(id))
+        .join(", "),
     });
     await aiConfig.load();
     draft.value = providerToDraft(updated);
@@ -173,8 +244,14 @@ async function fetchModels() {
       message.warning(t("settings.ai.provider.fetchFailed", { error: "empty" }));
       return;
     }
-    draft.value.modelIds = models.join(", ");
-    message.success(t("settings.ai.provider.fetchSuccess", { count: models.length }));
+    // 合并写入而非整体覆盖：手工挑选的模型不丢，禁用标记保留在 disabledIds，
+    // 新发现的模型默认启用
+    const existing = modelList.value;
+    const added = models.filter((m) => !existing.includes(m));
+    draft.value.modelIds = [...existing, ...added].join(", ");
+    message.success(
+      t("settings.ai.provider.fetchMerged", { added: added.length, count: existing.length + added.length }),
+    );
   } catch (e) {
     message.error(t("settings.ai.provider.fetchFailed", { error: String(e) }));
   } finally {
@@ -194,6 +271,10 @@ onMounted(() => {
     <div class="provider-layout">
       <!-- Left: provider list（增删交互块保持原有内部结构，整体入卡） -->
       <div class="provider-sidebar">
+        <NButton block dashed size="small" @click="addProvider">
+          <template #icon><NIcon><RiAddLine /></NIcon></template>
+          {{ t("settings.ai.provider.add") }}
+        </NButton>
         <div class="provider-list">
           <div class="settings-block list-card">
             <NSpin :show="loading" size="small">
@@ -215,10 +296,6 @@ onMounted(() => {
             </NSpin>
           </div>
         </div>
-        <NButton block dashed size="small" @click="addProvider">
-          <template #icon><NIcon><RiAddLine /></NIcon></template>
-          {{ t("settings.ai.provider.add") }}
-        </NButton>
       </div>
 
       <!-- Right: provider detail（表单项转行式入卡） -->
@@ -277,27 +354,82 @@ onMounted(() => {
                       :autosize="{ minRows: 4, maxRows: 12 }"
                       placeholder="deepseek-chat, deepseek-coder"
                     />
+                    <!-- 结构化列表：仅在已有候选模型时出现，逐行筛选 / 勾选启停 / 移除 -->
+                    <div v-if="modelList.length > 0" class="model-list-block">
+                      <div class="model-list-toolbar">
+                        <NInput
+                          v-model:value="modelFilter" size="small" clearable
+                          :placeholder="t('settings.ai.provider.modelSearchPlaceholder')"
+                        >
+                          <template #prefix><NIcon :size="14"><RiSearchLine /></NIcon></template>
+                        </NInput>
+                        <NButton size="tiny" tertiary @click="bulkToggleModel('all')">
+                          {{ t("settings.ai.provider.selectAll") }}
+                        </NButton>
+                        <NButton size="tiny" tertiary @click="bulkToggleModel('none')">
+                          {{ t("settings.ai.provider.selectNone") }}
+                        </NButton>
+                        <NButton size="tiny" tertiary @click="bulkToggleModel('invert')">
+                          {{ t("settings.ai.provider.invertSelection") }}
+                        </NButton>
+                        <span class="model-count">
+                          {{ t("settings.ai.provider.enabledCount", { enabled: enabledCount, total: modelList.length }) }}
+                        </span>
+                      </div>
+                      <div class="model-list">
+                        <div v-for="id in filteredModels" :key="id" class="model-item">
+                          <NCheckbox
+                            size="small"
+                            :checked="!disabledSet.has(id)"
+                            @update:checked="(v: boolean) => toggleModel(id, v)"
+                          >
+                            <span class="model-item-name" :class="{ off: disabledSet.has(id) }">{{ id }}</span>
+                          </NCheckbox>
+                          <button
+                            class="model-item-remove" type="button"
+                            :title="t('settings.ai.provider.modelRemove')"
+                            @click="removeModel(id)"
+                          >
+                            <NIcon :size="14"><RiCloseLine /></NIcon>
+                          </button>
+                        </div>
+                        <div v-if="filteredModels.length === 0" class="model-list-empty">
+                          {{ t("settings.ai.provider.modelNoMatch") }}
+                        </div>
+                      </div>
+                      <NInputGroup size="small">
+                        <NInput
+                          v-model:value="newModelId"
+                          :placeholder="t('settings.ai.provider.modelAddPlaceholder')"
+                          @keyup.enter="addManualModel"
+                        />
+                        <NButton size="small" @click="addManualModel">
+                          {{ t("settings.ai.provider.modelAdd") }}
+                        </NButton>
+                      </NInputGroup>
+                    </div>
                   </div>
                 </div>
               </div>
+
+              <!-- 操作按钮跟随表单内容（删除分离到左侧，避免与保存误触） -->
+              <div class="detail-actions">
+                <NPopconfirm @positive-click="removeProvider">
+                  <template #trigger>
+                    <NButton type="error">
+                      <template #icon><NIcon><RiDeleteBinLine /></NIcon></template>
+                      {{ t("settings.ai.provider.delete") }}
+                    </NButton>
+                  </template>
+                  {{ t("settings.ai.provider.deleteConfirm") }}
+                </NPopconfirm>
+                <NButton type="primary" :loading="saving" @click="saveProvider">
+                  <template #icon><NIcon><RiSaveLine /></NIcon></template>
+                  {{ saving ? t("settings.ai.provider.saving") : t("settings.ai.provider.save") }}
+                </NButton>
+              </div>
             </NForm>
           </NScrollbar>
-
-          <div class="detail-actions">
-            <NPopconfirm @positive-click="removeProvider">
-              <template #trigger>
-                <NButton type="error">
-                  <template #icon><NIcon><RiDeleteBinLine /></NIcon></template>
-                  {{ t("settings.ai.provider.delete") }}
-                </NButton>
-              </template>
-              {{ t("settings.ai.provider.deleteConfirm") }}
-            </NPopconfirm>
-            <NButton type="primary" :loading="saving" @click="saveProvider">
-              <template #icon><NIcon><RiSaveLine /></NIcon></template>
-              {{ saving ? t("settings.ai.provider.saving") : t("settings.ai.provider.save") }}
-            </NButton>
-          </div>
         </template>
 
         <NEmpty v-else :description="t('settings.ai.provider.emptyHint')" style="padding: 40px 0" />
@@ -387,13 +519,13 @@ onMounted(() => {
   flex: 1;
 }
 
+/* 操作按钮跟随表单尾部（删除有 popconfirm 二次确认，无需隔离） */
 .detail-actions {
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 12px;
   padding-top: 12px;
-  flex-shrink: 0;
 }
 
 /* 本分区对全局卡片的两处布局微调（不重定义全局类） */
@@ -407,8 +539,19 @@ onMounted(() => {
   margin-top: 0;
 }
 
-.w-input {
-  width: 280px;
+/* 输入列加宽：Base URL / API Key 内容长，280px 显示不全。
+ * label 列固定等宽（取最长文案"Model Provider Name"）不换行，
+ * 输入框弹性占满剩余宽度，四行起点对齐 */
+.detail-card > .setting-row:not(.row-stacked) > .setting-row-main {
+  flex: none;
+  width: 150px;
+  white-space: nowrap;
+}
+
+.detail-card > .setting-row:not(.row-stacked) .w-input {
+  width: auto;
+  flex: 1;
+  min-width: 0;
 }
 
 /* 候选模型行改为上下布局：标签在上，按钮+textarea 占满整卡宽度，
@@ -432,5 +575,85 @@ onMounted(() => {
 
 .model-ids-control > .n-button {
   align-self: flex-start;
+}
+
+/* 候选模型结构化列表：筛选行 + 逐行勾选 + 手动添加，超过 5 行左右内部滚动 */
+.model-list-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.model-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-count {
+  font-size: 12px;
+  color: var(--ashell-text-muted);
+  white-space: nowrap;
+}
+
+.model-list {
+  border: 1px solid var(--ashell-border);
+  border-radius: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.model-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.model-item + .model-item {
+  border-top: 1px solid var(--ashell-border-soft);
+}
+
+.model-item:hover {
+  background: var(--ashell-hover);
+}
+
+.model-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-item-name.off {
+  color: var(--ashell-text-muted);
+}
+
+.model-item-remove {
+  opacity: 0;
+  display: inline-flex;
+  border: none;
+  background: transparent;
+  color: var(--ashell-text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.model-item:hover .model-item-remove {
+  opacity: 1;
+}
+
+.model-item-remove:hover {
+  color: var(--ashell-text);
+}
+
+.model-list-empty {
+  padding: 14px;
+  font-size: 12px;
+  color: var(--ashell-text-muted);
+  text-align: center;
 }
 </style>

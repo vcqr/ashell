@@ -397,6 +397,21 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v15: ai_providers 增加候选模型禁用列表（逗号分隔子集）。model_ids 保持
+    // 全量，启用 = 全量 − 禁用；旧数据该列为空串，行为不变
+    if current < 15 {
+        sqlx::query(
+            "ALTER TABLE ai_providers ADD COLUMN disabled_model_ids TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(pool)
+        .await
+        .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (15)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -405,7 +420,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 14;
+    const LATEST_VERSION: i64 = 15;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")
@@ -584,6 +599,92 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(pp, "enc-passphrase");
+
+        pool.close().await;
+    }
+
+    /// 模拟 v14 旧库升级到 v15：ai_providers 既有行保留，
+    /// 新增 disabled_model_ids 列默认空串（全部启用，行为不变）。
+    #[tokio::test]
+    async fn upgrade_from_v14_adds_disabled_model_ids_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("legacy_v14.db");
+
+        {
+            let opts = SqliteConnectOptions::from_str(&format!(
+                "sqlite://{}",
+                db_path.to_string_lossy().replace('\\', "/")
+            ))
+            .unwrap()
+            .create_if_missing(true);
+            let legacy = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(opts)
+                .await
+                .unwrap();
+
+            // v14 的 ai_providers 表结构（与 migrate 中 current < 6 分支一致）
+            sqlx::query(
+                r#"
+                CREATE TABLE ai_providers (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    api_type    TEXT NOT NULL DEFAULT 'openai-completions',
+                    base_url    TEXT NOT NULL DEFAULT '',
+                    api_key     TEXT NOT NULL DEFAULT '',
+                    model_ids   TEXT NOT NULL DEFAULT '',
+                    sort_order  INTEGER NOT NULL DEFAULT 0,
+                    is_del      INTEGER NOT NULL DEFAULT 0,
+                    created_at  TEXT DEFAULT (datetime('now')),
+                    updated_at  TEXT DEFAULT (datetime('now'))
+                );
+                CREATE TABLE schema_version (
+                    version     INTEGER PRIMARY KEY,
+                    applied_at  TEXT DEFAULT (datetime('now'))
+                );
+                INSERT INTO schema_version (version) VALUES (14);
+                "#,
+            )
+            .execute(&legacy)
+            .await
+            .unwrap();
+
+            sqlx::query(
+                "INSERT INTO ai_providers (id, name, model_ids) \
+                 VALUES ('p1', 'legacy-provider', 'm-a, m-b')",
+            )
+            .execute(&legacy)
+            .await
+            .unwrap();
+
+            legacy.close().await;
+        }
+
+        let pool = init_pool(&db_path).await.unwrap();
+
+        assert_eq!(current_version(&pool).await, LATEST_VERSION);
+
+        // 既有行保留，新列默认空串
+        let row =
+            sqlx::query("SELECT name, model_ids, disabled_model_ids FROM ai_providers WHERE id = 'p1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.get::<String, _>("name"), "legacy-provider");
+        assert_eq!(row.get::<String, _>("model_ids"), "m-a, m-b");
+        assert_eq!(row.get::<String, _>("disabled_model_ids"), "");
+
+        // 新列可写
+        sqlx::query("UPDATE ai_providers SET disabled_model_ids = 'm-b' WHERE id = 'p1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let disabled: String =
+            sqlx::query_scalar("SELECT disabled_model_ids FROM ai_providers WHERE id = 'p1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(disabled, "m-b");
 
         pool.close().await;
     }

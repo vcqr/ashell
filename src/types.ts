@@ -494,6 +494,8 @@ export interface AiProvider {
   base_url: string
   api_key: string
   model_ids: string
+  /** 禁用的候选模型 ID（逗号分隔，model_ids 的子集）；空串 = 全部启用 */
+  disabled_model_ids: string
   sort_order: number
   is_del: boolean
   created_at?: string | null
@@ -506,6 +508,7 @@ export interface AiProviderCreate {
   base_url?: string
   api_key?: string
   model_ids?: string
+  disabled_model_ids?: string
 }
 
 export interface AiProviderUpdate {
@@ -514,6 +517,7 @@ export interface AiProviderUpdate {
   base_url?: string
   api_key?: string
   model_ids?: string
+  disabled_model_ids?: string
 }
 
 /* ---------- AI 引擎（sidecar）配置 ---------- */

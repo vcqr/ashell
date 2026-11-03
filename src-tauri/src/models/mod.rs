@@ -220,6 +220,8 @@ pub struct AiProvider {
     pub api_key: String,
     /// 候选模型 ID（逗号分隔）
     pub model_ids: String,
+    /// 禁用的候选模型 ID（逗号分隔，model_ids 的子集）；空串 = 全部启用
+    pub disabled_model_ids: String,
     pub sort_order: i64,
     pub is_del: bool,
     pub created_at: Option<String>,
@@ -266,6 +268,7 @@ pub struct AiProviderUpdate {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model_ids: Option<String>,
+    pub disabled_model_ids: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
