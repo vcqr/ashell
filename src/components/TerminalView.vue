@@ -2066,6 +2066,7 @@ onBeforeUnmount(() => {
       ref="containerRef"
       class="terminal-host"
       :style="{ background: terminalBackground }"
+      data-drop-zone="terminal"
       @dragover.prevent
       @drop="onTermFileDrop"
       @ashell-drop="onDroppedPaths"
@@ -2414,6 +2415,13 @@ onBeforeUnmount(() => {
   padding-left: 8px;
   box-sizing: border-box;
   contain: layout paint;
+}
+
+/* SFTP 面板行拖入终端时的落点提示（useFileDrag 拖拽期给 body 加的 class）：
+   纯 CSS 即可，按住左键拖动时 :hover 依然跟随指针 */
+:global(body.ashell-dragging) .terminal-host:hover {
+  outline: 2px dashed var(--ashell-primary, #6d5ae8);
+  outline-offset: -2px;
 }
 
 .terminal-host :deep(.xterm) {

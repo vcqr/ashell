@@ -35,7 +35,7 @@ import {
   RiUploadCloudLine,
 } from "@remixicon/vue"
 import { isTauri } from "@/utils/platform"
-import { DRAG_LEAVE_EVENT, DRAG_OVER_EVENT } from "@/composables/useFileDropBridge"
+import { DRAG_LEAVE_EVENT, DRAG_OVER_EVENT, dispatchPathDrop } from "@/composables/useFileDropBridge"
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NBadge,
@@ -3016,9 +3016,12 @@ const remoteDrag = useFileDrag({
     // 文件/目录分流由 downloadEntries 处理（WinSCP 语义）
     return collectRemoteForTransfer(row)
   },
-  onDrop(files, zone) {
+  onDrop(files, zone, zoneEl) {
     if (zone === "local" && localDir.value) {
       void downloadEntries(files)
+    } else if (zone === "terminal") {
+      // 远程绝对路径回程派发，冒泡到终端 .terminal-host 复用路径填充链路
+      dispatchPathDrop(zoneEl, files.map((f) => f.full_path))
     }
   },
 })

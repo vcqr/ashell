@@ -1,13 +1,13 @@
 import { onBeforeUnmount, ref } from "vue";
 import type { SftpFile } from "@/types";
 
-export type DropZone = "local" | "remote";
+export type DropZone = "local" | "remote" | "terminal";
 
 interface UseFileDragOptions {
   /** pointerdown 时返回本次拖拽携带的文件；空数组 = 该行不可拖 */
   collectFiles: (row: SftpFile) => SftpFile[];
-  /** 落在目标 zone 上时回调 */
-  onDrop: (files: SftpFile[], zone: DropZone) => void;
+  /** 落在目标 zone 上时回调；zoneEl 为带 data-drop-zone 的落点元素 */
+  onDrop: (files: SftpFile[], zone: DropZone, zoneEl: HTMLElement) => void;
 }
 
 /**
@@ -84,8 +84,8 @@ export function useFileDrag(opts: UseFileDragOptions) {
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const zoneEl = el?.closest?.("[data-drop-zone]") as HTMLElement | null;
     const zone = zoneEl?.dataset.dropZone as DropZone | undefined;
-    if (zone) {
-      opts.onDrop(candidate, zone);
+    if (zone && zoneEl) {
+      opts.onDrop(candidate, zone, zoneEl);
     }
     candidate = [];
   }

@@ -69,6 +69,7 @@ import { formatUnix } from "@/utils/time"
 import { humanSize } from "@/utils/humanSize"
 import { FILE_TYPE_COLORS, sftpFileIcon } from "@/utils/fileIcon"
 import { useFileDrag } from "@/composables/useFileDrag"
+import { dispatchPathDrop } from "@/composables/useFileDropBridge"
 import { useMultiSelect } from "@/composables/useMultiSelect"
 
 const props = defineProps<{
@@ -167,9 +168,12 @@ const { dragging, ghostX, ghostY, dragCount, onRowPointerdown } = useFileDrag({
     // 集合含目录行，文件/目录分流由父组件 onLocalUpload 处理（WinSCP 语义）
     return collectForTransfer(row)
   },
-  onDrop(files, zone) {
+  onDrop(files, zone, zoneEl) {
     if (zone === "remote") {
       emit("transfer-up", files)
+    } else if (zone === "terminal") {
+      // 本地绝对路径回程派发，冒泡到终端 .terminal-host 复用路径填充链路
+      dispatchPathDrop(zoneEl, files.map((f) => f.full_path))
     }
   },
 })

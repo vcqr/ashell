@@ -21,6 +21,17 @@ declare global {
   }
 }
 
+/**
+ * 应用内拖拽（useFileDrag）落点回程：在带 data-drop-zone 的落点元素上派发
+ * 冒泡的 ashell-drop，与 OS 拖拽共用同一条下游链路（如终端路径填充）。
+ */
+export function dispatchPathDrop(zoneEl: HTMLElement, paths: string[]): void {
+  if (paths.length === 0) return
+  zoneEl.dispatchEvent(
+    new CustomEvent(DROP_EVENT, { detail: { paths }, bubbles: true }),
+  )
+}
+
 let installed = false
 
 /**
