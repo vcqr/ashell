@@ -14,7 +14,6 @@ import {
   NCheckbox,
   NIcon,
   NInput,
-  NInputGroup,
   NSelect,
   NForm,
   NSpin,
@@ -397,16 +396,16 @@ onMounted(() => {
                           {{ t("settings.ai.provider.modelNoMatch") }}
                         </div>
                       </div>
-                      <NInputGroup size="small">
+                      <div class="model-add-row">
                         <NInput
-                          v-model:value="newModelId"
+                          v-model:value="newModelId" size="small"
                           :placeholder="t('settings.ai.provider.modelAddPlaceholder')"
                           @keyup.enter="addManualModel"
                         />
                         <NButton size="small" @click="addManualModel">
                           {{ t("settings.ai.provider.modelAdd") }}
                         </NButton>
-                      </NInputGroup>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -655,5 +654,17 @@ onMounted(() => {
   font-size: 12px;
   color: var(--ashell-text-muted);
   text-align: center;
+}
+
+/* 手动添加行：独立输入框 + 分离按钮，与搜索框同款风格（不再用连体 NInputGroup） */
+.model-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-add-row > .n-input {
+  flex: 1;
+  min-width: 0;
 }
 </style>
