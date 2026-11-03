@@ -263,7 +263,7 @@ onMounted(() => {
                     <NInput v-model:value="draft.apiKey" type="password" show-password-on="click" placeholder="sk-..." clearable />
                   </div>
                 </div>
-                <div class="setting-row">
+                <div class="setting-row row-stacked">
                   <div class="setting-row-main">
                     <div class="setting-row-label">{{ t("settings.ai.provider.modelIds") }}</div>
                   </div>
@@ -274,7 +274,7 @@ onMounted(() => {
                     </NButton>
                     <NInput
                       v-model:value="draft.modelIds" type="textarea"
-                      :autosize="{ minRows: 2, maxRows: 4 }"
+                      :autosize="{ minRows: 4, maxRows: 12 }"
                       placeholder="deepseek-chat, deepseek-coder"
                     />
                   </div>
@@ -411,10 +411,26 @@ onMounted(() => {
   width: 280px;
 }
 
+/* 候选模型行改为上下布局：标签在上，按钮+textarea 占满整卡宽度，
+ * 模型多时列表框够用 */
+.row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.row-stacked > .setting-row-main {
+  flex: none;
+}
+
 /* 「获取模型列表」按钮在上、候选模型 textarea 在下，纵向堆叠 */
 .model-ids-control {
-  width: 320px;
+  width: 100%;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
+}
+
+.model-ids-control > .n-button {
+  align-self: flex-start;
 }
 </style>
