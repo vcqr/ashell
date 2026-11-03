@@ -478,11 +478,10 @@ function rowProps(row: SftpFile) {
       .filter(Boolean)
       .join(" "),
     style: {
-      // 文件/目录行都可拖到远程栏（目录为递归上传），提示 grab；
-      // 独立模式无远程落区，不提示可拖
+      // 文件/目录行都可拖（双栏拖到远程栏上传；独立/双栏均可拖到终端填路径），
+      // 提示 grab
       cursor:
         !viewingRoots.value &&
-        !props.standalone &&
         (row.file_type === "file" || row.file_type === "dir")
           ? "grab"
           : "default",
@@ -491,10 +490,7 @@ function rowProps(row: SftpFile) {
       // Shift+单击的默认行为是扩展文本选择，须在 pointerdown 阶段拦掉
       // （click 阶段已经选完了）
       if (e.shiftKey) e.preventDefault()
-      // 独立模式无远程落区，不发起内部拖拽（拖拽幽灵文案是"→ 远程"）
-      if (!props.standalone) {
-        onRowPointerdown(row, e)
-      }
+      onRowPointerdown(row, e)
     },
     onClick: (e: MouseEvent) => {
       e.stopPropagation()
@@ -1538,7 +1534,11 @@ onMounted(() => {
         class="drag-ghost"
         :style="{ left: `${ghostX}px`, top: `${ghostY}px` }"
       >
-        {{ t("sftp.localPane.dragGhost", { count: dragCount }) }}
+        {{
+          standalone
+            ? t("sftp.localPane.dragGhostTerm", { count: dragCount })
+            : t("sftp.localPane.dragGhost", { count: dragCount })
+        }}
       </div>
     </Teleport>
 

@@ -49,6 +49,7 @@ export default {
     toggleTitle: "Show/hide local pane (dual-pane mode)",
     close: "Close local pane",
     dragGhost: "{count} item(s) → remote",
+    dragGhostTerm: "{count} item(s) → terminal (fill path)",
     ctxUpload: "Upload this file",
     ctxUploadDir: "Upload this folder",
     ctxUploadMulti: "Upload selected ({count})",

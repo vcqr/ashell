@@ -49,6 +49,7 @@ export default {
     toggleTitle: "显示/隐藏本地栏（双栏模式）",
     close: "关闭本地栏",
     dragGhost: "{count} 项 → 远程",
+    dragGhostTerm: "{count} 项 → 终端（填路径）",
     ctxUpload: "上传此文件",
     ctxUploadDir: "上传此目录",
     ctxUploadMulti: "上传选中项（{count}）",
