@@ -98,6 +98,8 @@ const emit = defineEmits<{
   (e: "open-in-terminal", path: string): void
   /** 关闭本地栏（双栏 -> 单栏），由父组件执行宽度记忆与切换 */
   (e: "close"): void
+  /** 行拖出 OS 窗口（独立窗口模式）：由父组件广播给各窗口按落点路由 */
+  (e: "path-drop-outside", files: SftpFile[], point: { x: number; y: number }): void
 }>()
 
 const { t } = useI18n()
@@ -175,6 +177,9 @@ const { dragging, ghostX, ghostY, dragCount, onRowPointerdown } = useFileDrag({
       // 本地绝对路径回程派发，冒泡到终端 .terminal-host 复用路径填充链路
       dispatchPathDrop(zoneEl, files.map((f) => f.full_path))
     }
+  },
+  onDropOutside(files, point) {
+    emit("path-drop-outside", files, point)
   },
 })
 

@@ -8,6 +8,9 @@ interface UseFileDragOptions {
   collectFiles: (row: SftpFile) => SftpFile[];
   /** 落在目标 zone 上时回调；zoneEl 为带 data-drop-zone 的落点元素 */
   onDrop: (files: SftpFile[], zone: DropZone, zoneEl: HTMLElement) => void;
+  /** 释放点在本窗口外（拖出 OS 窗口，如 SFTP 独立窗口拖向主窗口终端）；
+   *  不传则忽略。依赖 pointer capture 让事件在窗口外继续到达 */
+  onDropOutside?: (files: SftpFile[], point: { x: number; y: number }) => void;
 }
 
 /**
@@ -81,6 +84,21 @@ export function useFileDrag(opts: UseFileDragOptions) {
       candidate = [];
       return;
     }
+    if (!wasActive || candidate.length === 0) {
+      candidate = [];
+      return;
+    }
+    // 释放点在窗口外：pointer capture 下事件仍会到达，交给宿主跨窗口路由
+    if (
+      e.clientX < 0 ||
+      e.clientY < 0 ||
+      e.clientX > window.innerWidth ||
+      e.clientY > window.innerHeight
+    ) {
+      opts.onDropOutside?.(candidate, { x: e.clientX, y: e.clientY });
+      candidate = [];
+      return;
+    }
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const zoneEl = el?.closest?.("[data-drop-zone]") as HTMLElement | null;
     const zone = zoneEl?.dataset.dropZone as DropZone | undefined;
@@ -103,6 +121,13 @@ export function useFileDrag(opts: UseFileDragOptions) {
     startX = e.clientX;
     startY = e.clientY;
     active = false;
+    // 捕获指针：光标拖出 OS 窗口后 move/up 仍派发到本窗口（窗口外释放的
+    // 跨窗口路由依赖它）。合成事件 pointerId 无效会抛 NotFoundError，忽略
+    try {
+      (e.target as Element)?.setPointerCapture?.(e.pointerId);
+    } catch {
+      // ignore
+    }
     if (!listening) {
       listening = true;
       window.addEventListener("pointermove", onMove);

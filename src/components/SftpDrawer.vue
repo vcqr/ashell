@@ -35,7 +35,7 @@ import {
   RiUploadCloudLine,
 } from "@remixicon/vue"
 import { isTauri } from "@/utils/platform"
-import { DRAG_LEAVE_EVENT, DRAG_OVER_EVENT, dispatchPathDrop } from "@/composables/useFileDropBridge"
+import { DRAG_LEAVE_EVENT, DRAG_OVER_EVENT, dispatchPathDrop, publishCrossWindowPathDrop } from "@/composables/useFileDropBridge"
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NBadge,
@@ -3024,7 +3024,20 @@ const remoteDrag = useFileDrag({
       dispatchPathDrop(zoneEl, files.map((f) => f.full_path))
     }
   },
+  onDropOutside(files, point) {
+    // 独立窗口：拖出了 OS 窗口（多半是拖向主窗口终端），广播给各窗口按落点路由
+    if (props.standalone) {
+      void publishCrossWindowPathDrop(files.map((f) => f.full_path), point)
+    }
+  },
 })
+
+/** 双栏本地行拖出 OS 窗口：与远程行同路，独立窗口时广播（WinSCP 语义同拖出） */
+function onLocalDropOutside(files: SftpFile[], point: { x: number; y: number }) {
+  if (props.standalone) {
+    void publishCrossWindowPathDrop(files.map((f) => f.full_path), point)
+  }
+}
 
 /** 本地栏右键「上传选中项」：上传本地栏选中条目（文件直传/目录递归由 onLocalUpload 分流） */
 function transferUp() {
@@ -3268,6 +3281,7 @@ function openInStandaloneWindow() {
                 @upload-selection="transferUp"
                 @copy-started="downloadModalOpen = true"
                 @close="toggleDualPane"
+                @path-drop-outside="onLocalDropOutside"
               />
             </template>
             <template #2>

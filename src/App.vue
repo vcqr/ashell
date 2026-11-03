@@ -44,7 +44,7 @@ import LoginGate from "@/components/LoginGate.vue";
 import NotifyBridge from "@/components/NotifyBridge.vue";
 import { isTauri } from "@/utils/platform";
 import { installTauriDblclickGuard, onTitlebarDblclick } from "@/utils/titlebar";
-import { installFileDropBridge } from "@/composables/useFileDropBridge";
+import { installCrossWindowPathDropTarget, installFileDropBridge } from "@/composables/useFileDropBridge";
 import { installDevtoolsShortcut } from "@/utils/devtools";
 import { useKeybindingStore } from "@/stores/keybindings";
 import { onBeforeUnmount } from "vue";
@@ -447,6 +447,10 @@ installTauriDblclickGuard();
 // OS 拖文件到终端 → 填充路径（监听 tauri://drag-drop 拿真实路径后按落点派发，
 // 主窗口与所有 solo 弹窗共用本组件，一处安装覆盖全部）
 installFileDropBridge();
+
+// SFTP 独立窗口行拖出窗口 → 广播路径，主窗口按屏幕落点派发到终端填充。
+// 每个窗口都装：solo 窗口无终端，落点判定必然为空，天然无副作用
+void installCrossWindowPathDropTarget();
 
 // SFTP 面板右键目录 -> 当前终端 cd 到该目录（sendCommand 自动补 \r 执行）
 function onSftpOpenTerminalHere(path: string) {

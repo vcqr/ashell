@@ -1,4 +1,5 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview"
+import { busEmit, busListen } from "@/utils/eventBus"
 import { isTauri } from "@/utils/platform"
 
 /** 落点路由载荷：CSS 像素坐标 + 拖入对象的真实磁盘路径 */
@@ -29,6 +30,64 @@ export function dispatchPathDrop(zoneEl: HTMLElement, paths: string[]): void {
   if (paths.length === 0) return
   zoneEl.dispatchEvent(
     new CustomEvent(DROP_EVENT, { detail: { paths }, bubbles: true }),
+  )
+}
+
+/* ---------- 跨 OS 窗口拖放（SFTP 独立窗口 → 主窗口终端） ----------
+ * pointer 事件跨不过窗口边界：独立窗口里 useFileDrag 依赖 pointer capture
+ * 在窗口外仍收到 pointerup（client 坐标出界），由此把路径 + 目标点的屏幕
+ * 坐标经 eventBus 广播，主窗口换算回自己的 client 坐标后按落点派发。 */
+
+export const CROSS_WINDOW_PATH_DROP_EVENT = "ashell:cross-window-path-drop"
+
+interface CrossWindowPathDropPayload {
+  paths: string[]
+  /** 目标点的屏幕坐标（CSS 像素） */
+  screen: { x: number; y: number }
+}
+
+/** 独立窗口侧：窗口外释放时广播路径与屏幕坐标（非 Tauri 形态忽略） */
+export async function publishCrossWindowPathDrop(
+  paths: string[],
+  client: { x: number; y: number },
+): Promise<void> {
+  if (!isTauri || paths.length === 0) return
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window")
+    const win = getCurrentWindow()
+    // innerPosition 为物理像素，换算成 CSS 像素后即为视口原点的屏幕坐标
+    const [inner, scale] = await Promise.all([win.innerPosition(), win.scaleFactor()])
+    const screen = {
+      x: inner.x / scale + client.x,
+      y: inner.y / scale + client.y,
+    }
+    busEmit<CrossWindowPathDropPayload>(CROSS_WINDOW_PATH_DROP_EVENT, { paths, screen })
+  } catch (e) {
+    console.warn("[ashell] cross-window path drop publish failed:", e)
+  }
+}
+
+/** 主窗口侧：订阅跨窗口拖放，把屏幕坐标还原为本地落点并派发到终端 */
+export async function installCrossWindowPathDropTarget(): Promise<void> {
+  if (!isTauri) return
+  await busListen<CrossWindowPathDropPayload>(
+    CROSS_WINDOW_PATH_DROP_EVENT,
+    async ({ paths, screen }) => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window")
+        const win = getCurrentWindow()
+        const [inner, scale] = await Promise.all([win.innerPosition(), win.scaleFactor()])
+        const x = screen.x - inner.x / scale
+        const y = screen.y - inner.y / scale
+        const zoneEl = document
+          .elementFromPoint(x, y)
+          ?.closest?.('[data-drop-zone="terminal"]') as HTMLElement | null
+        // 落点不在本窗口终端上（独立窗口也会收到广播）：静默忽略
+        if (zoneEl) dispatchPathDrop(zoneEl, paths)
+      } catch (e) {
+        console.warn("[ashell] cross-window path drop routing failed:", e)
+      }
+    },
   )
 }
 
