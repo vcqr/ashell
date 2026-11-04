@@ -13,9 +13,13 @@ export default {
   tileLeft: "Move to Left Half",
   tileRight: "Move to Right Half",
   emptyState: {
-    title: "No active terminal. Open a connection from the sidebar, or start a local shell on this machine.",
+    welcome: "Welcome to AShell",
+    tagline: "Modern & intelligent SSH terminal workstation",
+    startTitle: "Get Started",
+    openLocal: "New Local Terminal",
     openHosts: "Open Connections",
-    openLocal: "Open Local",
+    quickConnect: "Quick Connect",
+    settings: "Settings",
   },
   splitPane: {
     empty: "Click a tab above to open a session in this pane",

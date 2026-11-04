@@ -13,9 +13,13 @@ export default {
   tileLeft: "移到左侧半屏",
   tileRight: "移到右侧半屏",
   emptyState: {
-    title: "暂无打开的终端。从侧栏打开连接，或新建本地终端。",
-    openHosts: "打开连接",
+    welcome: "欢迎使用 AShell",
+    tagline: "现代智能化 SSH 终端工作台",
+    startTitle: "开始",
     openLocal: "新建本地终端",
+    openHosts: "打开连接列表",
+    quickConnect: "快速连接",
+    settings: "系统设置",
   },
   splitPane: {
     empty: "点击上方标签页，在此窗格打开会话",

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
+  RiFlashlightLine,
   RiMenuLine,
+  RiServerLine,
   RiSettings2Line,
   RiSideBarLine,
   RiTerminalBoxLine,
@@ -47,7 +49,11 @@ import { isTauri } from "@/utils/platform";
 import { installTauriDblclickGuard, onTitlebarDblclick } from "@/utils/titlebar";
 import { installCrossWindowPathDropTarget, installFileDropBridge } from "@/composables/useFileDropBridge";
 import { installDevtoolsShortcut } from "@/utils/devtools";
-import { useKeybindingStore } from "@/stores/keybindings";
+import {
+  formatBinding,
+  useKeybindingStore,
+  type ShortcutActionId,
+} from "@/stores/keybindings";
 import { onBeforeUnmount } from "vue";
 import { useApiStore } from "@/stores/api";
 import { useTerminalStore } from "@/stores/terminal";
@@ -74,6 +80,14 @@ const terminalStore = useTerminalStore();
 void terminalStore.loadSystemFonts();
 
 const startupStore = useStartupStore();
+
+const keybindingStore = useKeybindingStore();
+
+// 空态欢迎页的快捷键提示：从键位 store 动态读取，
+// 跟随用户自定义键位与 mac/win 平台差异；绑定为空时返回空串（隐藏提示）
+function bindingText(id: ShortcutActionId): string {
+  return formatBinding(keybindingStore.getBinding(id)).join("+");
+}
 
 // AI daemon 预热的开关门控：启动偏好存于 localStorage，只有前端读得到。
 // 开启助手（含启动即开启、设置里后来打开）时才拉起常驻进程；关闭时不预热，
@@ -770,14 +784,58 @@ if (!isTauri) {
                   @pointercancel="onDividerPointerup"
                 />
                 <div v-if="tabs.length === 0" class="empty-state">
-                  <NIcon :size="48" depth="3"><RiTerminalBoxLine /></NIcon>
-                  <p>{{ t("app.emptyState.title") }}</p>
-                  <NSpace :size="12">
-                    <NButton tertiary @click="hostsOpen = true">
-                      {{ t("app.emptyState.openHosts") }}
-                    </NButton>
-                    <NButton tertiary @click="openLocal()"> {{ t("app.emptyState.openLocal") }} </NButton>
-                  </NSpace>
+                  <div class="empty-hero">
+                    <div class="empty-logo"><img src="/icon-nobg.png" alt="AShell" /></div>
+                    <div>
+                      <div class="empty-title">{{ t("app.emptyState.welcome") }}</div>
+                      <div class="empty-tagline">{{ t("app.emptyState.tagline") }}</div>
+                    </div>
+                  </div>
+                  <div class="empty-section">
+                    <div class="empty-section-title">
+                      <span>{{ t("app.emptyState.startTitle") }}</span>
+                    </div>
+                    <button
+                      type="button"
+                      class="empty-row"
+                      data-testid="empty-new-local"
+                      @click="openLocal()"
+                    >
+                      <NIcon :size="16"><RiTerminalBoxLine /></NIcon>
+                      <span class="empty-row-label">{{ t("app.emptyState.openLocal") }}</span>
+                      <span class="empty-row-keys">{{ bindingText("tab.new") }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="empty-row"
+                      data-testid="empty-open-hosts"
+                      @click="hostsOpen = true"
+                    >
+                      <NIcon :size="16"><RiServerLine /></NIcon>
+                      <span class="empty-row-label">{{ t("app.emptyState.openHosts") }}</span>
+                      <span class="empty-row-keys">{{ bindingText("panel.hosts") }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="empty-row"
+                      data-testid="empty-quick-connect"
+                      @click="quickConnectOpen = true"
+                    >
+                      <NIcon :size="16"><RiFlashlightLine /></NIcon>
+                      <span class="empty-row-label">{{ t("app.emptyState.quickConnect") }}</span>
+                      <span class="empty-row-keys">{{ bindingText("panel.quickConnect") }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="empty-row"
+                      data-testid="empty-open-settings"
+                      @click="settingsOpen = true"
+                    >
+                      <NIcon :size="16"><RiSettings2Line /></NIcon>
+                      <span class="empty-row-label">{{ t("app.emptyState.settings") }}</span>
+                      <span class="empty-row-keys">{{ bindingText("panel.settings") }}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1055,6 +1113,7 @@ if (!isTauri) {
   background: var(--ashell-accent, #80b5ff);
 }
 
+/* ===== 空态欢迎页（Zed 式：居中品牌头部 + 开始命令列表）===== */
 .empty-state {
   position: fixed;
   top: var(--ashell-header-h);
@@ -1065,14 +1124,126 @@ if (!isTauri) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  color: var(--ashell-text-muted);
   padding-left: var(--ashell-hosts-width, 0px);
-  text-align: center;
   pointer-events: none;
+  animation: empty-fade-up 0.3s ease both;
 }
 
 .empty-state > * {
   pointer-events: auto;
+}
+
+@keyframes empty-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty-state {
+    animation: none;
+  }
+}
+
+/* 品牌头部：logo + 标题 + 斜体标语（整组居中） */
+.empty-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.empty-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.empty-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+  letter-spacing: 0.3px;
+  line-height: 1.2;
+}
+
+.empty-tagline {
+  font-size: 13px;
+  color: var(--ashell-text-muted);
+  margin-top: 5px;
+  font-style: italic;
+}
+
+/* 开始：小节标签 + 延伸横线 + 命令行 */
+.empty-section {
+  width: 100%;
+  max-width: 380px;
+  box-sizing: border-box;
+  margin-top: 20px;
+}
+
+.empty-section-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ashell-text-subtle);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.empty-section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--ashell-border);
+}
+
+.empty-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  /* 内容在高亮框内缩进 12px，框缘与小节标题左缘对齐 */
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ashell-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.empty-row + .empty-row {
+  margin-top: 2px;
+}
+
+.empty-row:hover {
+  background: var(--ashell-hover);
+}
+
+.empty-row .n-icon {
+  color: var(--ashell-text-muted);
+  flex-shrink: 0;
+}
+
+.empty-row-keys {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ashell-text-muted);
+  white-space: nowrap;
 }
 </style>
