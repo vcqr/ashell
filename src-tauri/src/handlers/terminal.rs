@@ -1073,16 +1073,47 @@ fn tail_chars(text: &str, max: usize) -> String {
         .collect()
 }
 
-/// 最近键盘输入里是否出现过提权命令。用于兼容 `Password:`、`doas`、
-/// `sudo -p 'pwd: '` 这类不一定带 `[sudo] password for` 的提示。
-fn recent_input_requests_elevation(input_buf: &[u8]) -> bool {
+/// 输入缓冲里最后一条非空命令行（回车分隔、去 ANSI 后）。
+fn last_input_line(input_buf: &[u8]) -> Option<String> {
     let text = sanitize_prompt_text(input_buf);
-    let tail = tail_chars(&text, 320).to_lowercase();
-    tail.rsplit('\n').take(6).any(|line| {
+    let tail = tail_chars(&text, 320);
+    tail.rsplit('\n')
+        .map(|line| line.trim().to_string())
+        .find(|line| !line.is_empty())
+}
+
+/// 最近输入是否是提权命令。用于兼容 `Password:`、`doas ... password:`、
+/// `sudo -p 'pwd: '` 这类不一定带 `[sudo] password for` 的提示。
+///
+/// 只认“提权命令是最后一条已输入命令”：密码提示只会出现在提权命令刚
+/// 敲下回车之后。sudo 凭证缓存/免密场景下 `sudo -i` 不产生提示、输入
+/// 缓冲不会被命中清空，若按“最近 N 条里有 sudo”判定，残留提权态会让
+/// 之后几十条普通命令的冒号输出全部误判（sudo -i 后用 chown 弹填充
+/// 提示的成因）；提权命令后每敲一条新命令都会自然顶掉提权态。
+fn last_input_requests_elevation(input_buf: &[u8]) -> bool {
+    last_input_line(input_buf).is_some_and(|line| {
         line.split_whitespace()
             .any(|token| token == "sudo" || token == "sudoedit" || token == "doas")
     })
 }
+
+/// 输出末行的冒号是否只是“正在键入的命令”的回显：逐字键入 `chown
+/// root:` 的瞬间，输出末行与输入末行（同一文本）都以冒号结尾；真实
+/// 密码提示出现时，输入末行是已回车的完整命令，不以冒号结尾。
+fn input_line_echoes_colon(input_buf: &[u8]) -> bool {
+    last_input_line(input_buf)
+        .is_some_and(|line| line.ends_with(':') || line.ends_with('：'))
+}
+
+/// 已知“非 sudo”的密码提示片段：即便提权命令刚输入也不注入——这些
+/// 场景（嵌套 ssh、mysql、passwd）要的密码几乎不会是登录密码。
+const NON_SUDO_PASSWORD_PROMPTS: [&str; 5] = [
+    "'s password",    // 嵌套 ssh: user@host's password:
+    "enter password", // mysql: Enter password:
+    "unix password",  // passwd: (current) UNIX password:
+    "new password",   // passwd: New password:
+    "的密码",         // OpenSSH 中文: user@host 的密码：
+];
 
 /// 判断输出尾部是否像 sudo/doas 密码提示。
 ///
@@ -1090,7 +1121,11 @@ fn recent_input_requests_elevation(input_buf: &[u8]) -> bool {
 /// - 默认 `[sudo] password for user:`
 /// - 带 ANSI/颜色序列的提示
 /// - 本地化提示（中文“密码”、西/法/德/葡/俄等 password 词）
-/// - `Password:` / `doas ... password:` / `sudo -p` 自定义短提示（要求最近输入有 sudo/doas）
+/// - `Password:` / `doas ... password:` / `sudo -p` 自定义短提示（要求
+///   提权命令是最后一条输入命令）
+///
+/// 自带 sudo+password 词的强信号之外，弱信号提示走下方护栏分支：
+/// 键入回显瞬态不命中、纯冒号行不命中、非 sudo 的密码提示不命中。
 fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     let text = sanitize_prompt_text(output_buf);
     let tail = tail_chars(&text, 320);
@@ -1131,14 +1166,26 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
         return true;
     }
 
-    let elevated = recent_input_requests_elevation(input_buf);
-    if elevated && mentions_password {
-        return true;
+    // 弱信号（`Password:` / 自定义短冒号行）只在提权命令是最后一条输入
+    // 命令时采信，并逐项过防误报护栏：
+    if !last_input_requests_elevation(input_buf) {
+        return false;
     }
-
-    // `sudo -p 'pwd: '` 这类极短自定义提示：只在刚执行过 sudo/doas 时接受，
-    // 避免把普通冒号结尾输出误判成密码提示。
-    elevated && last_line.chars().count() <= 48
+    // 键入回显瞬态：逐字敲 `sudo chown root:` 的途中，输出末行与输入
+    // 末行同以冒号结尾，这是命令回显不是提示
+    if input_line_echoes_colon(input_buf) {
+        return false;
+    }
+    if mentions_password {
+        // `Password:` 类真实提示，但排除已知非 sudo 场景
+        return !NON_SUDO_PASSWORD_PROMPTS
+            .iter()
+            .any(|p| last_line.contains(p));
+    }
+    // `sudo -p 'pwd: '` 这类极短自定义提示：行要像提示符（够短、含字母
+    // 数字），而不是句子片段（apt 的 "The following ... installed:"）
+    // 或全屏程序的纯冒号行（vim/less 按 `:`）
+    last_line.chars().count() <= 24 && last_line.chars().any(char::is_alphanumeric)
 }
 
 async fn run_terminal(
@@ -1904,29 +1951,87 @@ mod tests {
         assert!(!detect_sudo_password_prompt(output, b"sudo ls\r"));
     }
 
-    /// 回归：sudo 填充命中后必须清空输入缓冲，否则旧 sudo 命令残留在
-    /// 最近输入窗口里，本次提权完成后命令输出中的普通冒号结尾行会被
-    /// 反复误判成密码提示（前端反复弹出）。
+    /// 回归：弱信号提示（短冒号行）命中后必须清空输入缓冲，否则旧
+    /// sudo 命令残留在提权态里。apt 的包列表冒号行是句子片段（超长），
+    /// 不再命中；旧逻辑只能靠命中后清缓冲缓解反复误报。
     #[test]
     fn clears_input_elevation_after_hit_to_stop_false_positives() {
-        // 填充前：短冒号行 + 最近输入有 sudo -> 命中（这正是误报来源）
-        assert!(detect_sudo_password_prompt(
+        // apt 冒号行 + 提权命令刚输入：不再命中（旧逻辑会误报）
+        assert!(!detect_sudo_password_prompt(
             b"The following NEW packages will be installed: ",
             b"sudo apt install foo\r"
         ));
 
-        // 模拟 handler 命中后清空两个缓冲
-        let empty_input: Vec<u8> = Vec::new();
-        assert!(!detect_sudo_password_prompt(
-            b"The following NEW packages will be installed: ",
-            &empty_input
+        // 真实短提示 `Password:` 在提权命令刚输入时仍要命中
+        assert!(detect_sudo_password_prompt(
+            b"Password: ",
+            b"sudo systemctl restart foo\r"
         ));
+
+        // 模拟 handler 命中后清空两个缓冲：后续冒号行不再反复触发
+        let empty_input: Vec<u8> = Vec::new();
+        assert!(!detect_sudo_password_prompt(b"Password: ", &empty_input));
 
         // 自带 sudo + password 词的真实提示不依赖输入缓冲：
         // 密码输错重试仍能再次识别
         assert!(detect_sudo_password_prompt(
             b"[sudo] password for user: ",
             &empty_input
+        ));
+    }
+
+    /* ---------- sudo 误报回归（提权态残留 / 键入回显瞬态） ---------- */
+
+    /// sudo -i 走凭证缓存或免密时不产生密码提示、输入缓冲不会被清空：
+    /// 之后普通命令（chown root: 等）逐字键入冒号的回显瞬态不得判成
+    /// 密码提示。旧逻辑按"最近 6 条里有 sudo"判定，提权态跨多条命令
+    /// 残留，正是线上"sudo -i 后用 chown 弹填充提示"的成因。
+    #[test]
+    fn cached_sudo_i_residual_does_not_fire_on_colon_typing() {
+        // 隔了一条命令：提权态应随新命令过期
+        assert!(!detect_sudo_password_prompt(
+            b"root@web:/var/www# chown root:",
+            b"sudo -i\rcd /var/www\rchown root:"
+        ));
+        // sudo 是最后一条命令、正在敲后续命令：回显瞬态同样不命中
+        assert!(!detect_sudo_password_prompt(
+            b"root@web:~# sudo chown root:",
+            b"sudo chown root:"
+        ));
+    }
+
+    /// vim/less 等全屏程序按 `:`：纯冒号行不像任何密码提示；`sudo -p`
+    /// 指定的纯符号提示也不认——提示行至少要含字母数字。
+    #[test]
+    fn bare_colon_line_is_not_a_prompt() {
+        assert!(!detect_sudo_password_prompt(b":", b"sudo vim /etc/hosts\r:"));
+        assert!(!detect_sudo_password_prompt(b": ", b"sudo -p ':' id\r"));
+    }
+
+    /// 提权命令刚输入时出现的已知非 sudo 密码提示：注入登录密码几乎
+    /// 必错（嵌套 ssh / mysql 的密码不是登录密码），不弹填充。
+    #[test]
+    fn non_sudo_password_prompts_are_not_filled_even_when_elevated() {
+        // sudo 内嵌套 ssh：user@host's password:
+        assert!(!detect_sudo_password_prompt(
+            b"admin@10.0.0.2's password: ",
+            b"sudo ssh admin@10.0.0.2\r"
+        ));
+        // sudo 进 mysql：Enter password:
+        assert!(!detect_sudo_password_prompt(
+            b"Enter password: ",
+            b"sudo mysql -uroot -p\r"
+        ));
+    }
+
+    /// 新护栏不得挡住真实提示：短自定义提示与 `Password:` 在提权命令
+    /// 刚输入时仍要命中。
+    #[test]
+    fn real_prompts_still_fire_after_guardrails() {
+        assert!(detect_sudo_password_prompt(b"pwd: ", b"sudo -p 'pwd: ' id\r"));
+        assert!(detect_sudo_password_prompt(
+            b"Password: ",
+            b"sudo systemctl restart sshd\r"
         ));
     }
 
