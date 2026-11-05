@@ -429,8 +429,19 @@ export const useTerminalStore = defineStore("terminal", () => {
     return systemFonts.value
   }
 
+  // 200ms 防抖：darkTheme/lightTheme 被 deep watch 且主题色选择器拖动时逐帧
+  // 触发，未防抖时每帧都要全量 stringify + 同步写 localStorage
+  let persistTimer: number | null = null
   function persist() {
     if (typeof localStorage === "undefined") return
+    if (persistTimer !== null) window.clearTimeout(persistTimer)
+    persistTimer = window.setTimeout(() => {
+      persistTimer = null
+      doPersist()
+    }, 200)
+  }
+
+  function doPersist() {
     try {
       const data: TerminalConfig = {
         fontSize: fontSize.value,

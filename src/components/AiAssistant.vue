@@ -32,7 +32,57 @@ import { busListen } from "@/utils/eventBus";
 import { request } from "@/api/client";
 import { openExternal, isTauri } from "@/utils/platform";
 import { marked, type Token, type Tokens } from "marked";
-import hljs from "highlight.js";
+// hljs 用 lib/core + 按需注册：全量入口打包约 190 种语言体积过大，
+// 只注册 AI 对话常见语言；未注册语言由调用方回退 plaintext
+import hljs from "highlight.js/lib/core";
+import bashLang from "highlight.js/lib/languages/bash";
+import shellLang from "highlight.js/lib/languages/shell";
+import cLang from "highlight.js/lib/languages/c";
+import cppLang from "highlight.js/lib/languages/cpp";
+import cssLang from "highlight.js/lib/languages/css";
+import diffLang from "highlight.js/lib/languages/diff";
+import dockerfileLang from "highlight.js/lib/languages/dockerfile";
+import goLang from "highlight.js/lib/languages/go";
+import iniLang from "highlight.js/lib/languages/ini";
+import javaLang from "highlight.js/lib/languages/java";
+import javascriptLang from "highlight.js/lib/languages/javascript";
+import jsonLang from "highlight.js/lib/languages/json";
+import kotlinLang from "highlight.js/lib/languages/kotlin";
+import makefileLang from "highlight.js/lib/languages/makefile";
+import markdownLang from "highlight.js/lib/languages/markdown";
+import phpLang from "highlight.js/lib/languages/php";
+import plaintextLang from "highlight.js/lib/languages/plaintext";
+import pythonLang from "highlight.js/lib/languages/python";
+import rustLang from "highlight.js/lib/languages/rust";
+import sqlLang from "highlight.js/lib/languages/sql";
+// v11 无独立 toml 模块，toml 是 ini 的别名，注册 ini 即覆盖
+import typescriptLang from "highlight.js/lib/languages/typescript";
+import xmlLang from "highlight.js/lib/languages/xml";
+import yamlLang from "highlight.js/lib/languages/yaml";
+
+hljs.registerLanguage("bash", bashLang);
+hljs.registerLanguage("shell", shellLang);
+hljs.registerLanguage("c", cLang);
+hljs.registerLanguage("cpp", cppLang);
+hljs.registerLanguage("css", cssLang);
+hljs.registerLanguage("diff", diffLang);
+hljs.registerLanguage("dockerfile", dockerfileLang);
+hljs.registerLanguage("go", goLang);
+hljs.registerLanguage("ini", iniLang);
+hljs.registerLanguage("java", javaLang);
+hljs.registerLanguage("javascript", javascriptLang);
+hljs.registerLanguage("json", jsonLang);
+hljs.registerLanguage("kotlin", kotlinLang);
+hljs.registerLanguage("makefile", makefileLang);
+hljs.registerLanguage("markdown", markdownLang);
+hljs.registerLanguage("php", phpLang);
+hljs.registerLanguage("plaintext", plaintextLang);
+hljs.registerLanguage("python", pythonLang);
+hljs.registerLanguage("rust", rustLang);
+hljs.registerLanguage("sql", sqlLang);
+hljs.registerLanguage("typescript", typescriptLang);
+hljs.registerLanguage("xml", xmlLang);
+hljs.registerLanguage("yaml", yamlLang);
 import DOMPurify from "dompurify";
 import {
   NInput,
@@ -328,11 +378,23 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#039;");
 }
 
+// 内容寻址缓存：模板里多处 v-html 直调 parseMarkdown，任一消息流式更新都会
+// 重渲染整个消息列表，未缓存时已渲染的历史消息会被全量重解析（marked+hljs+DOMPurify）。
+// 流式场景热点集中在最新一条消息，历史内容命中缓存后每次 tick 只解析增量那条。
+const markdownCache = new Map<string, string>();
+const MARKDOWN_CACHE_MAX = 500;
+
 function parseMarkdown(content: string): string {
-  return DOMPurify.sanitize(
+  const cached = markdownCache.get(content);
+  if (cached !== undefined) return cached;
+  const html = DOMPurify.sanitize(
     marked.parse(content) as string,
     DOMPURIFY_CONFIG,
   );
+  // 超上限整表清空：缓存的是纯函数结果，清空只影响性能不影响正确性
+  if (markdownCache.size >= MARKDOWN_CACHE_MAX) markdownCache.clear();
+  markdownCache.set(content, html);
+  return html;
 }
 
 // ── Chat state ──

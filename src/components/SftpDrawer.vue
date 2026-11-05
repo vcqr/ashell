@@ -36,7 +36,7 @@ import {
 } from "@remixicon/vue"
 import { isTauri } from "@/utils/platform"
 import { DRAG_LEAVE_EVENT, DRAG_OVER_EVENT, dispatchPathDrop, publishCrossWindowPathDrop } from "@/composables/useFileDropBridge"
-import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
   NBadge,
   NButton,
@@ -92,7 +92,9 @@ import RenameDialog from "@/components/sftp/RenameDialog.vue"
 import PropsModal from "@/components/sftp/PropsModal.vue"
 import SftpUploadList from "@/components/sftp/SftpUploadList.vue"
 import SftpDownloadList from "@/components/sftp/SftpDownloadList.vue"
-import FileEditor from "@/components/sftp/FileEditor.vue"
+// FileEditor 连带 codemirror + 全部语言包体积可观，且只有打开编辑器才用到，
+// 异步组件让这部分代码随首个 FileEditor 挂载才加载，不进主包
+const FileEditor = defineAsyncComponent(() => import("@/components/sftp/FileEditor.vue"))
 import FilePreview from "@/components/sftp/FilePreview.vue"
 import LocalPane from "@/components/sftp/LocalPane.vue"
 import { sftpFileIcon } from "@/utils/fileIcon"

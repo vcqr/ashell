@@ -44,4 +44,27 @@ export default defineConfig(async () => ({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+
+  build: {
+    rollupOptions: {
+      output: {
+        // vite 8 (rolldown) 分包：把大体积依赖从主 chunk 拆出并行加载；
+        // codemirror 随 FileEditor 异步组件按需加载，其余随主入口并行拉取
+        advancedChunks: {
+          // 默认 true 会把各组命中模块的依赖整树递归拉进该组 chunk，
+          // 绕过 tree-shaking 并与 vendor 兜底组重复，实测总体积膨胀 2.6MB
+          includeDependenciesRecursively: false,
+          groups: [
+            { name: 'codemirror', test: /node_modules[\\/](?:@codemirror|@lezer|codemirror)/ },
+            { name: 'hljs', test: /node_modules[\\/]highlight\.js/ },
+            { name: 'xterm', test: /node_modules[\\/]@xterm/ },
+            { name: 'naive-ui', test: /node_modules[\\/]naive-ui/ },
+            // 兜底组放最后：剩余 node_modules 归单一 vendor chunk，
+            // 避免未被分组的共享依赖被复制进多个 chunk 导致总体积膨胀
+            { name: 'vendor', test: /node_modules/ },
+          ],
+        },
+      },
+    },
+  },
 }));
