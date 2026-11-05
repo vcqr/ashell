@@ -171,7 +171,8 @@ export default {
   disconnectedByUser: "Disconnected by user",
   reconnecting: "Reconnecting…",
   autoReconnected: "Auto-reconnected successfully.",
-  sudoHint: 'Click here or press Ctrl+Enter to auto-fill the saved password',
+  sudoHint: 'Press Enter or click to auto-fill the saved password',
+  sudoHintWeak: 'Click or press Ctrl+Enter to auto-fill the saved password',
   commandSuggest: {
     learned: 'Learned',
     block: 'Stop suggesting this command',

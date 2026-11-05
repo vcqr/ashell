@@ -41,6 +41,7 @@ FNS=(
   last_input_line
   last_input_requests_elevation
   input_line_echoes_colon
+  detect_sudo_prompt_tier
   detect_sudo_password_prompt
 )
 

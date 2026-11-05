@@ -103,7 +103,7 @@ const startupStore = useStartupStore()
 const hostStore = useHostStore()
 const keybindingStore = useKeybindingStore()
 
-const { sudoArmed, armSudo, disarmSudo } = useSudoFill()
+const { sudoArmed, sudoStrongTier, armSudo, disarmSudo } = useSudoFill()
 
 // 点击提示条 = 显式确认填充（替代回车确认：回车是最高频按键，误命中时
 // 回车确认会把密码明文注入命令行，回显可见且进 shell history）。
@@ -687,7 +687,8 @@ function onTermCustomKey(ev: KeyboardEvent): boolean {
     void readClipboard().then(pasteToTerminal)
     return false
   }
-  // sudo 待填充状态的确认键 Ctrl+Enter：显式组合键而非回车（见 onData
+  // sudo 待填充状态的确认键 Ctrl+Enter：强置信命中时与回车等效（键盘
+  // 备选），弱置信命中时是除点击提示条外唯一的键盘确认方式（见 onData
   // 内的待填充分支注释）。吞掉按键不发往 PTY
   if (
     sudoArmed.value &&
@@ -1465,6 +1466,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           kind?: string
           sid?: string
           accepted?: boolean
+          tier?: string
         }
         if (msg.kind === "ready" && typeof msg.sid === "string") {
           emit("sid-ready", props.tab.key, msg.sid)
@@ -1582,7 +1584,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           return
         }
         if (msg.kind === "sudo_prompt") {
-          armSudo()
+          armSudo(msg.tier !== "weak")
           return
         }
         if (msg.kind === "sudo_prompt_gone") {
@@ -1751,9 +1753,16 @@ onMounted(() => {
       return
     }
     if (sudoArmed.value) {
-      // 待填充期间敲任意键（含回车）一律取消自动填充。确认只走显式动作：
-      // 点击提示条（onSudoHintClick）或 Ctrl+Enter（onTermCustomKey）；
-      // 回车在此照常透传——真实提示下空密码提交会让 sudo 重问并重新武装
+      if (data === "\r" && sudoStrongTier.value) {
+        // 强置信命中（[sudo]/doas 锚定、紧邻回显的裸 Password:）→ 回车
+        // 确认填充。弱置信（sudo -p 自定义短提示等）不走回车：回车是
+        // 最高频按键，弱置信误命中时回车确认会把密码明文注入命令行，
+        // 只认点击提示条（onSudoHintClick）/ Ctrl+Enter（onTermCustomKey）
+        disarmSudo()
+        sendJson({ kind: "sudo_fill" })
+        return
+      }
+      // 待填充期间敲任意键（弱置信含回车）取消自动填充，输入照常透传
       disarmSudo()
     }
 
@@ -2274,7 +2283,7 @@ onBeforeUnmount(() => {
         role="button"
         @click="onSudoHintClick"
       >
-        {{ t('terminal.sudoHint') }}
+        {{ t(sudoStrongTier ? 'terminal.sudoHint' : 'terminal.sudoHintWeak') }}
       </div>
     </Transition>
 

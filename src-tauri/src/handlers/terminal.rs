@@ -1132,14 +1132,30 @@ fn input_line_echoes_colon(input_buf: &[u8]) -> bool {
 ///   密码，隔着内容的是别家在要密码）
 /// - 正在键入的命令回显不命中
 /// - 裸提示整行恰为 `password:`；短提示 ≤24 字符且含字母数字
+/// sudo 提示是否命中（弱置信也算命中）。分层见 [`detect_sudo_prompt_tier`]。
 fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
+    detect_sudo_prompt_tier(output_buf, input_buf).is_some()
+}
+
+/// sudo 提示的置信分层。
+///
+/// `Some(true)` = 强置信：回车可以直接作为确认键——`[sudo]`/`doas` 行首
+/// 锚定的官方提示、紧邻提权命令回显的裸 `Password:`（macOS 默认样式、
+/// `sudo su -`），这些要么带权威标记、要么紧贴命令回显，误报几乎不可能。
+///
+/// `Some(false)` = 弱置信：回车不确认，只认显式动作（点击提示条 /
+/// Ctrl+Enter）——`sudo -p 'pwd: '` 自定义短提示等内容不可预测的命中，
+/// 回车是最高频按键，弱置信误命中时回车确认会把密码明文注入命令行。
+///
+/// `None` = 不是密码提示。
+fn detect_sudo_prompt_tier(output_buf: &[u8], input_buf: &[u8]) -> Option<bool> {
     let text = sanitize_prompt_text(output_buf);
     let tail = tail_chars(&text, 320);
     let normalized = tail
         .trim_end_matches(|c| c == '\n' || c == '\r' || c == ' ')
         .to_lowercase();
     if normalized.is_empty() {
-        return false;
+        return None;
     }
     let last_line = normalized
         .rsplit('\n')
@@ -1147,12 +1163,12 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
         .unwrap_or(normalized.as_str())
         .trim_end();
     if last_line.is_empty() {
-        return false;
+        return None;
     }
 
     let ends_prompt = last_line.ends_with(':') || last_line.ends_with('：');
     if !ends_prompt {
-        return false;
+        return None;
     }
 
     let mentions_password = [
@@ -1173,23 +1189,23 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     // `doas` 裸前缀远不如 `[sudo]` 独特（普通文本/日志可携带），须有提权
     // 命令佐证才采信
     if last_line.starts_with("[sudo]") && mentions_password && last_line.chars().count() <= 64 {
-        return true;
+        return Some(true);
     }
     let anchored_doas = last_line.starts_with("doas ")
         || last_line.starts_with("doas(")
         || last_line.starts_with("doas:");
     if anchored_doas && mentions_password && last_input_requests_elevation(input_buf) {
-        return true;
+        return Some(true);
     }
 
     // 弱信号只在提权命令是最后一条输入命令的首词时采信，并逐项过护栏：
     if !last_input_requests_elevation(input_buf) {
-        return false;
+        return None;
     }
     // 键入回显瞬态：逐字敲 `sudo chown root:` 的途中，输出末行与输入
     // 末行同以冒号结尾，这是命令回显不是提示
     if input_line_echoes_colon(input_buf) {
-        return false;
+        return None;
     }
     // 提示行必须紧跟含 sudo/doas 的命令回显行（sanitize 把 `\r\n` 变成
     // 两个 `\n`，跳过空段才取得到回显行）
@@ -1200,16 +1216,24 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
         .nth(1)
         .unwrap_or("");
     if !(prev_line.contains("sudo") || prev_line.contains("doas")) {
-        return false;
+        return None;
     }
     if mentions_password {
-        // 裸提示必须整行恰为 password 词：psql 的 "Password for user
-        // ..."、mysql 的 "Enter password:" 等他人提示宁可不报
-        return last_line == "password:";
+        // 紧邻回显的裸 Password: 是 sudo 本体的掩码提示（macOS 默认样式、
+        // `sudo su -`），要的正是登录密码 → 强置信。其他带密码词的形态
+        // （psql 的 "Password for user ..."、mysql 的 "Enter password:"）
+        // 是别家在要密码，宁可不报
+        return if last_line == "password:" {
+            Some(true)
+        } else {
+            None
+        };
     }
-    // `sudo -p 'pwd: '` 这类极短自定义提示：行要像提示符（够短、含字母
-    // 数字），而不是句子片段或全屏程序的纯冒号行
-    last_line.chars().count() <= 24 && last_line.chars().any(char::is_alphanumeric)
+    // `sudo -p 'pwd: '` 这类极短自定义提示：内容不可预测 → 弱置信，回车
+    // 不确认。行要像提示符（够短、含字母数字），而不是句子片段或全屏
+    // 程序的纯冒号行
+    (last_line.chars().count() <= 24 && last_line.chars().any(char::is_alphanumeric))
+        .then_some(false)
 }
 
 async fn run_terminal(
@@ -1859,9 +1883,9 @@ async fn run_terminal(
                             .await;
                         }
                         push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
-                        if detect_sudo_password_prompt(&sudo_buf, &terminal_input_buf)
-                            && sudo_password.as_deref().is_some_and(|p| !p.is_empty())
-                        {
+                        let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
+                            .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
+                        if let Some(strong) = prompt_tier {
                             sudo_buf.clear();
                             // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
                             // 最近输入里，本次提权完成后命令输出中普通的冒号
@@ -1869,9 +1893,14 @@ async fn run_terminal(
                             // 反复误判成新的密码提示，前端跟着反复弹出。
                             terminal_input_buf.clear();
                             sudo_prompt_pending_at = Some(std::time::Instant::now());
-                            let _ = ws_tx.send(Message::Text(
-                                "{\"kind\":\"sudo_prompt\"}".to_string().into(),
-                            )).await;
+                            let frame = if strong {
+                                "{\"kind\":\"sudo_prompt\",\"tier\":\"strong\"}"
+                            } else {
+                                "{\"kind\":\"sudo_prompt\",\"tier\":\"weak\"}"
+                            };
+                            let _ = ws_tx
+                                .send(Message::Text(frame.to_string().into()))
+                                .await;
                         }
                         reset_idle(&mut idle_timer, idle_dur);
                     }
@@ -1891,9 +1920,9 @@ async fn run_terminal(
                             .await;
                         }
                         push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
-                        if detect_sudo_password_prompt(&sudo_buf, &terminal_input_buf)
-                            && sudo_password.as_deref().is_some_and(|p| !p.is_empty())
-                        {
+                        let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
+                            .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
+                        if let Some(strong) = prompt_tier {
                             sudo_buf.clear();
                             // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
                             // 最近输入里，本次提权完成后命令输出中普通的冒号
@@ -1901,9 +1930,14 @@ async fn run_terminal(
                             // 反复误判成新的密码提示，前端跟着反复弹出。
                             terminal_input_buf.clear();
                             sudo_prompt_pending_at = Some(std::time::Instant::now());
-                            let _ = ws_tx.send(Message::Text(
-                                "{\"kind\":\"sudo_prompt\"}".to_string().into(),
-                            )).await;
+                            let frame = if strong {
+                                "{\"kind\":\"sudo_prompt\",\"tier\":\"strong\"}"
+                            } else {
+                                "{\"kind\":\"sudo_prompt\",\"tier\":\"weak\"}"
+                            };
+                            let _ = ws_tx
+                                .send(Message::Text(frame.to_string().into()))
+                                .await;
                         }
                         reset_idle(&mut idle_timer, idle_dur);
                     }
@@ -2230,6 +2264,49 @@ mod tests {
             b"[sudo] password for user:\r\nSorry, try again.\r\n[sudo] password for user: ",
             b""
         ));
+    }
+
+    /// 置信分层：锚定官方提示与紧邻回显的裸 Password: 为强置信（回车可
+    /// 确认）；sudo -p 自定义提示、read -p 脚本提示为弱置信（回车不确认，
+    /// 只认点击提示条 / Ctrl+Enter）。
+    #[test]
+    fn prompt_tier_classification() {
+        // [sudo] 锚定 → 强置信
+        assert!(matches!(
+            detect_sudo_prompt_tier(b"[sudo] password for u: ", b""),
+            Some(true)
+        ));
+        // 紧邻回显的裸 Password:（macOS 默认样式 / sudo su -）→ 强置信
+        assert!(matches!(
+            detect_sudo_prompt_tier(
+                b"root@web:~# sudo su -\r\nPassword: ",
+                b"sudo su -\r"
+            ),
+            Some(true)
+        ));
+        // doas 锚定 + 提权佐证 → 强置信
+        assert!(matches!(
+            detect_sudo_prompt_tier(b"doas (u@w) password: ", b"doas id\r"),
+            Some(true)
+        ));
+        // sudo -p 自定义短提示 → 弱置信
+        assert!(matches!(
+            detect_sudo_prompt_tier(
+                b"root@web:~# sudo -p 'pwd: ' id\r\npwd: ",
+                b"sudo -p 'pwd: ' id\r"
+            ),
+            Some(false)
+        ));
+        // sudo 跑脚本后脚本自己的 read 提示 → 弱置信
+        assert!(matches!(
+            detect_sudo_prompt_tier(
+                b"root@web:~# sudo sh deploy.sh\r\nOverwrite? [y/N]: ",
+                b"sudo sh deploy.sh\r"
+            ),
+            Some(false)
+        ));
+        // 非提示
+        assert!(detect_sudo_prompt_tier(b"hello world", b"").is_none());
     }
 
     /* ---------- cwd 注入行回显剥离 ---------- */
