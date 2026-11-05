@@ -472,6 +472,11 @@ async fn request_hostkey_confirm(
 }
 
 const PROMPT_BUF_LIMIT: usize = 1024;
+
+/// sudo 提示命中的注入有效期：前端待填充窗口 15 秒，后端留出在途余量。
+/// read -p / python input() / tail -f 这类静默等待的程序会骗过"无新输出"
+/// 检查，超时兜底保证密码不会无限期处于可注入状态
+const SUDO_FILL_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(20);
 const INPUT_BUF_LIMIT: usize = 512;
 
 /* ---------- SSH 会话 cwd 上报注入（OSC 9;9，ConEmu 风格） ----------
@@ -1082,18 +1087,21 @@ fn last_input_line(input_buf: &[u8]) -> Option<String> {
         .find(|line| !line.is_empty())
 }
 
-/// 最近输入是否是提权命令。用于兼容 `Password:`、`doas ... password:`、
-/// `sudo -p 'pwd: '` 这类不一定带 `[sudo] password for` 的提示。
+/// 最近输入是否是提权命令。用于兼容裸 `Password:`（macOS/doas 风格）、
+/// `sudo -p 'pwd: '` 这类不带 `[sudo] password for` 的提示。
 ///
-/// 只认“提权命令是最后一条已输入命令”：密码提示只会出现在提权命令刚
-/// 敲下回车之后。sudo 凭证缓存/免密场景下 `sudo -i` 不产生提示、输入
-/// 缓冲不会被命中清空，若按“最近 N 条里有 sudo”判定，残留提权态会让
-/// 之后几十条普通命令的冒号输出全部误判（sudo -i 后用 chown 弹填充
-/// 提示的成因）；提权命令后每敲一条新命令都会自然顶掉提权态。
+/// 只认“提权命令是最后一条已输入命令，且是首词”：密码提示只会出现在
+/// 提权命令刚敲下回车之后；`grep sudo /etc/x`、`ssh host sudo` 这类把
+/// sudo 当参数的命令不算提权。sudo 凭证缓存/免密场景下 `sudo -i` 不产
+/// 生提示、输入缓冲不会被命中清空，若按“最近 N 条里有 sudo”判定，残留
+/// 提权态会让之后几十条普通命令的冒号输出全部误判（sudo -i 后用 chown
+/// 弹填充提示的成因）；提权命令后每敲一条新命令都会自然顶掉提权态。
 fn last_input_requests_elevation(input_buf: &[u8]) -> bool {
     last_input_line(input_buf).is_some_and(|line| {
-        line.split_whitespace()
-            .any(|token| token == "sudo" || token == "sudoedit" || token == "doas")
+        matches!(
+            line.split_whitespace().next(),
+            Some("sudo") | Some("sudoedit") | Some("doas")
+        )
     })
 }
 
@@ -1107,19 +1115,22 @@ fn input_line_echoes_colon(input_buf: &[u8]) -> bool {
 
 /// 判断输出尾部是否像 sudo/doas 密码提示。
 ///
-/// 兼容：
-/// - 默认 `[sudo] password for user:`
-/// - 带 ANSI/颜色序列的提示
-/// - 本地化提示（中文“密码”、西/法/德/葡/俄等 password 词）
-/// - macOS/doas 风格裸 `Password:`、`sudo -p` 自定义短提示（要求提权
-///   命令是最后一条输入命令）
+/// 原则：宁可不报，不要误报——误报的代价是把 SSH 登录密码明文注入
+/// 命令行（回显可见、进 shell history）。
 ///
-/// 原则：宁可不报，不要误报。弱信号层层收紧：
-/// - 裸提示必须整行恰为 `password:`——psql 的 "Password for user
-///   ..."、mysql 的 "Enter password:"、嵌套 ssh 的 "'s password:" 等
-///   他人提示一律不认
-/// - 短冒号行（无 password 词）必须紧跟含 sudo/doas 的命令回显行——
-///   `sudo cat` 输出末尾的 `TODO:` 标签、apt 列表行等一律不认
+/// 强信号：行首锚定的官方提示（`[sudo] ...` / `doas ...` 开头）且含密码
+/// 词。不锚定行首时，journalctl 日志行、man 文档、`cat` 文件内容里碰巧
+/// 同时含 "sudo" 与 "password" 的冒号行（`change your sudo password:`
+/// 等）会被当成提示；键入 `sudo grep password x:` 的回显瞬态同样漏网。
+///
+/// 弱信号（裸 `Password:`、`sudo -p` 自定义短提示）层层佐证：
+/// - 提权命令是最后一条输入命令的首词（`grep sudo x`、`ssh host sudo`
+///   这类把 sudo 当参数的命令不算提权）
+/// - 提示行紧跟在含 sudo/doas 的命令回显行之后（sudo 本体要密码时提示
+///   紧随回显；`sudo docker login` / `sudo ftp` 先打印自己的输出再要
+///   密码，隔着内容的是别家在要密码）
+/// - 正在键入的命令回显不命中
+/// - 裸提示整行恰为 `password:`；短提示 ≤24 字符且含字母数字
 fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     let text = sanitize_prompt_text(output_buf);
     let tail = tail_chars(&text, 320);
@@ -1143,7 +1154,6 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
         return false;
     }
 
-    let mentions_elevation = last_line.contains("sudo") || last_line.contains("doas");
     let mentions_password = [
         "password",
         "密码",
@@ -1156,11 +1166,17 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     .iter()
     .any(|word| last_line.contains(word));
 
-    if mentions_elevation && mentions_password {
+    // 强信号：官方提示文案是行首锚定的整段翻译（各语言 .mo 均保留
+    // `[sudo]` 前缀），行首不是 `[sudo]`/`doas` 的一律不是 sudo 在要密码
+    let anchored = last_line.starts_with("[sudo]")
+        || last_line.starts_with("doas ")
+        || last_line.starts_with("doas(")
+        || last_line.starts_with("doas:");
+    if anchored && mentions_password && last_line.chars().count() <= 64 {
         return true;
     }
 
-    // 弱信号只在提权命令是最后一条输入命令时采信，并逐项过防误报护栏：
+    // 弱信号只在提权命令是最后一条输入命令的首词时采信，并逐项过护栏：
     if !last_input_requests_elevation(input_buf) {
         return false;
     }
@@ -1169,24 +1185,25 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     if input_line_echoes_colon(input_buf) {
         return false;
     }
-    if mentions_password {
-        // 裸提示必须整行恰为 password 词：psql 的 "Password for user
-        // ..."、mysql 的 "Enter password:" 等他人提示宁可不报
-        return last_line == "password:";
-    }
-    // `sudo -p 'pwd: '` 这类极短自定义提示：还要紧跟在含 sudo/doas 的
-    // 命令回显行之后——`sudo cat` 文件末尾的 `TODO:`、apt 列表行等
-    // 隔着输出内容的一律放弃（lecture 夹层、长命令折行等宁可漏报）。
-    // 注意 sanitize 把 `\r\n` 变成两个 `\n`，须跳过空段才取得到回显行
+    // 提示行必须紧跟含 sudo/doas 的命令回显行（sanitize 把 `\r\n` 变成
+    // 两个 `\n`，跳过空段才取得到回显行）
     let prev_line = normalized
         .rsplit('\n')
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .nth(1)
         .unwrap_or("");
-    (prev_line.contains("sudo") || prev_line.contains("doas"))
-        && last_line.chars().count() <= 24
-        && last_line.chars().any(char::is_alphanumeric)
+    if !(prev_line.contains("sudo") || prev_line.contains("doas")) {
+        return false;
+    }
+    if mentions_password {
+        // 裸提示必须整行恰为 password 词：psql 的 "Password for user
+        // ..."、mysql 的 "Enter password:" 等他人提示宁可不报
+        return last_line == "password:";
+    }
+    // `sudo -p 'pwd: '` 这类极短自定义提示：行要像提示符（够短、含字母
+    // 数字），而不是句子片段或全屏程序的纯冒号行
+    last_line.chars().count() <= 24 && last_line.chars().any(char::is_alphanumeric)
 }
 
 async fn run_terminal(
@@ -1656,11 +1673,12 @@ async fn run_terminal(
     let mut session_end_code: Option<&'static str> = None;
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
-    // sudo 提示待填充状态是否仍有效：命中后一旦有新输出（下一次按键回显、
-    // 命令的后续输出）立即失效并通知前端撤条——真实密码提示在等待期间
-    // 终端静默，误报命中后必然跟着新输出。失效后回车不再注入，杜绝把
-    // 密码打进明文回显 / 命令行 / shell history
-    let mut sudo_prompt_pending = false;
+    // sudo 提示待填充状态（Some = 命中时刻）：之后一旦有新输出（下一次
+    // 按键回显、命令的后续输出）或新的键盘输入立即作废并通知前端撤条。
+    // 真实密码提示等待期间终端静默且用户不该敲键；误报命中后必然跟着
+    // 新输出/输入。作废后不再注入，杜绝把密码打进明文回显 / 命令行 /
+    // shell history
+    let mut sudo_prompt_pending_at: Option<std::time::Instant> = None;
     // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续，
     // 终端 WS 路径仍走原始字节，不受影响
     let mut utf8_tail: Vec<u8> = Vec::new();
@@ -1716,6 +1734,14 @@ async fn run_terminal(
                             if let Ok(cm) = serde_json::from_str::<ClientMsg>(s) {
                                 match cm {
                                     ClientMsg::Cmd { data } => {
+                                        // 命中提示后用户又敲了键：说明当前不是在等
+                                        // 密码（或用户选择手输），待填充立即作废
+                                        if sudo_prompt_pending_at.take().is_some() {
+                                            let _ = ws_tx.send(Message::Text(
+                                                "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
+                                            ))
+                                            .await;
+                                        }
                                         push_limited(
                                             &mut terminal_input_buf,
                                             data.as_bytes(),
@@ -1734,16 +1760,16 @@ async fn run_terminal(
                                         let _ = ws_tx.send(Message::Text("{\"kind\":\"pong\"}".to_string().into())).await;
                                     }
                                     ClientMsg::SudoFill => {
-                                        // 只有提示待填充状态仍有效（其后无新输出）才注入：
-                                        // 真实密码提示等待期间终端静默，误报命中后
-                                        // 紧随的输出会先使其失效。拒绝时回 sudo_fill_result
-                                        // 让前端补发被拦截的回车，不吞按键
-                                        let accepted = sudo_prompt_pending
+                                        // 只有待填充状态仍新鲜（其后无输出/按键，且
+                                        // 未超时）才注入。拒绝时回 sudo_fill_result，
+                                        // 前端据此撤掉提示条
+                                        let accepted = sudo_prompt_pending_at
+                                            .take()
+                                            .is_some_and(|t| t.elapsed() < SUDO_FILL_MAX_AGE)
                                             && sudo_password
                                                 .as_deref()
                                                 .is_some_and(|p| !p.is_empty());
                                         if accepted {
-                                            sudo_prompt_pending = false;
                                             let payload =
                                                 format!("{}\r", sudo_password.as_deref().unwrap_or(""));
                                             if let Err(e) = channel.data(payload.as_bytes()).await {
@@ -1818,11 +1844,9 @@ async fn run_terminal(
                         }
 
                         // 待填充状态失效检查先行：命中后紧随的任何输出都说明
-                        // 不是真实提示（真实提示等待期间终端静默），立即退出
-                        // 待填充并让前端撤掉提示条，防止之后回车把密码注入
-                        // 明文回显
-                        if sudo_prompt_pending {
-                            sudo_prompt_pending = false;
+                        // 不是真实提示（真实提示等待期间终端静默），立即作废
+                        // 并让前端撤掉提示条，防止之后回车把密码注入明文回显
+                        if sudo_prompt_pending_at.take().is_some() {
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
                             ))
@@ -1838,7 +1862,7 @@ async fn run_terminal(
                             // 结尾行（apt 的 "The following ... installed:" 等）会被
                             // 反复误判成新的密码提示，前端跟着反复弹出。
                             terminal_input_buf.clear();
-                            sudo_prompt_pending = true;
+                            sudo_prompt_pending_at = Some(std::time::Instant::now());
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
@@ -1852,11 +1876,9 @@ async fn run_terminal(
 
                         // 部分服务端/程序会把密码提示写到 stderr；这里同样参与识别。
                         // 待填充状态失效检查先行：命中后紧随的任何输出都说明
-                        // 不是真实提示（真实提示等待期间终端静默），立即退出
-                        // 待填充并让前端撤掉提示条，防止之后回车把密码注入
-                        // 明文回显
-                        if sudo_prompt_pending {
-                            sudo_prompt_pending = false;
+                        // 不是真实提示（真实提示等待期间终端静默），立即作废
+                        // 并让前端撤掉提示条，防止之后回车把密码注入明文回显
+                        if sudo_prompt_pending_at.take().is_some() {
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
                             ))
@@ -1872,7 +1894,7 @@ async fn run_terminal(
                             // 结尾行（apt 的 "The following ... installed:" 等）会被
                             // 反复误判成新的密码提示，前端跟着反复弹出。
                             terminal_input_buf.clear();
-                            sudo_prompt_pending = true;
+                            sudo_prompt_pending_at = Some(std::time::Instant::now());
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
@@ -1962,7 +1984,8 @@ mod tests {
 
     #[test]
     fn detects_prompt_with_ansi_sequences() {
-        let output = b"\x1b[1;32muser@host\x1b[0m:~$ \x1b[36m[sudo] password for user:\x1b[0m ";
+        // sudo 的提示独占一行（PS1 行在其前）；本用例验证 ANSI 序列剥离
+        let output = b"\x1b[1;32muser@host\x1b[0m:~$ \r\n\x1b[36m[sudo] password for user:\x1b[0m ";
         assert!(detect_sudo_password_prompt(output, b""));
     }
 
@@ -1974,11 +1997,13 @@ mod tests {
 
     #[test]
     fn detects_generic_password_prompt_only_after_elevation_command() {
-        let output = b"Password: ";
+        // sudo 本体要密码（macOS/doas 风格裸 Password:）紧随命令回显
+        let output = b"root@web:~# sudo systemctl restart sshd\r\nPassword: ";
         assert!(detect_sudo_password_prompt(
             output,
             b"sudo systemctl restart sshd\r"
         ));
+        // 非提权命令后的裸 Password: 不认
         assert!(!detect_sudo_password_prompt(output, b"mysql -u root -p\r"));
     }
 
@@ -2011,9 +2036,9 @@ mod tests {
             b"sudo apt install foo\r"
         ));
 
-        // 真实短提示 `Password:` 在提权命令刚输入时仍要命中
+        // 真实短提示 `Password:` 紧随提权命令回显时仍要命中
         assert!(detect_sudo_password_prompt(
-            b"Password: ",
+            b"root@web:~# sudo systemctl restart foo\r\nPassword: ",
             b"sudo systemctl restart foo\r"
         ));
 
@@ -2099,16 +2124,98 @@ mod tests {
         ));
     }
 
-    /// 新护栏不得挡住真实提示：裸 `Password:`（macOS/doas 风格）在提权
-    /// 命令刚输入时仍要命中；本地化提示自带 sudo 词走强信号不受影响。
+    /// 新护栏不得挡住真实提示：裸 `Password:`（macOS/doas 风格）紧随
+    /// 提权命令回显时仍要命中；本地化提示走行首锚定的强信号不受影响。
     #[test]
     fn real_prompts_still_fire_after_guardrails() {
         assert!(detect_sudo_password_prompt(
-            b"Password: ",
+            b"root@web:~# sudo systemctl restart sshd\r\nPassword: ",
             b"sudo systemctl restart sshd\r"
         ));
         assert!(detect_sudo_password_prompt(
             "[sudo] 用户 的密码：".as_bytes(),
+            b""
+        ));
+    }
+
+    /* ---------- 伪造提示回归（强信号误报） ---------- */
+
+    /// 行内含 sudo+password 词但不是行首锚定的官方提示：日志行、man
+    /// 文档、cat 文件内容，一律不命中——这类误报会把登录密码明文注入
+    /// 命令行。行首锚定前，强信号分支完全不看输入上下文。
+    #[test]
+    fn unanchored_sudo_password_lines_are_not_prompts() {
+        // journalctl 日志行
+        assert!(!detect_sudo_password_prompt(
+            b"Jan 05 web sudo: pam: password: ",
+            b""
+        ));
+        // man sudo 文档
+        assert!(!detect_sudo_password_prompt(
+            b"change your sudo password: ",
+            b""
+        ));
+        // cat 文本文件
+        assert!(!detect_sudo_password_prompt(b"change sudo password:", b""));
+        // 子串匹配陷阱：visudo/sudoers 含 sudo 字样不算官方提示
+        assert!(!detect_sudo_password_prompt(
+            b"run visudo to edit the sudoers password policy: ",
+            b"sudo visudo\r"
+        ));
+        // 提权命令后日志里输出此类行：整行匹配不过，同样不命中
+        assert!(!detect_sudo_password_prompt(
+            b"root@web:~# sudo journalctl -f\r\nJan 05 web sudo: pam: password: ",
+            b"sudo journalctl -f\r"
+        ));
+    }
+
+    /// 键入含 sudo+password+冒号的命令（`sudo grep password x:`）途中，
+    /// 回显末行以冒号结尾：行首锚定前强信号分支会命中。
+    #[test]
+    fn typing_sudo_grep_password_echo_is_not_a_prompt() {
+        assert!(!detect_sudo_password_prompt(
+            b"root@web:~# sudo grep password x:",
+            b"sudo grep password x:"
+        ));
+    }
+
+    /// sudo 被当参数的命令不算提权：`grep sudo /etc/x`、`ssh host sudo`
+    /// 之后出现的裸 Password: 不注入（可能是别家在要密码）；
+    /// `sudo docker login` 先打印自己的输出再要密码，隔着内容的也不认。
+    #[test]
+    fn sudo_as_argument_is_not_elevation() {
+        let output = b"Password: ";
+        assert!(!detect_sudo_password_prompt(
+            output,
+            b"grep sudo /etc/x\r"
+        ));
+        assert!(!detect_sudo_password_prompt(output, b"ssh host sudo\r"));
+        assert!(!detect_sudo_password_prompt(
+            b"root@web:~# sudo docker login\r\nLogin with your Docker ID...\r\nPassword: ",
+            b"sudo docker login\r"
+        ));
+        // sudo su - 的 Password: 紧随回显（sudo 本体在要密码）：仍要命中
+        assert!(detect_sudo_password_prompt(
+            b"root@web:~# sudo su -\r\nPassword: ",
+            b"sudo su -\r"
+        ));
+    }
+
+    /// 行首锚定的官方提示不依赖输入上下文：默认提示、中文本地化、doas、
+    /// 密码输错重试（输入缓冲已被命中清空）都仍命中。
+    #[test]
+    fn anchored_official_prompts_still_fire() {
+        assert!(detect_sudo_password_prompt(b"[sudo] password for user: ", b""));
+        assert!(detect_sudo_password_prompt(
+            "[sudo] user 的密码：".as_bytes(),
+            b""
+        ));
+        assert!(detect_sudo_password_prompt(
+            b"doas (user@web) password: ",
+            b""
+        ));
+        assert!(detect_sudo_password_prompt(
+            b"[sudo] password for user:\r\nSorry, try again.\r\n[sudo] password for user: ",
             b""
         ));
     }

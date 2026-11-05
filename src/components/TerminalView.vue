@@ -104,9 +104,15 @@ const hostStore = useHostStore()
 const keybindingStore = useKeybindingStore()
 
 const { sudoArmed, armSudo, disarmSudo } = useSudoFill()
-// 回车已被拦截为"确认填充"且后端尚未答复 sudo_fill：后端拒绝注入时
-// （待填充状态因新输出失效）补发这颗回车，避免用户按键被静默吞掉
-let pendingFillEnter = false
+
+// 点击提示条 = 显式确认填充（替代回车确认：回车是最高频按键，误命中时
+// 回车确认会把密码明文注入命令行，回显可见且进 shell history）。
+// 后端会校验待填充状态是否仍有效（其后无新输出/按键且未超时）
+function onSudoHintClick() {
+  if (!sudoArmed.value) return
+  disarmSudo()
+  sendJson({ kind: "sudo_fill" })
+}
 
 const {
   aiButtonVisible,
@@ -679,6 +685,22 @@ function onTermCustomKey(ev: KeyboardEvent): boolean {
   if (matchesBinding(keybindingStore.getBinding("term.paste"), ev)) {
     ev.preventDefault()
     void readClipboard().then(pasteToTerminal)
+    return false
+  }
+  // sudo 待填充状态的确认键 Ctrl+Enter：显式组合键而非回车（见 onData
+  // 内的待填充分支注释）。吞掉按键不发往 PTY
+  if (
+    sudoArmed.value &&
+    ev.ctrlKey &&
+    !ev.shiftKey &&
+    !ev.altKey &&
+    !ev.metaKey &&
+    ev.key === "Enter" &&
+    !ev.isComposing
+  ) {
+    ev.preventDefault()
+    disarmSudo()
+    sendJson({ kind: "sudo_fill" })
     return false
   }
   if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return true
@@ -1569,11 +1591,8 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           return
         }
         if (msg.kind === "sudo_fill_result") {
+          // 后端已裁决（注入或拒绝）：无论如何退出待填充状态
           disarmSudo()
-          // 后端拒绝注入（待填充状态已失效）：补发被拦截的回车，不吞按键
-          const replayEnter = !msg.accepted && pendingFillEnter
-          pendingFillEnter = false
-          if (replayEnter) sendJson({ kind: "cmd", data: "\r" })
           return
         }
         // 兜底：未知 JSON 文本帧也写入终端
@@ -1732,16 +1751,9 @@ onMounted(() => {
       return
     }
     if (sudoArmed.value) {
-      if (data === "\r") {
-        // 回车确认 -> 发送 sudo_fill，后端校验待填充状态仍有效才注入密码；
-        // 被拒绝时会回 sudo_fill_result，届时补发这颗回车
-        disarmSudo()
-        pendingFillEnter = true
-        sendJson({ kind: "sudo_fill" })
-        return
-      }
-      // 用户输入了其他字符 -> 放弃自动填充，恢复正常输入
-      pendingFillEnter = false
+      // 待填充期间敲任意键（含回车）一律取消自动填充。确认只走显式动作：
+      // 点击提示条（onSudoHintClick）或 Ctrl+Enter（onTermCustomKey）；
+      // 回车在此照常透传——真实提示下空密码提交会让 sudo 重问并重新武装
       disarmSudo()
     }
 
@@ -2256,7 +2268,12 @@ onBeforeUnmount(() => {
     </Transition>
 
     <Transition name="sudo-fade">
-      <div v-if="sudoArmed" class="sudo-hint">
+      <div
+        v-if="sudoArmed"
+        class="sudo-hint"
+        role="button"
+        @click="onSudoHintClick"
+      >
         {{ t('terminal.sudoHint') }}
       </div>
     </Transition>
@@ -2753,8 +2770,14 @@ onBeforeUnmount(() => {
   color: var(--ashell-accent, #80b5ff);
   font-size: 13px;
   white-space: nowrap;
-  pointer-events: none;
+  /* 提示条即确认入口：可点击 */
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.sudo-hint:hover {
+  filter: brightness(1.15);
 }
 
 .sudo-fade-enter-active,

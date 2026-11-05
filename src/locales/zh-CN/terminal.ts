@@ -159,7 +159,7 @@ export default {
   disconnectedByUser: "已由用户断开连接",
   reconnecting: "正在重新连接…",
   autoReconnected: "已自动重连成功。",
-  sudoHint: "按回车键自动填充已保存的密码",
+  sudoHint: "点击此处或按 Ctrl+Enter 自动填充已保存的密码",
   commandSuggest: {
     learned: "已学习",
     block: "不再提示此命令",
