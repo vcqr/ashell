@@ -104,6 +104,9 @@ const hostStore = useHostStore()
 const keybindingStore = useKeybindingStore()
 
 const { sudoArmed, armSudo, disarmSudo } = useSudoFill()
+// 回车已被拦截为"确认填充"且后端尚未答复 sudo_fill：后端拒绝注入时
+// （武装因新输出失效）补发这颗回车，避免用户按键被静默吞掉
+let pendingFillEnter = false
 
 const {
   aiButtonVisible,
@@ -1436,7 +1439,11 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     }
     if (typeof data === "string") {
       try {
-        const msg = JSON.parse(data) as { kind?: string; sid?: string }
+        const msg = JSON.parse(data) as {
+          kind?: string
+          sid?: string
+          accepted?: boolean
+        }
         if (msg.kind === "ready" && typeof msg.sid === "string") {
           emit("sid-ready", props.tab.key, msg.sid)
           everConnected = true
@@ -1554,6 +1561,19 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         }
         if (msg.kind === "sudo_prompt") {
           armSudo()
+          return
+        }
+        if (msg.kind === "sudo_prompt_gone") {
+          // 后端检测到提示武装后有新输出：误报/回显瞬态，撤掉提示条
+          disarmSudo()
+          return
+        }
+        if (msg.kind === "sudo_fill_result") {
+          disarmSudo()
+          // 后端拒绝注入（武装已失效）：补发被拦截的回车，不吞按键
+          const replayEnter = !msg.accepted && pendingFillEnter
+          pendingFillEnter = false
+          if (replayEnter) sendJson({ kind: "cmd", data: "\r" })
           return
         }
         // 兜底：未知 JSON 文本帧也写入终端
@@ -1713,12 +1733,15 @@ onMounted(() => {
     }
     if (sudoArmed.value) {
       if (data === "\r") {
-        // 回车确认 -> 发送 sudo_fill，后端注入密码
+        // 回车确认 -> 发送 sudo_fill，后端校验武装仍有效才注入密码；
+        // 被拒绝时会回 sudo_fill_result，届时补发这颗回车
         disarmSudo()
+        pendingFillEnter = true
         sendJson({ kind: "sudo_fill" })
         return
       }
       // 用户输入了其他字符 -> 放弃自动填充，恢复正常输入
+      pendingFillEnter = false
       disarmSudo()
     }
 

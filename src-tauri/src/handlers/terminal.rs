@@ -1656,6 +1656,11 @@ async fn run_terminal(
     let mut session_end_code: Option<&'static str> = None;
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
+    // sudo 提示武装是否仍有效：命中后一旦有新输出（下一次按键回显、
+    // 命令的后续输出）立即失效并通知前端撤条——真实密码提示在等待期间
+    // 终端静默，误报命中后必然跟着新输出。失效后回车不再注入，杜绝把
+    // 密码打进明文回显 / 命令行 / shell history
+    let mut sudo_prompt_pending = false;
     // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续，
     // 终端 WS 路径仍走原始字节，不受影响
     let mut utf8_tail: Vec<u8> = Vec::new();
@@ -1729,16 +1734,30 @@ async fn run_terminal(
                                         let _ = ws_tx.send(Message::Text("{\"kind\":\"pong\"}".to_string().into())).await;
                                     }
                                     ClientMsg::SudoFill => {
-                                        if let Some(pwd) = sudo_password.as_deref() {
-                                            if !pwd.is_empty() {
-                                                let payload = format!("{pwd}\r");
-                                                if let Err(e) = channel.data(payload.as_bytes()).await {
-                                                    session_end_code = Some(classify_session_end_err(&e));
-                                                    break;
-                                                }
-                                                reset_idle(&mut idle_timer, idle_dur);
+                                        // 只有提示武装仍有效（其后无新输出）才注入：
+                                        // 真实密码提示等待期间终端静默，误报命中后
+                                        // 紧随的输出会先撤防。拒绝时回 sudo_fill_result
+                                        // 让前端补发被拦截的回车，不吞按键
+                                        let accepted = sudo_prompt_pending
+                                            && sudo_password
+                                                .as_deref()
+                                                .is_some_and(|p| !p.is_empty());
+                                        if accepted {
+                                            sudo_prompt_pending = false;
+                                            let payload =
+                                                format!("{}\r", sudo_password.as_deref().unwrap_or(""));
+                                            if let Err(e) = channel.data(payload.as_bytes()).await {
+                                                session_end_code = Some(classify_session_end_err(&e));
+                                                break;
                                             }
+                                            reset_idle(&mut idle_timer, idle_dur);
                                         }
+                                        let result = serde_json::json!({
+                                            "kind": "sudo_fill_result",
+                                            "accepted": accepted
+                                        })
+                                        .to_string();
+                                        let _ = ws_tx.send(Message::Text(result.into())).await;
                                     }
                                     // 会话已建立后迟到的认证/主机密钥帧：忽略
                                     ClientMsg::AuthResponse { .. } | ClientMsg::AuthCancel => {}
@@ -1798,16 +1817,27 @@ async fn run_terminal(
                             break;
                         }
 
+                        // 武装失效检查先行：命中后紧随的任何输出都说明不是
+                        // 真实提示（真实提示等待期间终端静默），立即撤防并
+                        // 让前端撤掉提示条，防止之后回车把密码注入明文回显
+                        if sudo_prompt_pending {
+                            sudo_prompt_pending = false;
+                            let _ = ws_tx.send(Message::Text(
+                                "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
+                            ))
+                            .await;
+                        }
                         push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
                         if detect_sudo_password_prompt(&sudo_buf, &terminal_input_buf)
                             && sudo_password.as_deref().is_some_and(|p| !p.is_empty())
                         {
                             sudo_buf.clear();
                             // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
-                            // 最近输入窗口里，本次提权完成后命令输出中普通的冒号
+                            // 最近输入里，本次提权完成后命令输出中普通的冒号
                             // 结尾行（apt 的 "The following ... installed:" 等）会被
                             // 反复误判成新的密码提示，前端跟着反复弹出。
                             terminal_input_buf.clear();
+                            sudo_prompt_pending = true;
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
@@ -1820,16 +1850,27 @@ async fn run_terminal(
                         if ws_tx.send(Message::Binary(bytes.clone().into())).await.is_err() { break; }
 
                         // 部分服务端/程序会把密码提示写到 stderr；这里同样参与识别。
+                        // 武装失效检查先行：命中后紧随的任何输出都说明不是
+                        // 真实提示（真实提示等待期间终端静默），立即撤防并
+                        // 让前端撤掉提示条，防止之后回车把密码注入明文回显
+                        if sudo_prompt_pending {
+                            sudo_prompt_pending = false;
+                            let _ = ws_tx.send(Message::Text(
+                                "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
+                            ))
+                            .await;
+                        }
                         push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
                         if detect_sudo_password_prompt(&sudo_buf, &terminal_input_buf)
                             && sudo_password.as_deref().is_some_and(|p| !p.is_empty())
                         {
                             sudo_buf.clear();
                             // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
-                            // 最近输入窗口里，本次提权完成后命令输出中普通的冒号
+                            // 最近输入里，本次提权完成后命令输出中普通的冒号
                             // 结尾行（apt 的 "The following ... installed:" 等）会被
                             // 反复误判成新的密码提示，前端跟着反复弹出。
                             terminal_input_buf.clear();
+                            sudo_prompt_pending = true;
                             let _ = ws_tx.send(Message::Text(
                                 "{\"kind\":\"sudo_prompt\"}".to_string().into(),
                             )).await;
