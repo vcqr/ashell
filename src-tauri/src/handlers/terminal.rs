@@ -1105,27 +1105,21 @@ fn input_line_echoes_colon(input_buf: &[u8]) -> bool {
         .is_some_and(|line| line.ends_with(':') || line.ends_with('：'))
 }
 
-/// 已知“非 sudo”的密码提示片段：即便提权命令刚输入也不注入——这些
-/// 场景（嵌套 ssh、mysql、passwd）要的密码几乎不会是登录密码。
-const NON_SUDO_PASSWORD_PROMPTS: [&str; 5] = [
-    "'s password",    // 嵌套 ssh: user@host's password:
-    "enter password", // mysql: Enter password:
-    "unix password",  // passwd: (current) UNIX password:
-    "new password",   // passwd: New password:
-    "的密码",         // OpenSSH 中文: user@host 的密码：
-];
-
 /// 判断输出尾部是否像 sudo/doas 密码提示。
 ///
 /// 兼容：
 /// - 默认 `[sudo] password for user:`
 /// - 带 ANSI/颜色序列的提示
 /// - 本地化提示（中文“密码”、西/法/德/葡/俄等 password 词）
-/// - `Password:` / `doas ... password:` / `sudo -p` 自定义短提示（要求
-///   提权命令是最后一条输入命令）
+/// - macOS/doas 风格裸 `Password:`、`sudo -p` 自定义短提示（要求提权
+///   命令是最后一条输入命令）
 ///
-/// 自带 sudo+password 词的强信号之外，弱信号提示走下方护栏分支：
-/// 键入回显瞬态不命中、纯冒号行不命中、非 sudo 的密码提示不命中。
+/// 原则：宁可不报，不要误报。弱信号层层收紧：
+/// - 裸提示必须整行恰为 `password:`——psql 的 "Password for user
+///   ..."、mysql 的 "Enter password:"、嵌套 ssh 的 "'s password:" 等
+///   他人提示一律不认
+/// - 短冒号行（无 password 词）必须紧跟含 sudo/doas 的命令回显行——
+///   `sudo cat` 输出末尾的 `TODO:` 标签、apt 列表行等一律不认
 fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     let text = sanitize_prompt_text(output_buf);
     let tail = tail_chars(&text, 320);
@@ -1166,8 +1160,7 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
         return true;
     }
 
-    // 弱信号（`Password:` / 自定义短冒号行）只在提权命令是最后一条输入
-    // 命令时采信，并逐项过防误报护栏：
+    // 弱信号只在提权命令是最后一条输入命令时采信，并逐项过防误报护栏：
     if !last_input_requests_elevation(input_buf) {
         return false;
     }
@@ -1177,15 +1170,23 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
         return false;
     }
     if mentions_password {
-        // `Password:` 类真实提示，但排除已知非 sudo 场景
-        return !NON_SUDO_PASSWORD_PROMPTS
-            .iter()
-            .any(|p| last_line.contains(p));
+        // 裸提示必须整行恰为 password 词：psql 的 "Password for user
+        // ..."、mysql 的 "Enter password:" 等他人提示宁可不报
+        return last_line == "password:";
     }
-    // `sudo -p 'pwd: '` 这类极短自定义提示：行要像提示符（够短、含字母
-    // 数字），而不是句子片段（apt 的 "The following ... installed:"）
-    // 或全屏程序的纯冒号行（vim/less 按 `:`）
-    last_line.chars().count() <= 24 && last_line.chars().any(char::is_alphanumeric)
+    // `sudo -p 'pwd: '` 这类极短自定义提示：还要紧跟在含 sudo/doas 的
+    // 命令回显行之后——`sudo cat` 文件末尾的 `TODO:`、apt 列表行等
+    // 隔着输出内容的一律放弃（lecture 夹层、长命令折行等宁可漏报）。
+    // 注意 sanitize 把 `\r\n` 变成两个 `\n`，须跳过空段才取得到回显行
+    let prev_line = normalized
+        .rsplit('\n')
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .nth(1)
+        .unwrap_or("");
+    (prev_line.contains("sudo") || prev_line.contains("doas"))
+        && last_line.chars().count() <= 24
+        && last_line.chars().any(char::is_alphanumeric)
 }
 
 async fn run_terminal(
@@ -1940,9 +1941,14 @@ mod tests {
 
     #[test]
     fn detects_short_custom_sudo_prompt() {
-        let output = b"pwd: ";
+        // 真实 `sudo -p` 提示紧跟在命令回显行之后
+        let output = b"root@web:~# sudo -p 'pwd: ' id\r\npwd: ";
         assert!(detect_sudo_password_prompt(output, b"sudo -p 'pwd: ' id\r"));
+        // 非 sudo 命令的同类短提示不认
         assert!(!detect_sudo_password_prompt(output, b"read -p 'pwd: ' x\r"));
+        // 提示行没紧跟回显行（前面是无关输出）不认
+        let deep = b"root@web:~# sudo -p 'pwd: ' id\r\nsome output line\r\npwd: ";
+        assert!(!detect_sudo_password_prompt(deep, b"sudo -p 'pwd: ' id\r"));
     }
 
     #[test]
@@ -2009,7 +2015,7 @@ mod tests {
     }
 
     /// 提权命令刚输入时出现的已知非 sudo 密码提示：注入登录密码几乎
-    /// 必错（嵌套 ssh / mysql 的密码不是登录密码），不弹填充。
+    /// 必错（嵌套 ssh / mysql / psql 的密码不是登录密码），不弹填充。
     #[test]
     fn non_sudo_password_prompts_are_not_filled_even_when_elevated() {
         // sudo 内嵌套 ssh：user@host's password:
@@ -2022,16 +2028,45 @@ mod tests {
             b"Enter password: ",
             b"sudo mysql -uroot -p\r"
         ));
+        // sudo 进 psql：Password for user postgres:
+        assert!(!detect_sudo_password_prompt(
+            b"Password for user postgres: ",
+            b"sudo psql -U postgres\r"
+        ));
+        // sudo 进 passwd：New password:
+        assert!(!detect_sudo_password_prompt(
+            b"New password: ",
+            b"sudo passwd alice\r"
+        ));
     }
 
-    /// 新护栏不得挡住真实提示：短自定义提示与 `Password:` 在提权命令
-    /// 刚输入时仍要命中。
+    /// 提权命令输出深处的短冒号行（cat 文件末尾的 `TODO:` 标签等）不是
+    /// 提示：真实 `sudo -p` 提示紧跟命令回显行，隔着输出内容的按
+    /// "宁可不报"原则放弃。
+    #[test]
+    fn short_colon_line_deep_in_output_is_not_a_prompt() {
+        assert!(!detect_sudo_password_prompt(
+            b"root@web:~# sudo cat note.txt\r\nmeeting at 10\r\nTODO: ",
+            b"sudo cat note.txt\r"
+        ));
+        // 前一行就是命令回显时才认
+        assert!(detect_sudo_password_prompt(
+            b"root@web:~# sudo -p 'pwd: ' id\r\npwd: ",
+            b"sudo -p 'pwd: ' id\r"
+        ));
+    }
+
+    /// 新护栏不得挡住真实提示：裸 `Password:`（macOS/doas 风格）在提权
+    /// 命令刚输入时仍要命中；本地化提示自带 sudo 词走强信号不受影响。
     #[test]
     fn real_prompts_still_fire_after_guardrails() {
-        assert!(detect_sudo_password_prompt(b"pwd: ", b"sudo -p 'pwd: ' id\r"));
         assert!(detect_sudo_password_prompt(
             b"Password: ",
             b"sudo systemctl restart sshd\r"
+        ));
+        assert!(detect_sudo_password_prompt(
+            "[sudo] 用户 的密码：".as_bytes(),
+            b""
         ));
     }
 
