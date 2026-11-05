@@ -4,7 +4,7 @@
 > 设计原则：**宁可不报，不要误报**——误报的代价是把 SSH 登录密码明文注入命令行（回显可见、进 shell history）。
 >
 > 关联代码：
-> - 后端检测 `src-tauri/src/handlers/terminal.rs:1135` `detect_sudo_password_prompt`
+> - 后端检测 `src-tauri/src/handlers/terminal.rs:1153` `detect_sudo_prompt_tier`（置信分层；`detect_sudo_password_prompt` 为测试/探针封装）
 > - 后端注入门禁 `src-tauri/src/handlers/terminal.rs:1768` `ClientMsg::SudoFill`（`sudo_prompt_pending_at` + `SUDO_FILL_MAX_AGE`，`terminal.rs:1687` / `:479`）
 > - 前端状态机 `src/composables/useSudoFill.ts`
 > - 前端确认入口 `src/components/TerminalView.vue:111` `onSudoHintClick`（点击提示条 / Ctrl+Enter）

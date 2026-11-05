@@ -1133,6 +1133,8 @@ fn input_line_echoes_colon(input_buf: &[u8]) -> bool {
 /// - 正在键入的命令回显不命中
 /// - 裸提示整行恰为 `password:`；短提示 ≤24 字符且含字母数字
 /// sudo 提示是否命中（弱置信也算命中）。分层见 [`detect_sudo_prompt_tier`]。
+/// 仅测试与误报探针使用（scripts/sudo-fp-probe.sh 按名抽取），正式构建不编译。
+#[cfg(test)]
 fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     detect_sudo_prompt_tier(output_buf, input_buf).is_some()
 }
