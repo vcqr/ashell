@@ -382,9 +382,11 @@ fn is_password_prompt(text: &str) -> bool {
 
 /// 已建立的 SSH 会话
 ///
-/// `handle` 包在 `AsyncMutex` 里是为了让 `tcpip_forward` / `cancel_tcpip_forward`
-/// 这种需要 `&mut self` 的 russh API 也能在 `Arc<Session>` 共享场景下调用。
-/// 其它仅需 `&self` 的方法（开 channel / disconnect）也走同一把锁，开销可忽略。
+/// `handle` 包在 `AsyncMutex` 里是因为 russh 0.65 的 `Handle` 内含
+/// `UnboundedReceiver`（非 `Sync`），跨任务共享必须经互斥保护；其全部公开
+/// 方法已是 `&self`，锁不再是为 `&mut self` API 而设。注意锁会跨越一次
+/// channel open 的网络往返，同一连接上的开 channel 请求在此串行排队
+/// （sysinfo 轮询间隔 1.5s，是当前唯一的高频来源）。
 pub struct Session {
     handle: AsyncMutex<Handle<ClientHandler>>,
     sid_slot: Arc<AsyncMutex<Option<String>>>,
