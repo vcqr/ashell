@@ -1118,10 +1118,11 @@ fn input_line_echoes_colon(input_buf: &[u8]) -> bool {
 /// 原则：宁可不报，不要误报——误报的代价是把 SSH 登录密码明文注入
 /// 命令行（回显可见、进 shell history）。
 ///
-/// 强信号：行首锚定的官方提示（`[sudo] ...` / `doas ...` 开头）且含密码
-/// 词。不锚定行首时，journalctl 日志行、man 文档、`cat` 文件内容里碰巧
-/// 同时含 "sudo" 与 "password" 的冒号行（`change your sudo password:`
-/// 等）会被当成提示；键入 `sudo grep password x:` 的回显瞬态同样漏网。
+/// 强信号：`[sudo]` 开头的行首锚定官方提示（各语言 .mo 均保留 `[sudo]`
+/// 前缀）且含密码词。不锚定行首时，journalctl 日志行、man 文档、`cat`
+/// 文件内容里碰巧同时含 "sudo" 与 "password" 的冒号行（`change your
+/// sudo password:` 等）会被当成提示；键入 `sudo grep password x:` 的
+/// 回显瞬态同样漏网。`doas` 开头的裸前缀须提权命令佐证。
 ///
 /// 弱信号（裸 `Password:`、`sudo -p` 自定义短提示）层层佐证：
 /// - 提权命令是最后一条输入命令的首词（`grep sudo x`、`ssh host sudo`
@@ -1166,13 +1167,18 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     .iter()
     .any(|word| last_line.contains(word));
 
-    // 强信号：官方提示文案是行首锚定的整段翻译（各语言 .mo 均保留
-    // `[sudo]` 前缀），行首不是 `[sudo]`/`doas` 的一律不是 sudo 在要密码
-    let anchored = last_line.starts_with("[sudo]")
-        || last_line.starts_with("doas ")
+    // 强信号：`[sudo]` 括号标记是 sudo 提示的权威锚点（各语言 .mo 均保留
+    // 该前缀，随机文本几乎不会以它开头），不看输入侧——密码输错重试时
+    // 输入缓冲已被命中清空，靠它兜住重试识别。
+    // `doas` 裸前缀远不如 `[sudo]` 独特（普通文本/日志可携带），须有提权
+    // 命令佐证才采信
+    if last_line.starts_with("[sudo]") && mentions_password && last_line.chars().count() <= 64 {
+        return true;
+    }
+    let anchored_doas = last_line.starts_with("doas ")
         || last_line.starts_with("doas(")
         || last_line.starts_with("doas:");
-    if anchored && mentions_password && last_line.chars().count() <= 64 {
+    if anchored_doas && mentions_password && last_input_requests_elevation(input_buf) {
         return true;
     }
 
@@ -2201,8 +2207,9 @@ mod tests {
         ));
     }
 
-    /// 行首锚定的官方提示不依赖输入上下文：默认提示、中文本地化、doas、
-    /// 密码输错重试（输入缓冲已被命中清空）都仍命中。
+    /// 行首锚定的官方提示不依赖输入上下文：默认提示、中文本地化、密码
+    /// 输错重试（输入缓冲已被命中清空）都仍命中；`doas` 裸前缀需提权
+    /// 命令佐证。
     #[test]
     fn anchored_official_prompts_still_fire() {
         assert!(detect_sudo_password_prompt(b"[sudo] password for user: ", b""));
@@ -2212,7 +2219,12 @@ mod tests {
         ));
         assert!(detect_sudo_password_prompt(
             b"doas (user@web) password: ",
-            b""
+            b"doas id\r"
+        ));
+        // doas 前缀无提权命令佐证：可能是日志/文本巧合，不命中
+        assert!(!detect_sudo_password_prompt(
+            b"doas (user@web) password: ",
+            b"ls\r"
         ));
         assert!(detect_sudo_password_prompt(
             b"[sudo] password for user:\r\nSorry, try again.\r\n[sudo] password for user: ",
