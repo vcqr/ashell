@@ -2,8 +2,8 @@ import { onBeforeUnmount, ref } from "vue"
 
 /**
  * sudo 密码自动填充状态机：后端识别到 sudo 密码提示（sudo_prompt）后
- * armSudo 进入 15 秒武装期，期间下一个回车被解释为"确认填充"
- * （onData 侧发 sudo_fill 让后端注入密码），输入其他字符立即解除。
+ * armSudo 进入 15 秒待填充状态，期间下一个回车被解释为"确认填充"
+ * （onData 侧发 sudo_fill 让后端注入密码），输入其他字符立即退出。
  */
 export function useSudoFill() {
   const sudoArmed = ref(false)

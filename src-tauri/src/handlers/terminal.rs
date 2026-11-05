@@ -1656,7 +1656,7 @@ async fn run_terminal(
     let mut session_end_code: Option<&'static str> = None;
     let mut sudo_buf: Vec<u8> = Vec::with_capacity(PROMPT_BUF_LIMIT);
     let mut terminal_input_buf: Vec<u8> = Vec::with_capacity(INPUT_BUF_LIMIT);
-    // sudo 提示武装是否仍有效：命中后一旦有新输出（下一次按键回显、
+    // sudo 提示待填充状态是否仍有效：命中后一旦有新输出（下一次按键回显、
     // 命令的后续输出）立即失效并通知前端撤条——真实密码提示在等待期间
     // 终端静默，误报命中后必然跟着新输出。失效后回车不再注入，杜绝把
     // 密码打进明文回显 / 命令行 / shell history
@@ -1734,9 +1734,9 @@ async fn run_terminal(
                                         let _ = ws_tx.send(Message::Text("{\"kind\":\"pong\"}".to_string().into())).await;
                                     }
                                     ClientMsg::SudoFill => {
-                                        // 只有提示武装仍有效（其后无新输出）才注入：
+                                        // 只有提示待填充状态仍有效（其后无新输出）才注入：
                                         // 真实密码提示等待期间终端静默，误报命中后
-                                        // 紧随的输出会先撤防。拒绝时回 sudo_fill_result
+                                        // 紧随的输出会先使其失效。拒绝时回 sudo_fill_result
                                         // 让前端补发被拦截的回车，不吞按键
                                         let accepted = sudo_prompt_pending
                                             && sudo_password
@@ -1817,9 +1817,10 @@ async fn run_terminal(
                             break;
                         }
 
-                        // 武装失效检查先行：命中后紧随的任何输出都说明不是
-                        // 真实提示（真实提示等待期间终端静默），立即撤防并
-                        // 让前端撤掉提示条，防止之后回车把密码注入明文回显
+                        // 待填充状态失效检查先行：命中后紧随的任何输出都说明
+                        // 不是真实提示（真实提示等待期间终端静默），立即退出
+                        // 待填充并让前端撤掉提示条，防止之后回车把密码注入
+                        // 明文回显
                         if sudo_prompt_pending {
                             sudo_prompt_pending = false;
                             let _ = ws_tx.send(Message::Text(
@@ -1850,9 +1851,10 @@ async fn run_terminal(
                         if ws_tx.send(Message::Binary(bytes.clone().into())).await.is_err() { break; }
 
                         // 部分服务端/程序会把密码提示写到 stderr；这里同样参与识别。
-                        // 武装失效检查先行：命中后紧随的任何输出都说明不是
-                        // 真实提示（真实提示等待期间终端静默），立即撤防并
-                        // 让前端撤掉提示条，防止之后回车把密码注入明文回显
+                        // 待填充状态失效检查先行：命中后紧随的任何输出都说明
+                        // 不是真实提示（真实提示等待期间终端静默），立即退出
+                        // 待填充并让前端撤掉提示条，防止之后回车把密码注入
+                        // 明文回显
                         if sudo_prompt_pending {
                             sudo_prompt_pending = false;
                             let _ = ws_tx.send(Message::Text(
