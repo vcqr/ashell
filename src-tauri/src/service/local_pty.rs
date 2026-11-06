@@ -81,9 +81,85 @@ struct ReadyMsg<'a> {
     sid: &'a str,
 }
 
-/// `shell` 形如 `"powershell"` / `"pwsh"` / `"cmd"` / `"bash"` / `"zsh"` / 绝对路径。
-/// 传 `None` 走平台默认。返回命令与识别出的 shell 类别（用于 cwd 上报注入）。
-fn resolve_command(shell: Option<&str>) -> (CommandBuilder, ShellKind) {
+/// 引号感知的命令行分词：按空白切分，双/单引号包裹的段落保留空白；
+/// 反斜杠仅转义引号与反斜杠自身——`"C:\Program Files\Git\bin\bash.exe"`
+/// 这类含空格的 Windows 路径无需双写反斜杠。面向设置里自定义启动命令的
+/// 常见写法，不追求完整 POSIX / MSVC 引号规则。
+fn split_command_line(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_token = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' | '\t' => {
+                if in_token {
+                    out.push(std::mem::take(&mut cur));
+                    in_token = false;
+                }
+            }
+            quote @ ('"' | '\'') => {
+                in_token = true;
+                while let Some(&n) = chars.peek() {
+                    if n == quote {
+                        chars.next();
+                        break;
+                    }
+                    if n == '\\' {
+                        chars.next();
+                        match chars.peek() {
+                            Some(&e) if e == quote || e == '\\' => {
+                                cur.push(e);
+                                chars.next();
+                            }
+                            _ => cur.push('\\'),
+                        }
+                    } else {
+                        cur.push(n);
+                        chars.next();
+                    }
+                }
+            }
+            '\\' => {
+                in_token = true;
+                match chars.peek() {
+                    Some(&e) if e == '"' || e == '\'' || e == '\\' => {
+                        cur.push(e);
+                        chars.next();
+                    }
+                    _ => cur.push('\\'),
+                }
+            }
+            _ => {
+                in_token = true;
+                cur.push(c);
+            }
+        }
+    }
+    if in_token {
+        out.push(cur);
+    }
+    out
+}
+
+/// 解析结果：程序、参数与识别出的 shell 类别（类别用于 cwd 上报注入）。
+struct ResolvedParts {
+    program: String,
+    args: Vec<String>,
+    kind: ShellKind,
+}
+
+fn parts(program: &str, args: &[&str], kind: ShellKind) -> ResolvedParts {
+    ResolvedParts {
+        program: program.to_string(),
+        args: args.iter().map(|s| s.to_string()).collect(),
+        kind,
+    }
+}
+
+/// 解析 `shell` 候选为程序 + 参数 + 类别。`shell` 形如 `"powershell"` /
+/// `"pwsh"` / `"cmd"` / `"bash"` / `"zsh"` / 绝对路径；`None`/空串走平台默认。
+fn resolve_parts(shell: Option<&str>) -> ResolvedParts {
     let pick = shell.map(str::trim).filter(|s| !s.is_empty());
 
     if cfg!(windows) {
@@ -91,24 +167,14 @@ fn resolve_command(shell: Option<&str>) -> (CommandBuilder, ShellKind) {
             "auto" => {
                 // Windows 默认偏好 PowerShell；不存在再退回 cmd。
                 if which_in_path("powershell.exe").is_some() {
-                    let mut c = CommandBuilder::new("powershell.exe");
-                    c.arg("-NoLogo");
-                    (c, ShellKind::PowerShell)
+                    parts("powershell.exe", &["-NoLogo"], ShellKind::PowerShell)
                 } else {
-                    (CommandBuilder::new("cmd.exe"), ShellKind::Cmd)
+                    parts("cmd.exe", &[], ShellKind::Cmd)
                 }
             }
-            "powershell" => {
-                let mut c = CommandBuilder::new("powershell.exe");
-                c.arg("-NoLogo");
-                (c, ShellKind::PowerShell)
-            }
-            "pwsh" => {
-                let mut c = CommandBuilder::new("pwsh.exe");
-                c.arg("-NoLogo");
-                (c, ShellKind::PowerShell)
-            }
-            "cmd" => (CommandBuilder::new("cmd.exe"), ShellKind::Cmd),
+            "powershell" => parts("powershell.exe", &["-NoLogo"], ShellKind::PowerShell),
+            "pwsh" => parts("pwsh.exe", &["-NoLogo"], ShellKind::PowerShell),
+            "cmd" => parts("cmd.exe", &[], ShellKind::Cmd),
             "git-bash" | "bash" => {
                 // Git Bash 常见路径。注意：这里不加 -i，由 apply_cwd_reporting
                 // 统一追加（--rcfile 必须排在 -i 之前，见其注释）
@@ -117,27 +183,18 @@ fn resolve_command(shell: Option<&str>) -> (CommandBuilder, ShellKind) {
                     "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
                 ] {
                     if std::path::Path::new(p).exists() {
-                        return (CommandBuilder::new(p), ShellKind::Bash);
+                        return parts(p, &[], ShellKind::Bash);
                     }
                 }
-                (CommandBuilder::new("bash.exe"), ShellKind::Bash)
+                parts("bash.exe", &[], ShellKind::Bash)
             }
-            other => {
-                let kind = kind_of(other);
-                (CommandBuilder::new(other), kind)
-            }
+            other => parts(other, &[], kind_of(other)),
         }
     } else {
         // macOS/Linux：必须以登录交互 shell 启动（`-l -i`），否则 ~/.zprofile / ~/.zshrc
         // / ~/.bash_profile 不会被执行，PATH 里用户自定义的部分（homebrew、nvm、pyenv、
         // cargo bin 等）全丢。GUI app（Tauri）从 Finder/Dock 拉起时父进程环境本身就残缺，
         // 只有让 shell 跑一遍启动脚本才能重建出和 iTerm2 / Terminal.app 一致的环境。
-        let make_login_interactive = |program: &str| -> CommandBuilder {
-            let mut c = CommandBuilder::new(program);
-            c.arg("-l");
-            c.arg("-i");
-            c
-        };
         // 依候选顺序返回第一个真实存在的 shell；全部缺失时退回 /bin/sh
         // （alpine 等 minimal 环境只有 busybox ash，避免硬编码路径导致 spawn 失败）
         let first_existing = |paths: &[&str]| -> String {
@@ -157,38 +214,83 @@ fn resolve_command(shell: Option<&str>) -> (CommandBuilder, ShellKind) {
                 let s = shell_env.unwrap_or_else(|| {
                     first_existing(&["/bin/bash", "/bin/zsh", "/usr/bin/fish", "/bin/sh"])
                 });
-                let kind = kind_of(&s);
-                (make_login_interactive(&s), kind)
+                parts(&s, &["-l", "-i"], kind_of(&s))
             }
-            "bash" => {
-                let s = first_existing(&["/bin/bash", "/usr/bin/bash"]);
-                (make_login_interactive(&s), ShellKind::Bash)
-            }
-            "zsh" => {
-                let s = first_existing(&["/bin/zsh", "/usr/bin/zsh"]);
-                (make_login_interactive(&s), ShellKind::Zsh)
-            }
+            "bash" => parts(
+                &first_existing(&["/bin/bash", "/usr/bin/bash"]),
+                &["-l", "-i"],
+                ShellKind::Bash,
+            ),
+            "zsh" => parts(
+                &first_existing(&["/bin/zsh", "/usr/bin/zsh"]),
+                &["-l", "-i"],
+                ShellKind::Zsh,
+            ),
             "sh" => {
                 // sh 没有 -l/-i 的稳定语义，直接起裸 sh
-                (CommandBuilder::new("/bin/sh"), ShellKind::Other)
+                parts("/bin/sh", &[], ShellKind::Other)
             }
-            "fish" => {
-                let s = first_existing(&["/usr/bin/fish", "/bin/fish"]);
-                (make_login_interactive(&s), ShellKind::Other)
-            }
+            "fish" => parts(
+                &first_existing(&["/usr/bin/fish", "/bin/fish"]),
+                &["-l", "-i"],
+                ShellKind::Other,
+            ),
             other => {
                 if std::path::Path::new(other).exists() {
-                    let kind = kind_of(other);
-                    (make_login_interactive(other), kind)
+                    parts(other, &["-l", "-i"], kind_of(other))
                 } else {
                     log::warn!("shell {other} 不存在，回退系统默认候选");
                     let s = first_existing(&["/bin/bash", "/bin/zsh", "/bin/sh"]);
-                    let kind = kind_of(&s);
-                    (make_login_interactive(&s), kind)
+                    parts(&s, &["-l", "-i"], kind_of(&s))
                 }
             }
         }
     }
+}
+
+/// `shell` 候选 + 可选的整条命令行覆盖 → 实际启动命令与 shell 类别。
+/// 覆盖非空时整条生效：引号感知分词（见 `split_command_line`），首段为
+/// 程序、其余为参数；shell 类别仍按程序名识别，cwd 上报注入继续生效。
+/// 覆盖为空/纯空白时按 shell 候选默认解析（`resolve_parts`）。
+fn resolve_command(
+    shell: Option<&str>,
+    command_override: Option<&str>,
+) -> (CommandBuilder, ShellKind) {
+    if let Some(line) = command_override.map(str::trim).filter(|s| !s.is_empty()) {
+        let mut parts = split_command_line(line);
+        if !parts.is_empty() {
+            let program = parts.remove(0);
+            let kind = kind_of(&program);
+            let mut c = CommandBuilder::new(program);
+            for a in parts {
+                c.arg(a);
+            }
+            return (c, kind);
+        }
+        // 分词结果为空 → 落回默认解析
+    }
+    let p = resolve_parts(shell);
+    let mut c = CommandBuilder::new(p.program);
+    for a in p.args {
+        c.arg(a);
+    }
+    (c, p.kind)
+}
+
+/// 预览 shell 候选对应的完整启动命令（程序 + 参数；含空白的段落加双引号）。
+/// 只拼基础命令，不含 apply_cwd_reporting 追加的 cwd 上报注入参数。
+pub fn format_shell_preview(shell: Option<&str>) -> String {
+    let p = resolve_parts(shell);
+    let quote = |s: &str| {
+        if s.chars().any(|c| c.is_whitespace()) {
+            format!("\"{}\"", s.replace('"', "\\\""))
+        } else {
+            s.to_string()
+        }
+    };
+    let mut items = vec![quote(&p.program)];
+    items.extend(p.args.iter().map(|a| quote(a)));
+    items.join(" ")
 }
 
 /// 极简 PATH 查找：用于 Windows auto 路径下判断 powershell.exe 是否存在。
@@ -485,7 +587,12 @@ fn write_text_input(writer: &mut dyn std::io::Write, data: &str, ctx: &str) -> b
     write_input(writer, &bytes, ctx)
 }
 
-pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
+pub async fn handle(
+    socket: WebSocket,
+    sid: String,
+    shell: Option<String>,
+    shell_command: Option<String>,
+) {
     log::info!("local_pty: connected sid={sid} shell={shell:?}");
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -530,7 +637,8 @@ pub async fn handle(socket: WebSocket, sid: String, shell: Option<String>) {
         };
 
         // 2) 拼命令
-        let (mut cmd, shell_kind) = resolve_command(shell.as_deref());
+        let (mut cmd, shell_kind) =
+            resolve_command(shell.as_deref(), shell_command.as_deref());
         inherit_env(&mut cmd);
         apply_cwd_reporting(&mut cmd, shell_kind);
         // 重启代优先回到上一代 shell 的工作目录
@@ -877,5 +985,65 @@ mod tests {
             encode_win32_input("\u{1D11E}"),
             b"\x1b[0;0;55348;1;0;1_\x1b[0;0;56606;1;0;1_".to_vec()
         );
+    }
+
+    #[test]
+    fn splits_command_line_with_quotes() {
+        // 普通参数按空白切分
+        assert_eq!(
+            split_command_line("pwsh.exe -NoLogo -NoProfile"),
+            vec!["pwsh.exe", "-NoLogo", "-NoProfile"]
+        );
+        // 引号内的空格保留；Windows 路径反斜杠无需双写
+        assert_eq!(
+            split_command_line(r#""C:\Program Files\Git\bin\bash.exe" -i"#),
+            vec![r"C:\Program Files\Git\bin\bash.exe", "-i"]
+        );
+        // 单引号同样成段
+        assert_eq!(
+            split_command_line("'/bin/my shell' -l"),
+            vec!["/bin/my shell", "-l"]
+        );
+        // 多余空白不产生空 token；全空白结果为空
+        assert_eq!(split_command_line("  a   b  "), vec!["a", "b"]);
+        assert!(split_command_line("   ").is_empty());
+    }
+
+    #[test]
+    fn override_command_replaces_resolution() {
+        // 整条覆盖生效：首段为程序，其余为参数；类别按程序名识别（与
+        // shell 候选无关，powershell 字样不参与判定）
+        let (cmd, kind) = resolve_command(
+            Some("powershell"),
+            Some(r#""C:\Program Files\Git\bin\bash.exe" -i"#),
+        );
+        assert_eq!(kind, ShellKind::Bash);
+        // get_argv 返回 &Vec<OsString>（argv[0] 为程序）
+        let argv: Vec<String> = cmd
+            .get_argv()
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            argv,
+            vec![r"C:\Program Files\Git\bin\bash.exe".to_string(), "-i".to_string()]
+        );
+        // 空白覆盖 → 落回默认解析
+        let (_, kind) = resolve_command(Some("powershell"), Some("   "));
+        assert_eq!(kind, ShellKind::PowerShell);
+    }
+
+    #[test]
+    fn preview_formats_platform_default() {
+        // 平台分支不同，各验证一个确定性候选
+        if cfg!(windows) {
+            assert_eq!(format_shell_preview(Some("cmd")), "cmd.exe");
+            assert_eq!(
+                format_shell_preview(Some("powershell")),
+                "powershell.exe -NoLogo"
+            );
+        } else {
+            assert_eq!(format_shell_preview(Some("sh")), "/bin/sh");
+        }
     }
 }

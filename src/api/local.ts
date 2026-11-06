@@ -4,9 +4,20 @@ import type { SftpListResp } from "@/types"
 
 /** 本地 PTY 终端 WebSocket URL */
 export function buildLocalTerminalWsUrl(
-  query: { sid?: string; shell?: string } = {},
+  query: { sid?: string; shell?: string; shell_command?: string } = {},
 ): Promise<string> {
   return buildWsUrl("/api/local/terminal", query)
+}
+
+/** 预览 shell 候选的实际启动命令（程序 + 参数，后端按平台解析，含
+ *  Git Bash 路径探测等）；shell 为空 = 平台 auto。设置→启动 的
+ *  "启动命令"文本框 placeholder 与「填充默认」按钮取这个值。 */
+export function previewShellCommand(
+  shell?: string,
+): Promise<{ command: string }> {
+  return request<{ command: string }>("/api/local/shell_preview", {
+    params: { shell: shell || undefined },
+  })
 }
 
 /** 列本地目录（SFTP 双栏的本地侧）。path 为空 = 用户家目录。

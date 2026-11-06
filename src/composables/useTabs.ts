@@ -60,6 +60,7 @@ type PersistedTab = Pick<
   | "icon"
   | "color"
   | "shell"
+  | "shellCommand"
   | "hostInfo"
 >;
 
@@ -478,6 +479,7 @@ export function useTabs() {
             icon: t.icon ?? null,
             color: t.color ?? null,
             shell: t.shell ?? null,
+            shellCommand: t.shellCommand ?? null,
             hostInfo: t.hostInfo,
           })),
           activeKey: activeTabKey.value,
@@ -635,11 +637,14 @@ export function useTabs() {
     if (!hostsPinned.value) hostsOpen.value = false;
   }
 
-  function openLocal(shell?: string) {
+  function openLocal(shell?: string, shellCommand?: string | null) {
     tabSeq += 1;
     const key = `tab-${tabSeq}`;
     const chosen =
       (shell ?? startupStore.defaultShell ?? "auto").trim() || "auto";
+    // 命令覆盖随 tab 固化（复制 tab 时保留原 tab 的覆盖，而不是重读设置）
+    const override =
+      (shellCommand ?? startupStore.shellCommand ?? "").trim() || null;
     const sameLocalCount = tabs.value.filter((t) => t.kind === "local").length;
     const baseTitle = chosen === "auto" ? "Local" : `Local (${chosen})`;
     const title =
@@ -649,6 +654,7 @@ export function useTabs() {
       title,
       kind: "local",
       shell: chosen,
+      shellCommand: override,
       status: "connecting",
       icon: null,
       color: null,
@@ -756,7 +762,7 @@ export function useTabs() {
     const t = tabs.value.find((x) => x.key === key);
     if (!t) return;
     if (t.kind === "local") {
-      openLocal(t.shell ?? undefined);
+      openLocal(t.shell ?? undefined, t.shellCommand);
       return;
     }
     if (t.hostId === undefined || t.hostId === null || !t.hostKey) return;

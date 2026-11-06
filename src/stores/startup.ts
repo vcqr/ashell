@@ -8,6 +8,9 @@ export interface StartupConfig {
   openLocalOnStart: boolean
   /** 默认 shell；空串视为 'auto'，由后端按平台选择（Win→PowerShell，Unix→$SHELL）。 */
   defaultShell: string
+  /** 启动命令覆盖（整条命令行含参数，如 `pwsh.exe -NoLogo -NoProfile`）；
+   *  空串 = 跟随 defaultShell 的平台默认解析。设置→启动 里查看与编辑。 */
+  shellCommand: string
   /** 是否记住上次打开的 tab；关闭时启动不恢复，且关闭后会清空已落盘的 tab 记录。 */
   restoreTabs: boolean
   /** 恢复记住的 tab 时是否自动重连；关闭时仅恢复骨架，等用户手动重连。 */
@@ -27,6 +30,7 @@ const STORAGE_KEY = "ashell:startup-config"
 const DEFAULT_CONFIG: StartupConfig = {
   openLocalOnStart: false,
   defaultShell: "auto",
+  shellCommand: "",
   restoreTabs: true,
   // Web 形态浏览器刷新即断连，默认恢复 Tab 后自动重连以还原工作现场；
   // 桌面端会话随窗口存活，保持手动重连默认
@@ -58,6 +62,10 @@ function loadConfig(): StartupConfig {
         typeof parsed.defaultShell === "string" && parsed.defaultShell
           ? parsed.defaultShell
           : DEFAULT_CONFIG.defaultShell,
+      shellCommand:
+        typeof parsed.shellCommand === "string"
+          ? parsed.shellCommand
+          : DEFAULT_CONFIG.shellCommand,
       restoreTabs:
         typeof parsed.restoreTabs === "boolean"
           ? parsed.restoreTabs
@@ -120,6 +128,7 @@ export const useStartupStore = defineStore("startup", () => {
   const initial = loadConfig()
   const openLocalOnStart = ref<boolean>(initial.openLocalOnStart)
   const defaultShell = ref<string>(initial.defaultShell)
+  const shellCommand = ref<string>(initial.shellCommand)
   const restoreTabs = ref<boolean>(initial.restoreTabs)
   const autoConnectRememberedTabs = ref<boolean>(
     initial.autoConnectRememberedTabs,
@@ -135,6 +144,7 @@ export const useStartupStore = defineStore("startup", () => {
       const snapshot: StartupConfig = {
         openLocalOnStart: openLocalOnStart.value,
         defaultShell: defaultShell.value,
+        shellCommand: shellCommand.value,
         restoreTabs: restoreTabs.value,
         autoConnectRememberedTabs: autoConnectRememberedTabs.value,
         aiAssistantEnabled: aiAssistantEnabled.value,
@@ -152,6 +162,7 @@ export const useStartupStore = defineStore("startup", () => {
     [
       openLocalOnStart,
       defaultShell,
+      shellCommand,
       restoreTabs,
       autoConnectRememberedTabs,
       aiAssistantEnabled,
@@ -167,6 +178,9 @@ export const useStartupStore = defineStore("startup", () => {
   }
   function setDefaultShell(v: string) {
     defaultShell.value = v.trim() || "auto"
+  }
+  function setShellCommand(v: string) {
+    shellCommand.value = v.trim()
   }
   function setRestoreTabs(v: boolean) {
     restoreTabs.value = v
@@ -190,6 +204,7 @@ export const useStartupStore = defineStore("startup", () => {
   return {
     openLocalOnStart,
     defaultShell,
+    shellCommand,
     restoreTabs,
     autoConnectRememberedTabs,
     aiAssistantEnabled,
@@ -198,6 +213,7 @@ export const useStartupStore = defineStore("startup", () => {
     sftpCwdFollowEnabled,
     setOpenLocalOnStart,
     setDefaultShell,
+    setShellCommand,
     setRestoreTabs,
     setAutoConnectRememberedTabs,
     setAiAssistantEnabled,

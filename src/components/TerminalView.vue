@@ -1407,6 +1407,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
       url = await buildLocalTerminalWsUrl({
         sid: opts.newSession ? undefined : props.tab.sid,
         shell: props.tab.shell ?? undefined,
+        shell_command: props.tab.shellCommand ?? undefined,
       })
     } else if (isTelnet) {
       url = await buildTelnetTerminalWsUrl(props.tab.hostId as number, {

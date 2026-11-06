@@ -2,10 +2,7 @@
 import { computed } from "vue";
 import { NInput, NSelect, NSwitch } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import {
-  useStartupStore,
-  shellOptionsForPlatform,
-} from "@/stores/startup";
+import { useStartupStore, shellOptionsForPlatform } from "@/stores/startup";
 
 const { t } = useI18n();
 const startupStore = useStartupStore();
@@ -21,8 +18,12 @@ const shellOptions = computed(() =>
     <div class="settings-block">
       <div class="setting-row">
         <div class="setting-row-main">
-          <div class="setting-row-label">{{ t("settings.startup.rememberTabs") }}</div>
-          <div class="setting-row-desc">{{ t("settings.startup.rememberTabsHint") }}</div>
+          <div class="setting-row-label">
+            {{ t("settings.startup.rememberTabs") }}
+          </div>
+          <div class="setting-row-desc">
+            {{ t("settings.startup.rememberTabsHint") }}
+          </div>
         </div>
         <div class="setting-row-control">
           <NSwitch
@@ -33,20 +34,28 @@ const shellOptions = computed(() =>
       </div>
       <div class="setting-row">
         <div class="setting-row-main">
-          <div class="setting-row-label">{{ t("settings.startup.autoConnectRememberedTabs") }}</div>
-          <div class="setting-row-desc">{{ t("settings.startup.autoConnectRememberedTabsHint") }}</div>
+          <div class="setting-row-label">
+            {{ t("settings.startup.autoConnectRememberedTabs") }}
+          </div>
+          <div class="setting-row-desc">
+            {{ t("settings.startup.autoConnectRememberedTabsHint") }}
+          </div>
         </div>
         <div class="setting-row-control">
           <NSwitch
             :value="startupStore.autoConnectRememberedTabs"
             :disabled="!startupStore.restoreTabs"
-            @update:value="(v: boolean) => startupStore.setAutoConnectRememberedTabs(v)"
+            @update:value="
+              (v: boolean) => startupStore.setAutoConnectRememberedTabs(v)
+            "
           />
         </div>
       </div>
       <div class="setting-row">
         <div class="setting-row-main">
-          <div class="setting-row-label">{{ t("settings.startup.autoOpenLocal") }}</div>
+          <div class="setting-row-label">
+            {{ t("settings.startup.autoOpenLocal") }}
+          </div>
         </div>
         <div class="setting-row-control">
           <NSwitch
@@ -57,8 +66,12 @@ const shellOptions = computed(() =>
       </div>
       <div class="setting-row">
         <div class="setting-row-main">
-          <div class="setting-row-label">{{ t("settings.startup.defaultShell") }}</div>
-          <div class="setting-row-desc">{{ t("settings.startup.defaultShellHint") }}</div>
+          <div class="setting-row-label">
+            {{ t("settings.startup.defaultShell") }}
+          </div>
+          <div class="setting-row-desc">
+            {{ t("settings.startup.defaultShellHint") }}
+          </div>
         </div>
         <div class="setting-row-control w-shell">
           <NSelect
@@ -72,8 +85,12 @@ const shellOptions = computed(() =>
       </div>
       <div class="setting-row">
         <div class="setting-row-main">
-          <div class="setting-row-label">{{ t("settings.startup.localInitCommand") }}</div>
-          <div class="setting-row-desc">{{ t("settings.startup.localInitCommandHint") }}</div>
+          <div class="setting-row-label">
+            {{ t("settings.startup.localInitCommand") }}
+          </div>
+          <div class="setting-row-desc">
+            {{ t("settings.startup.localInitCommandHint") }}
+          </div>
         </div>
         <div class="setting-row-control w-cmd">
           <NInput
@@ -85,8 +102,12 @@ const shellOptions = computed(() =>
       </div>
       <div class="setting-row">
         <div class="setting-row-main">
-          <div class="setting-row-label">{{ t("settings.startup.cwdFollow") }}</div>
-          <div class="setting-row-desc">{{ t("settings.startup.cwdFollowHint") }}</div>
+          <div class="setting-row-label">
+            {{ t("settings.startup.cwdFollow") }}
+          </div>
+          <div class="setting-row-desc">
+            {{ t("settings.startup.cwdFollowHint") }}
+          </div>
         </div>
         <div class="setting-row-control">
           <NSwitch
@@ -97,13 +118,19 @@ const shellOptions = computed(() =>
       </div>
       <div class="setting-row">
         <div class="setting-row-main">
-          <div class="setting-row-label">{{ t("settings.startup.sftpCwdFollow") }}</div>
-          <div class="setting-row-desc">{{ t("settings.startup.sftpCwdFollowHint") }}</div>
+          <div class="setting-row-label">
+            {{ t("settings.startup.sftpCwdFollow") }}
+          </div>
+          <div class="setting-row-desc">
+            {{ t("settings.startup.sftpCwdFollowHint") }}
+          </div>
         </div>
         <div class="setting-row-control">
           <NSwitch
             :value="startupStore.sftpCwdFollowEnabled"
-            @update:value="(v: boolean) => startupStore.setSftpCwdFollowEnabled(v)"
+            @update:value="
+              (v: boolean) => startupStore.setSftpCwdFollowEnabled(v)
+            "
           />
         </div>
       </div>

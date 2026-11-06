@@ -28,7 +28,7 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Query, Json};
 use axum::response::IntoResponse;
 use axum_extra::extract::Multipart;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
@@ -44,6 +44,9 @@ pub struct LocalTerminalQuery {
     /// 期望的 shell：powershell/pwsh/cmd/bash/zsh/sh/fish/git-bash 或绝对路径；
     /// 省略走平台 auto 默认
     pub shell: Option<String>,
+    /// 整条启动命令覆盖（含参数），非空时优先于 shell 解析；如
+    /// `pwsh.exe -NoLogo -NoProfile`，带空格路径用引号包裹
+    pub shell_command: Option<String>,
 }
 
 pub async fn ws_handler(
@@ -52,7 +55,31 @@ pub async fn ws_handler(
 ) -> impl IntoResponse {
     let sid = q.sid.unwrap_or_else(|| Uuid::new_v4().to_string());
     let shell = q.shell;
-    ws.on_upgrade(move |socket| local_pty::handle(socket, sid, shell))
+    let shell_command = q.shell_command;
+    ws.on_upgrade(move |socket| local_pty::handle(socket, sid, shell, shell_command))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ShellPreviewQuery {
+    /// shell 候选：powershell/pwsh/cmd/bash/zsh/sh/fish/git-bash 或绝对路径；
+    /// 省略走平台 auto 默认
+    pub shell: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShellPreviewResp {
+    /// 完整启动命令（程序 + 参数）
+    pub command: String,
+}
+
+/// 预览 shell 候选的实际启动命令（设置→启动 的"启动命令"文本框用）。
+/// 解析逻辑与本地 PTY 启动一致（含 Git Bash 路径探测等），但不含
+/// cwd 上报注入参数。
+pub async fn shell_preview(
+    Query(q): Query<ShellPreviewQuery>,
+) -> AppResult<Json<ApiResponse<ShellPreviewResp>>> {
+    let command = local_pty::format_shell_preview(q.shell.as_deref());
+    Ok(ApiResponse::ok(ShellPreviewResp { command }))
 }
 
 #[derive(Debug, Deserialize)]
