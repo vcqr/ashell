@@ -47,6 +47,9 @@ pub struct LocalTerminalQuery {
     /// 整条启动命令覆盖（含参数），非空时优先于 shell 解析；如
     /// `pwsh.exe -NoLogo -NoProfile`，带空格路径用引号包裹
     pub shell_command: Option<String>,
+    /// 初始工作目录（自定义启动项）；不存在/非目录时回退默认（家目录）。
+    /// shell 自身上报的 cwd（重启代）优先级更高
+    pub initial_cwd: Option<String>,
 }
 
 pub async fn ws_handler(
@@ -56,7 +59,10 @@ pub async fn ws_handler(
     let sid = q.sid.unwrap_or_else(|| Uuid::new_v4().to_string());
     let shell = q.shell;
     let shell_command = q.shell_command;
-    ws.on_upgrade(move |socket| local_pty::handle(socket, sid, shell, shell_command))
+    let initial_cwd = q.initial_cwd;
+    ws.on_upgrade(move |socket| {
+        local_pty::handle(socket, sid, shell, shell_command, initial_cwd)
+    })
 }
 
 #[derive(Debug, Deserialize)]

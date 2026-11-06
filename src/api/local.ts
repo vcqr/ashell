@@ -4,7 +4,12 @@ import type { SftpListResp } from "@/types"
 
 /** 本地 PTY 终端 WebSocket URL */
 export function buildLocalTerminalWsUrl(
-  query: { sid?: string; shell?: string; shell_command?: string } = {},
+  query: {
+    sid?: string
+    shell?: string
+    shell_command?: string
+    initial_cwd?: string
+  } = {},
 ): Promise<string> {
   return buildWsUrl("/api/local/terminal", query)
 }

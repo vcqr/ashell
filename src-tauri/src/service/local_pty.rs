@@ -592,6 +592,7 @@ pub async fn handle(
     sid: String,
     shell: Option<String>,
     shell_command: Option<String>,
+    initial_cwd: Option<String>,
 ) {
     log::info!("local_pty: connected sid={sid} shell={shell:?}");
 
@@ -641,10 +642,15 @@ pub async fn handle(
             resolve_command(shell.as_deref(), shell_command.as_deref());
         inherit_env(&mut cmd);
         apply_cwd_reporting(&mut cmd, shell_kind);
-        // 重启代优先回到上一代 shell 的工作目录
-        let cwd = last_cwd.lock().unwrap().clone();
-        if cwd.as_deref().is_some_and(|p| std::path::Path::new(p).is_dir()) {
-            cmd.cwd(cwd.unwrap());
+        // 重启代优先回到上一代 shell 的工作目录；其次用自定义启动项指定的
+        // 初始目录（须真实存在的目录），都没有再落家目录
+        let cwd = last_cwd.lock().unwrap().clone().or_else(|| {
+            initial_cwd
+                .clone()
+                .filter(|p| std::path::Path::new(p).is_dir())
+        });
+        if let Some(cwd) = cwd {
+            cmd.cwd(cwd);
         } else if let Ok(home) = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         {
             cmd.cwd(home);

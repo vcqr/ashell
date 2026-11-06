@@ -12,6 +12,7 @@ import type { TerminalTab, HostNode } from "@/types";
 import { useAiStore } from "@/stores/ai";
 import { useBroadcastStore } from "@/stores/broadcast";
 import { useStartupStore } from "@/stores/startup";
+import { useTerminalProfilesStore } from "@/stores/terminalProfiles";
 import { useHostStore } from "@/stores/hosts";
 import { isTauri } from "@/utils/platform";
 import { useTerminalStore } from "@/stores/terminal";
@@ -61,6 +62,7 @@ type PersistedTab = Pick<
   | "color"
   | "shell"
   | "shellCommand"
+  | "initialCwd"
   | "hostInfo"
 >;
 
@@ -179,6 +181,7 @@ export function useTabs() {
   const aiStore = useAiStore();
   const broadcastStore = useBroadcastStore();
   const startupStore = useStartupStore();
+  const profilesStore = useTerminalProfilesStore();
   const hostStore = useHostStore();
   const terminalStore = useTerminalStore();
 
@@ -480,6 +483,7 @@ export function useTabs() {
             color: t.color ?? null,
             shell: t.shell ?? null,
             shellCommand: t.shellCommand ?? null,
+            initialCwd: t.initialCwd ?? null,
             hostInfo: t.hostInfo,
           })),
           activeKey: activeTabKey.value,
@@ -637,7 +641,11 @@ export function useTabs() {
     if (!hostsPinned.value) hostsOpen.value = false;
   }
 
-  function openLocal(shell?: string, shellCommand?: string | null) {
+  function openLocal(
+    shell?: string,
+    shellCommand?: string | null,
+    opts?: { title?: string; initialCwd?: string; icon?: string },
+  ) {
     tabSeq += 1;
     const key = `tab-${tabSeq}`;
     const chosen =
@@ -646,7 +654,8 @@ export function useTabs() {
     const override =
       (shellCommand ?? startupStore.shellCommand ?? "").trim() || null;
     const sameLocalCount = tabs.value.filter((t) => t.kind === "local").length;
-    const baseTitle = chosen === "auto" ? "Local" : `Local (${chosen})`;
+    const baseTitle =
+      opts?.title ?? (chosen === "auto" ? "Local" : `Local (${chosen})`);
     const title =
       sameLocalCount > 0 ? `${baseTitle} ${sameLocalCount + 1}` : baseTitle;
     tabs.value.push({
@@ -655,17 +664,36 @@ export function useTabs() {
       kind: "local",
       shell: chosen,
       shellCommand: override,
+      initialCwd: opts?.initialCwd ?? null,
+      icon: opts?.icon ?? null,
       status: "connecting",
-      icon: null,
       color: null,
     });
     activateTab(key);
     if (!hostsPinned.value) hostsOpen.value = false;
   }
 
-  function onTabBarNew(kind: "host" | "local") {
-    if (kind === "local") openLocal();
-    else hostsOpen.value = true;
+  function onTabBarNew(
+    kind: "host" | "local" | "profile",
+    value?: string,
+  ) {
+    if (kind === "local") {
+      // 从 + 菜单按类型直开时显式传 shell 并以空串绕过全局「启动命令」覆盖：
+      // 覆盖是单条全局命令行，无法对应任意类型，类型忠实优先
+      openLocal(value, value ? "" : undefined);
+    } else if (kind === "profile") {
+      // 自定义启动项：整条命令覆盖 + 命名标题 + 初始工作目录/图标；
+      // name/command 缺一的坏数据不出现在菜单，这里再兜一道
+      const p = profilesStore.list.find((x) => x.id === value);
+      if (!p?.name.trim() || !p.command.trim()) return;
+      openLocal("auto", p.command, {
+        title: p.name.trim(),
+        initialCwd: p.cwd?.trim() || undefined,
+        icon: p.icon?.trim() || undefined,
+      });
+    } else {
+      hostsOpen.value = true;
+    }
   }
 
   function closeTab(key: string) {

@@ -33,6 +33,8 @@ import {
 
 import { useIconStore } from '@/stores/icons'
 import { useBroadcastStore } from '@/stores/broadcast'
+import { shellOptionsForPlatform } from '@/stores/startup'
+import { useTerminalProfilesStore } from '@/stores/terminalProfiles'
 import type { TerminalTab } from '@/types'
 
 const props = defineProps<{
@@ -53,7 +55,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:active-key': [key: string]
   close: [key: string]
-  new: [kind: 'host' | 'local']
+  new: [kind: 'host' | 'local' | 'profile', value?: string]
   reorder: [tabs: TerminalTab[]]
   reconnect: [key: string]
   disconnect: [key: string]
@@ -76,6 +78,31 @@ const dialog = useDialog()
 
 const iconStore = useIconStore()
 const broadcastStore = useBroadcastStore()
+const profilesStore = useTerminalProfilesStore()
+
+function renderMenuIcon(comp: unknown) {
+  return () => h(NIcon, null, { default: () => h(comp as never) })
+}
+
+/** 自定义启动项的菜单图标：图标库文件名 → <img>；无图标回退默认终端图标 */
+function renderProfileMenuIcon(name?: string | null) {
+  const url = name ? iconStore.urlOf(name) : undefined
+  if (url) {
+    return () =>
+      h("img", {
+        src: url,
+        width: 16,
+        height: 16,
+        style: { borderRadius: "3px", objectFit: "contain", flexShrink: 0 },
+      })
+  }
+  return renderMenuIcon(RiTerminalBoxLine)
+}
+
+onMounted(() => {
+  // 菜单里 host/profile 图标依赖图标库 URL 映射
+  void iconStore.ensureLoaded()
+})
 const { t } = useI18n()
 
 /** 当前生效的广播源全局 key（依赖 props.activeKey 实时计算）。 */
@@ -278,10 +305,6 @@ function onItemContextMenu(e: MouseEvent, key: string) {
   })
 }
 
-function renderMenuIcon(comp: unknown) {
-  return () => h(NIcon, null, { default: () => h(comp as never) })
-}
-
 const newTabOptions = computed<DropdownOption[]>(() => [
   {
     label: t('terminal.tabBar.openHost'),
@@ -293,11 +316,36 @@ const newTabOptions = computed<DropdownOption[]>(() => [
     key: 'local',
     icon: renderMenuIcon(RiTerminalBoxLine),
   },
+  // 平台可用的 shell 类型直开项（Windows Terminal 风格）：
+  // 按类型新开 tab，用平台默认参数，不套用设置的「启动命令」覆盖
+  { type: 'divider', key: 'new-tab-divider' },
+  ...shellOptionsForPlatform().map(
+    (o): DropdownOption => ({
+      label: o.label,
+      key: `shell:${o.value}`,
+      icon: renderMenuIcon(RiTerminalBoxLine),
+    }),
+  ),
+  // 用户自定义启动项（设置→启动 维护；name/command 缺一的不展示）
+  { type: 'divider', key: 'new-tab-profiles-divider' },
+  ...profilesStore.list
+    .filter((p) => p.name.trim() && p.command.trim())
+    .map(
+      (p): DropdownOption => ({
+        label: p.name.trim(),
+        key: `profile:${p.id}`,
+        icon: renderProfileMenuIcon(p.icon),
+      }),
+    ),
 ])
 
 function onNewSelect(action: string) {
   if (action === 'host' || action === 'local') {
     emit('new', action)
+  } else if (action.startsWith('shell:')) {
+    emit('new', 'local', action.slice('shell:'.length))
+  } else if (action.startsWith('profile:')) {
+    emit('new', 'profile', action.slice('profile:'.length))
   }
 }
 
