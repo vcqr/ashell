@@ -77,6 +77,9 @@ tauri-plugin-global-shortcut = { version = "2", optional = true }
 tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# sudo 官方密码提示的括号锚正则（handlers/terminal.rs 的 SUDO_BRACKET_RE）；
+# 1.13 已在依赖树中（传递依赖），声明为直接依赖不增加产物体积
+regex = "1"
 
 # HTTP / WebSocket server
 axum = { version = "0.8", features = ["ws", "macros"] }

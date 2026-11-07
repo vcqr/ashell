@@ -251,7 +251,11 @@ pub async fn handle(
         tokio::select! {
             // TCP 输出 → WS Binary
             Some(data) = out_rx.recv() => {
-                let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &data));
+                // 有订阅者（POST /api/ssh/send 的输出收集）才做 lossy 转换广播，
+                // 零订阅者的常态下不白白分配 String
+                if output_tx.receiver_count() > 0 {
+                    let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &data));
+                }
                 if ws_tx.send(Message::Binary(data.into())).await.is_err() {
                     break;
                 }

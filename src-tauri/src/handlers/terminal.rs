@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -1118,8 +1118,8 @@ fn input_line_echoes_colon(input_buf: &[u8]) -> bool {
 /// 原则：宁可不报，不要误报——误报的代价是把 SSH 登录密码明文注入
 /// 命令行（回显可见、进 shell history）。
 ///
-/// 强信号：`[sudo]` 开头的行首锚定官方提示（各语言 .mo 均保留 `[sudo]`
-/// 前缀）且含密码词。不锚定行首时，journalctl 日志行、man 文档、`cat`
+/// 强信号：sudo 官方括号锚（`^\[sudo[^\]]*\]`，覆盖两代及未来变体，见
+/// [`SUDO_BRACKET_RE`]）且含密码词。不锚定行首时，journalctl 日志行、man 文档、`cat`
 /// 文件内容里碰巧同时含 "sudo" 与 "password" 的冒号行（`change your
 /// sudo password:` 等）会被当成提示；键入 `sudo grep password x:` 的
 /// 回显瞬态同样漏网。`doas` 开头的裸前缀须提权命令佐证。
@@ -1139,6 +1139,20 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
     detect_sudo_prompt_tier(output_buf, input_buf).is_some()
 }
 
+/// sudo 官方提示的括号锚正则：`[` + sudo 开头、括号内容不含 `]` 且必须闭合。
+/// 一个模式覆盖两代及未来的官方格式——旧版 `[sudo] password for user:`、
+/// 新版 sudo（1.9.16+）的 `[sudo: authenticate] Password:`、本地化变体
+/// （`[sudo: 认证] 密码:` 等）与未知的后续变体；缺闭合括号的伪形态
+/// （`[sudo password:`）不认。检测前 last_line 已转小写，模式无需忽略
+/// 大小写。进程内编译一次。
+static SUDO_BRACKET_RE: OnceLock<regex::Regex> = OnceLock::new();
+
+fn sudo_bracket_anchored(line: &str) -> bool {
+    SUDO_BRACKET_RE
+        .get_or_init(|| regex::Regex::new(r"^\[sudo[^\]]*\]").unwrap())
+        .is_match(line)
+}
+
 /// sudo 提示的置信分层。
 ///
 /// `Some(true)` = 强置信：回车可以直接作为确认键——`[sudo]`/`doas` 行首
@@ -1151,6 +1165,14 @@ fn detect_sudo_password_prompt(output_buf: &[u8], input_buf: &[u8]) -> bool {
 ///
 /// `None` = 不是密码提示。
 fn detect_sudo_prompt_tier(output_buf: &[u8], input_buf: &[u8]) -> Option<bool> {
+    // 零分配预检：命中行必须以冒号结尾，而 sanitize_prompt_text 只删控制
+    // 字符、不会凭空造出冒号——原始字节里既无 ASCII ':'(0x3A) 也无全角
+    // '：'(EF BC 9A) 就必然 None。本函数随每个输出 chunk 执行，常规输出
+    // （无冒号）在此一行退出，跳过下方 1KB lossy 解码 + 数次 String
+    // 分配的全管线。
+    if !output_buf.contains(&b':') && !output_buf.windows(3).any(|w| w == [0xEF, 0xBC, 0x9A]) {
+        return None;
+    }
     let text = sanitize_prompt_text(output_buf);
     let tail = tail_chars(&text, 320);
     let normalized = tail
@@ -1185,12 +1207,16 @@ fn detect_sudo_prompt_tier(output_buf: &[u8], input_buf: &[u8]) -> Option<bool> 
     .iter()
     .any(|word| last_line.contains(word));
 
-    // 强信号：`[sudo]` 括号标记是 sudo 提示的权威锚点（各语言 .mo 均保留
-    // 该前缀，随机文本几乎不会以它开头），不看输入侧——密码输错重试时
-    // 输入缓冲已被命中清空，靠它兜住重试识别。
-    // `doas` 裸前缀远不如 `[sudo]` 独特（普通文本/日志可携带），须有提权
+    // 强信号：官方括号锚（`^\[sudo[^\]]*\]`，见 SUDO_BRACKET_RE）是 sudo
+    // 提示的权威标记（各语言 .mo 均保留该前缀，随机文本几乎不会以它
+    // 开头），不看输入侧——密码输错重试时输入缓冲已被命中清空，靠它
+    // 兜住重试识别。正则一个模式覆盖两代及未来的官方括号格式：旧版
+    // `[sudo] password for user:`、新版 sudo（1.9.16+ 世代，新 WSL /
+    // Ubuntu 24.04 常见）的 `[sudo: authenticate] Password:` 及本地化、
+    // 后续变体。
+    // `doas` 裸前缀远不如它独特（普通文本/日志可携带），须有提权
     // 命令佐证才采信
-    if last_line.starts_with("[sudo]") && mentions_password && last_line.chars().count() <= 64 {
+    if sudo_bracket_anchored(last_line) && mentions_password && last_line.chars().count() <= 64 {
         return Some(true);
     }
     let anchored_doas = last_line.starts_with("doas ")
@@ -1865,10 +1891,18 @@ async fn run_terminal(
                             Some(f) => f.feed(&bytes),
                             None => bytes,
                         };
-                        let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
+                        // 先完成对 bytes 的全部借用（sudo 检测缓冲 + 有订阅者时的
+                        // 广播副本），再把它整体移入 WS 帧——每 chunk 省一次全量
+                        // clone（与 serial/telnet 中继同款写法）。广播仅在确有
+                        // 订阅者（POST /api/ssh/send 的输出收集）时才做 lossy
+                        // 转换，零订阅者的常态下不白白分配 String。
+                        push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
+                        if output_tx.receiver_count() > 0 {
+                            let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
+                        }
                         if !bytes.is_empty()
                             && ws_tx
-                                .send(Message::Binary(bytes.clone().into()))
+                                .send(Message::Binary(bytes.into()))
                                 .await
                                 .is_err()
                         {
@@ -1884,7 +1918,6 @@ async fn run_terminal(
                             ))
                             .await;
                         }
-                        push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
                         let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
                             .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
                         if let Some(strong) = prompt_tier {
@@ -1908,8 +1941,13 @@ async fn run_terminal(
                     }
                     Some(ChannelMsg::ExtendedData { ref data, ext: _ }) => {
                         let bytes = data.to_vec();
-                        let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
-                        if ws_tx.send(Message::Binary(bytes.clone().into())).await.is_err() { break; }
+                        // 同 Data 分支：先借用（sudo 缓冲 + 有订阅者时的广播副本）
+                        // 后移入 WS 帧，省一次 clone；广播零订阅者时跳过 lossy 转换
+                        push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
+                        if output_tx.receiver_count() > 0 {
+                            let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
+                        }
+                        if ws_tx.send(Message::Binary(bytes.into())).await.is_err() { break; }
 
                         // 部分服务端/程序会把密码提示写到 stderr；这里同样参与识别。
                         // 待填充状态失效检查先行：命中后紧随的任何输出都说明
@@ -1921,7 +1959,6 @@ async fn run_terminal(
                             ))
                             .await;
                         }
-                        push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
                         let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
                             .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
                         if let Some(strong) = prompt_tier {
@@ -2063,8 +2100,54 @@ mod tests {
 
     #[test]
     fn ignores_non_prompt_output() {
-        let output = b"total 0\n-rw-r--r-- 1 root root 0 Jan  1 00:00 file\n";
+        let output = b"total 0\n-rw-r--r-- 1 root root  0 Jan  1 00:00 file\n";
         assert!(!detect_sudo_password_prompt(output, b"sudo ls\r"));
+    }
+
+    /// 回归：函数开头的冒号预检不得因前置输出无冒号而漏检真实提示——
+    /// 真实场景里 sudo 提示常跟在大段无冒号输出之后，sudo_buf 前半段一个
+    /// 冒号都没有，冒号只出现在末尾的提示行里。半角与全角两条预检分支
+    /// （0x3A / EF BC 9A）都要覆盖。
+    #[test]
+    fn prompt_detected_after_colonless_flood() {
+        let mut output = vec![b'x'; PROMPT_BUF_LIMIT];
+        output.extend_from_slice(b"\r\n[sudo] password for user: ");
+        assert!(detect_sudo_password_prompt(&output, b"sudo -l\r"));
+
+        let mut zh = vec![b'x'; PROMPT_BUF_LIMIT];
+        zh.extend_from_slice("\r\n[sudo] user 的密码：".as_bytes());
+        assert!(detect_sudo_password_prompt(&zh, b"sudo -l\r"));
+    }
+
+    /// 回归：新版 sudo（1.9.16+ 世代，新 WSL / Ubuntu 24.04 常见）把默认
+    /// 提示从 `[sudo] password for user:` 换成了 `[sudo: authenticate]
+    /// Password:`。旧锚定只认字面 `[sudo]`（第 6 字符必须是 `]`），
+    /// `[sudo:` 开头锚不中，弱信号路径又因整行 ≠ 裸 `password:` 被拒——
+    /// 实测用户会话原文（WSL）曾因此漏检。用例字节取自该会话。
+    /// 锚定已改为括号正则（SUDO_BRACKET_RE）：未来任意括号变体（含
+    /// 本地化）都应命中；缺闭合括号的伪形态不得命中。
+    #[test]
+    fn detects_new_sudo_authenticate_prompt() {
+        let output = b"Last login: Sat Nov  7 10:47:31 2026 from 192.168.0.3\r\n\
+                       vcyang@MS-PGFQRSZWMAZT:~$ sudo -i\r\n\
+                       [sudo: authenticate] Password: ";
+        assert_eq!(detect_sudo_prompt_tier(output, b"sudo -i\r"), Some(true));
+
+        // 旧版官方提示必须继续命中
+        let legacy = b"vcyang@host:~$ sudo -i\r\n[sudo] password for vcyang: ";
+        assert_eq!(detect_sudo_prompt_tier(legacy, b"sudo -i\r"), Some(true));
+
+        // 正则的前瞻性：假想的未来括号变体与本地化变体，同一模式命中
+        assert_eq!(
+            detect_sudo_prompt_tier("[sudo: verify] 密码: ".as_bytes(), b"sudo -i\r"),
+            Some(true)
+        );
+
+        // 缺闭合括号的伪形态不认（纯前缀匹配会误中，正则结构收紧）
+        assert_eq!(
+            detect_sudo_prompt_tier(b"[sudo authenticate Password: ", b"sudo -i\r"),
+            None
+        );
     }
 
     /// 回归：弱信号提示（短冒号行）命中后必须清空输入缓冲，否则旧

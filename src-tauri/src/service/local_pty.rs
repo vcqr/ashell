@@ -749,7 +749,8 @@ pub async fn handle(
         // 且实测 OpenConsole 探测无人应答也照常工作，xterm.js 会以真实光标位置应答。
         let cwd_sink = last_cwd.clone();
         let read_task = tokio::task::spawn_blocking(move || {
-            let mut buf = [0u8; 4096];
+            // 16KB 读缓冲：洪水输出（cat 大文件等）下减少 chunk 数与通道发送次数
+            let mut buf = [0u8; 16384];
             let mut osc_carry: Vec<u8> = Vec::new();
             loop {
                 match reader.read(&mut buf) {
@@ -798,13 +799,18 @@ pub async fn handle(
                 chunk = out_rx.recv() => {
                     match chunk {
                         Some(chunk) => {
-                            // 与远程 SSH 一致：输出走 Binary 帧（保留任意字节）
-                            if ws_tx.send(Message::Binary(chunk.clone().into())).await.is_err() {
+                            // 同步广播给 AI sidecar 等外部订阅者（订阅者 lag 时丢
+                            // 老数据）。有订阅者（POST /api/ssh/send 的输出收集）
+                            // 才做 lossy 转换，零订阅者的常态下不白白分配 String。
+                            if output_tx.receiver_count() > 0 {
+                                let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &chunk));
+                            }
+                            // 与远程 SSH 一致：输出走 Binary 帧（保留任意字节）。
+                            // 先借用后移入，每 chunk 省一次 clone（serial/telnet 同款）
+                            if ws_tx.send(Message::Binary(chunk.into())).await.is_err() {
                                 log::info!("[break] ws 发送输出失败（前端已断开） sid={sid}");
                                 break;
                             }
-                            // 同步广播给 AI sidecar 等外部订阅者（订阅者 lag 时丢老数据）
-                            let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &chunk));
                         }
                         None => {
                             #[cfg(windows)]

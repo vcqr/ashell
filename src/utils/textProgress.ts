@@ -112,45 +112,53 @@ function matchSpinner(line: string): boolean {
   return false
 }
 
-/** 去掉 ANSI 控制序列，避免颜色/清屏序列打断 tqdm / rich / pip 的文本进度识别。 */
+/**
+ * 去掉 ANSI 控制序列，避免颜色/清屏序列打断 tqdm / rich / pip 的文本进度识别。
+ *
+ * 输出热路径上（progressEnabled 默认开启，每个 WS 帧都要过这里）：
+ * - 不含 ESC 的纯文本（cat 纯文本文件 / 普通日志，批量输出的常态）直接返回原串，
+ *   零分配零扫描；
+ * - 含 ESC 时按 ESC 出现位置用 slice 分段拼接明文，不再逐字符 append
+ *   （逐字符拼串对大 chunk 会产生大量中间字符串）。
+ * 序列识别语义与原逐字符实现完全一致（CSI 按 [@-~] 终止、OSC 按 BEL/ST 终止、
+ * 其余 ESC 双字符跳过）。
+ */
 export function stripAnsiForProgress(input: string): string {
+  if (!input.includes("\x1b")) return input
   let out = ""
-  let i = 0
-  while (i < input.length) {
-    const ch = input[i]!
-    if (ch === "\x1b") {
-      const next = input[i + 1]
-      if (next === "[") {
-        i += 2
-        while (i < input.length) {
-          const c = input[i]!
-          i++
-          if (c >= "@" && c <= "~") break
-        }
-        continue
-      }
-      if (next === "]") {
-        i += 2
-        while (i < input.length) {
-          if (input[i] === "\x07") {
-            i++
-            break
-          }
-          if (input[i] === "\x1b" && input[i + 1] === "\\") {
-            i += 2
-            break
-          }
-          i++
-        }
-        continue
-      }
+  let segStart = 0
+  let i = input.indexOf("\x1b")
+  while (i !== -1 && i < input.length) {
+    if (i > segStart) out += input.slice(segStart, i)
+    const next = input[i + 1]
+    if (next === "[") {
       i += 2
-      continue
+      while (i < input.length) {
+        const c = input[i]!
+        i++
+        if (c >= "@" && c <= "~") break
+      }
+    } else if (next === "]") {
+      i += 2
+      while (i < input.length) {
+        if (input[i] === "\x07") {
+          i++
+          break
+        }
+        if (input[i] === "\x1b" && input[i + 1] === "\\") {
+          i += 2
+          break
+        }
+        i++
+      }
+    } else {
+      // 其余 ESC 序列（含结尾截断的孤立 ESC）：跳两个字符
+      i += 2
     }
-    out += ch
-    i++
+    segStart = i
+    i = input.indexOf("\x1b", i)
   }
-  return out
+  return segStart < input.length ? out + input.slice(segStart) : out
 }
 
 /**

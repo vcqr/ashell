@@ -49,14 +49,35 @@ export function useTerminalProgress({ getTerm, isActive }: TerminalProgressOptio
   let textProgressActive = false
   let textProgressClearTimer: number | null = null
 
+  /** 上次成功发往任务栏的状态；相同 (status, progress) 不再发 IPC。 */
+  let lastTauriProgress: { status: ProgressBarStatus; progress: number } | null = null
+
   /**
    * Tauri 窗口任务栏进度条句柄。多个 tab 都开了 progress 时，只有最后一次设置生效——
    * Windows 任务栏图标只有一个。激活的 tab 设值；非激活 tab 一律不写入，避免后台 tab
    * 抢占任务栏角标显示。
+   *
+   * 去重：indeterminate spinner（npm install 转圈等）输出可达每秒几十帧，每帧都
+   * 命中进度匹配，状态值却始终相同——逐帧 setProgressBar 是纯 IPC 浪费。相同
+   * (status, progress) 直接跳过；缓存只在确定任务栏仍显示该值时有效：
+   * - clear 之后任务栏已变，置 null 让后续同值重发；
+   * - 非激活 tab 跳过写入期间，其他 tab 可能写过任务栏，同样置 null，
+   *   保证切回激活后 syncTaskbar 能重发当前值。
    */
   function applyTauriProgress(state: IProgressState) {
-    if (!isActive() || !isTauri) return
+    if (!isActive() || !isTauri) {
+      lastTauriProgress = null
+      return
+    }
     const status = TAURI_PROGRESS_STATUS[state.state] ?? ProgressBarStatus.None
+    if (
+      lastTauriProgress &&
+      lastTauriProgress.status === status &&
+      lastTauriProgress.progress === state.value
+    ) {
+      return
+    }
+    lastTauriProgress = { status, progress: state.value }
     void getCurrentWindow()
       .setProgressBar({ status, progress: state.value })
       .catch(() => {
@@ -66,6 +87,7 @@ export function useTerminalProgress({ getTerm, isActive }: TerminalProgressOptio
 
   function clearTauriProgress() {
     if (!isTauri) return
+    lastTauriProgress = null
     void getCurrentWindow()
       .setProgressBar({ status: ProgressBarStatus.None })
       .catch(() => {

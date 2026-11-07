@@ -624,15 +624,30 @@ function onTermFileDrop(e: DragEvent) {
   e.preventDefault()
 }
 
+/** copyOnSelect 剪贴板写入的尾随防抖定时器 */
+let copyOnSelectTimer: number | null = null
+
+/**
+ * 选区变化回调。拖拽选择期间 xterm 每次 mousemove 都触发本回调：
+ * - AI 按钮显隐用 O(1) 的 hasSelection() 判断（显示/隐藏主路径在 onMouseUp，这里只是兜底），
+ *   不能在这里做全量 getSelection() —— 那是 O(选区大小) 的逐行序列化，大选区拖动会发涩。
+ * - copyOnSelect 的剪贴板写入防抖 200ms：选区停止变化后才序列化并写一次剪贴板
+ *   （Tauri IPC），否则拖动全程每次 mousemove 都发一次跨进程写。
+ */
 function onSelectionChange() {
   if (!term) return
-  const sel = term.getSelection()
-  if (!sel) {
+  if (!term.hasSelection()) {
     aiButtonVisible.value = false
   }
   const action = termStore.leftClickAction
   if (action !== "copyOnSelect" && action !== "copyAndMiddlePaste") return
-  if (sel) void writeClipboard(sel)
+  if (copyOnSelectTimer !== null) window.clearTimeout(copyOnSelectTimer)
+  copyOnSelectTimer = window.setTimeout(() => {
+    copyOnSelectTimer = null
+    if (!term) return
+    const sel = term.getSelection()
+    if (sel) void writeClipboard(sel)
+  }, 200)
 }
 
 async function onContextMenu(e: MouseEvent) {
@@ -2019,6 +2034,10 @@ onBeforeUnmount(() => {
   if (connectElapsedTimer !== null) {
     window.clearInterval(connectElapsedTimer)
     connectElapsedTimer = null
+  }
+  if (copyOnSelectTimer !== null) {
+    window.clearTimeout(copyOnSelectTimer)
+    copyOnSelectTimer = null
   }
   // 撤销 broadcast 注册，让广播配置面板里残留的 key 失效（store.purgeKey 也会顺带由 App.vue 调）
   broadcastStore.unregisterSender(props.tab.key)
