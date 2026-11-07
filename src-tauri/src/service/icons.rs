@@ -9,61 +9,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config;
 use crate::errors::{AppError, AppResult};
 
-/// 允许的扩展名（小写）
+/// 允许的扩展名（小写），须与 build.rs 的 ICON_EXTS 保持一致
 const ALLOWED_EXTS: &[&str] = &["svg", "png", "jpg", "jpeg", "gif", "webp"];
 
-/// 内置默认图标。首次启动时会被复制到 ~/.ashell/icons/，
-/// 用户后续删除也不会再写入（仅"不存在时写入"）。
-const DEFAULT_ICONS: &[(&str, &str)] = &[
-    (
-        "alma.svg",
-        include_str!("../../assets/icons-default/alma.svg"),
-    ),
-    (
-        "alpine.svg",
-        include_str!("../../assets/icons-default/alpine.svg"),
-    ),
-    (
-        "centos.svg",
-        include_str!("../../assets/icons-default/centos.svg"),
-    ),
-    (
-        "debian.svg",
-        include_str!("../../assets/icons-default/debian.svg"),
-    ),
-    (
-        "docker.svg",
-        include_str!("../../assets/icons-default/docker.svg"),
-    ),
-    (
-        "linux.svg",
-        include_str!("../../assets/icons-default/linux.svg"),
-    ),
-    (
-        "macos.svg",
-        include_str!("../../assets/icons-default/macos.svg"),
-    ),
-    (
-        "redhat.svg",
-        include_str!("../../assets/icons-default/redhat.svg"),
-    ),
-    (
-        "rocky.svg",
-        include_str!("../../assets/icons-default/rocky.svg"),
-    ),
-    (
-        "server.svg",
-        include_str!("../../assets/icons-default/server.svg"),
-    ),
-    (
-        "ubuntu.svg",
-        include_str!("../../assets/icons-default/ubuntu.svg"),
-    ),
-    (
-        "windows.svg",
-        include_str!("../../assets/icons-default/windows.svg"),
-    ),
-];
+// 内置默认图标清单（文件名 + 字节内容）：由 build.rs 编译期扫描 assets/icons-default/
+// 生成——增删内置图标只需往该目录丢/删文件重新编译，无需改代码；文件名（含扩展名）
+// 即逻辑标识。首次启动时会被复制到 ~/.ashell/icons/，用户后续删除也不会再写入
+// （仅"不存在时写入"）。
+include!(concat!(env!("OUT_DIR"), "/icons_default.rs"));
 
 #[derive(Debug, serde::Serialize)]
 pub struct IconItem {
@@ -104,7 +57,7 @@ pub fn ensure_defaults() -> AppResult<()> {
         if path.exists() {
             continue;
         }
-        if let Err(e) = std::fs::write(&path, content.as_bytes()) {
+        if let Err(e) = std::fs::write(&path, content) {
             log::warn!("写入默认图标失败 {name}: {e}");
         }
     }
