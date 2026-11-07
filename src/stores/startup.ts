@@ -101,22 +101,30 @@ export interface ShellOption {
   label: string
   value: string
   description?: string
+  /** 菜单展示用图标：图标库（assets/icons-default 派生）文件名；缺省回退终端图标 */
+  icon?: string
 }
 
 export function shellOptionsForPlatform(): ShellOption[] {
-  const isWin =
-    typeof navigator !== "undefined" && /Win/i.test(navigator.platform || "")
+  const platform =
+    typeof navigator !== "undefined" ? (navigator.platform || "") : ""
+  const isWin = /Win/i.test(platform)
+  const isMac = /Mac/i.test(platform)
   if (isWin) {
     return [
-      { label: "Auto (PowerShell → cmd)", value: "auto" },
-      { label: "PowerShell", value: "powershell" },
-      { label: "PowerShell 7 (pwsh)", value: "pwsh" },
-      { label: "Command Prompt (cmd)", value: "cmd" },
-      { label: "Git Bash", value: "git-bash" },
+      // auto = 系统默认 shell，用平台 logo 与显式指定的 shell 区分
+      { label: "Auto (PowerShell → cmd)", value: "auto", icon: "windows.svg" },
+      { label: "PowerShell", value: "powershell", icon: "powershell.svg" },
+      // pwsh 与 powershell 同源，共用一个 logo
+      { label: "PowerShell 7 (pwsh)", value: "pwsh", icon: "powershell.svg" },
+      { label: "Command Prompt (cmd)", value: "cmd", icon: "cmd.svg" },
+      { label: "Git Bash", value: "git-bash", icon: "git.svg" },
     ]
   }
   return [
-    { label: "Auto ($SHELL)", value: "auto" },
+    { label: "Auto ($SHELL)", value: "auto", icon: isMac ? "macos.svg" : "linux.svg" },
+    // bash/zsh/fish/sh 暂无对应素材，回退终端图标；往 assets/icons-default/
+    // 丢同名 svg（如 bash.svg）后在此补映射即可
     { label: "Bash", value: "bash" },
     { label: "Zsh", value: "zsh" },
     { label: "Fish", value: "fish" },

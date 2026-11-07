@@ -84,8 +84,8 @@ function renderMenuIcon(comp: unknown) {
   return () => h(NIcon, null, { default: () => h(comp as never) })
 }
 
-/** 自定义启动项的菜单图标：图标库文件名 → <img>；无图标回退默认终端图标 */
-function renderProfileMenuIcon(name?: string | null) {
+/** 图标库文件名 → <img>（shell 类型/自定义启动项的菜单图标）；无图标回退默认终端图标 */
+function renderLibraryMenuIcon(name?: string | null) {
   const url = name ? iconStore.urlOf(name) : undefined
   if (url) {
     return () =>
@@ -317,13 +317,14 @@ const newTabOptions = computed<DropdownOption[]>(() => [
     icon: renderMenuIcon(RiTerminalBoxLine),
   },
   // 平台可用的 shell 类型直开项（Windows Terminal 风格）：
-  // 按类型新开 tab，用平台默认参数，不套用设置的「启动命令」覆盖
+  // 按类型新开 tab，用平台默认参数，不套用设置的「启动命令」覆盖；
+  // 图标来自图标库（ShellOption.icon），缺省回退终端图标
   { type: 'divider', key: 'new-tab-divider' },
   ...shellOptionsForPlatform().map(
     (o): DropdownOption => ({
       label: o.label,
       key: `shell:${o.value}`,
-      icon: renderMenuIcon(RiTerminalBoxLine),
+      icon: renderLibraryMenuIcon(o.icon),
     }),
   ),
   // 用户自定义启动项（设置→启动 维护；name/command 缺一的不展示）
@@ -334,7 +335,7 @@ const newTabOptions = computed<DropdownOption[]>(() => [
       (p): DropdownOption => ({
         label: p.name.trim(),
         key: `profile:${p.id}`,
-        icon: renderProfileMenuIcon(p.icon),
+        icon: renderLibraryMenuIcon(p.icon),
       }),
     ),
 ])
