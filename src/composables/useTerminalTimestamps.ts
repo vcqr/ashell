@@ -15,8 +15,9 @@ import { useTerminalStore } from "@/stores/terminal"
  * - 订阅 CircularList 的 onTrim/onDelete/onInsert 内部事件精确跟踪行的增删
  *   （scrollback 满后的顶部裁剪、CSI L/M 的插删行）；每次 write 解析完成后用
  *   "缓冲区行数 - 数组长度" 差值兜底补齐剩余的新增行。
- * - resize 触发 reflow 后按比例重映射（近似）；仅行数变化（无重排）时在数组
- *   尾部补空/裁剪。
+ * - resize 触发 reflow 后按"逻辑行"重映射（isWrapped 分组）：reflow 只改每条
+ *   逻辑行占的物理行数，逻辑行顺序不变，按逻辑行对齐才能让戳跟着内容走；
+ *   仅行数变化（增行只在底部、裁剪只在顶部）天然被同一映射覆盖。
  * - clear / Ctrl+L 的 CSI 2J 被 xterm 原地清空视口（行数不变、不触发任何事件），
  *   只能从 write 数据流里识别：检测到清屏后把视口行时间戳置空，新内容写入时
  *   由 onRenderRows 重新补记，旧滚动区的时间戳保持不变。
@@ -109,11 +110,18 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
   let lastCellH = -1
   let lastGutterW = -1
   let paintRaf: number | null = null
-  let lastCols = -1
 
   // ===== write 包装 =====
   let writePatched = false
   let origWrite: ((data: string | Uint8Array, cb?: () => void) => void) | null = null
+
+  // ===== resize 包装 =====
+  let resizePatched = false
+  let origResize: ((cols: number, rows: number) => void) | null = null
+  /** resize 前的行时间戳快照（底对齐快照时的 buffer 行） */
+  let snapTimes: (number | undefined)[] = []
+  /** 快照时各行 isWrapped 标记（与快照 buffer 行一一对齐） */
+  let snapWrapped: boolean[] = []
 
   const watches: ReturnType<typeof watch>[] = []
   const termDisposers: { dispose(): void }[] = []
@@ -400,7 +408,38 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
 
   // ===== resize / reflow =====
 
-  function onTermResized() {
+  /** 把 buffer 行按 isWrapped 分组为逻辑行：每组是一次写入的完整一行（含折行延续） */
+  function groupLogicalLines(wrapped: boolean[]): number[][] {
+    const groups: number[][] = []
+    for (let i = 0; i < wrapped.length; i++) {
+      if (i === 0 || !wrapped[i] || groups.length === 0) groups.push([i])
+      else groups[groups.length - 1]!.push(i)
+    }
+    return groups
+  }
+
+  function readWrappedFlags(t: Terminal, len: number): boolean[] {
+    const flags = new Array<boolean>(len).fill(false)
+    try {
+      const active = t.buffer.active
+      for (let i = 0; i < len; i++) flags[i] = active.getLine(i)?.isWrapped ?? false
+    } catch {
+      // 读不到 isWrapped：全部按独立行处理，对齐退化为按序 1:1
+    }
+    return flags
+  }
+
+  /**
+   * 用快照把时间戳按逻辑行重映射到 reflow 后的新 buffer。
+   *
+   * reflow（列数变化）只重排物理行：长行折行/展开使内容整体位移，而按索引
+   * 对位的 times 数组不动，戳会错留在空行上（远程连接最大化后的"空行填充"）。
+   * xterm 的 reflow 只改每条逻辑行占的物理行数，逻辑行顺序不变；空行只增在
+   * 底部（Buffer.resize push）、裁剪只发生在顶部（trimStart）。因此按逻辑行
+   * 对齐：新逻辑行 k ↔ 旧逻辑行 k，新比旧少（顶部被裁）时锚底部；一行占多
+   * 物理行时延续行共用该行时间戳，多出的延续行沿用旧末片段的时间。
+   */
+  function remapTimesAfterResize() {
     const t = options.getTerm()
     if (!t || !store.lineTimestampEnabled) return
     try {
@@ -409,41 +448,78 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
       return
     }
     const lines = normalLines()
-    if (lines && lines !== subbedLines) resubscribe(lines)
-    // 与 onBatchParsed 相同的长度兜底：内部不可达时用公开 API
     let len: number
     try {
       len = lines ? lines.length : t.buffer.active.length
     } catch {
       return
     }
-
-    // windowsPty(conpty) 下 xterm 关闭了 reflow（本地 Windows 终端），列数变化
-    // 不会重排行内容，按"仅行数变化"处理；其余情况列数变化视为 reflow
-    let reflowDisabled = false
-    try {
-      reflowDisabled = t.options.windowsPty?.backend === "conpty"
-    } catch {
-      // ignore
+    // 快照缺失（异常兜底）：与 clear 重建同口径，全部待 onRenderRows 补记
+    if (snapWrapped.length === 0) {
+      times = new Array<number | undefined>(len).fill(undefined)
+      return
     }
-
-    if (lastCols !== -1 && lastCols !== t.cols && !reflowDisabled) {
-      // 列数变化触发 reflow，行与旧数组的对应关系按比例重映射（近似）
-      const old = times
-      const next = new Array<number | undefined>(len)
-      if (old.length > 0 && len > 0) {
-        for (let i = 0; i < len; i++) {
-          const src = Math.min(old.length - 1, Math.floor((i * old.length) / len))
-          next[i] = old[src]
-        }
+    const oldOff = snapWrapped.length - snapTimes.length
+    const stampOf = (row: number): number | undefined => {
+      const idx = row - oldOff
+      return idx >= 0 && idx < snapTimes.length ? snapTimes[idx] : undefined
+    }
+    const oldGroups = groupLogicalLines(snapWrapped)
+    const newGroups = groupLogicalLines(readWrappedFlags(t, len))
+    const next: (number | undefined)[] = new Array(len).fill(undefined)
+    const skip = Math.max(0, oldGroups.length - newGroups.length)
+    for (let k = 0; k < newGroups.length; k++) {
+      const oldGroup = oldGroups[k + skip]
+      if (!oldGroup) break
+      const rows = newGroups[k]!
+      for (let j = 0; j < rows.length; j++) {
+        const row = rows[j]!
+        if (row >= len) break
+        const src = oldGroup[Math.min(j, oldGroup.length - 1)]!
+        next[row] = stampOf(src)
       }
-      times = next
-    } else if (len !== times.length) {
-      // 仅行数变化（无重排）：内容行不变，尾部补空/裁剪
-      while (times.length > len) times.pop()
-      while (times.length < len) times.push(undefined)
     }
-    lastCols = t.cols
+    times = next
+  }
+
+  function patchResize() {
+    const t = options.getTerm()
+    if (!t || resizePatched) return
+    const orig = t.resize.bind(t)
+    origResize = orig
+    resizePatched = true
+    t.resize = (cols: number, rows: number) => {
+      // 快照 reflow 前的行布局；alternate 下暂停记录，留空走重建兜底
+      try {
+        if (t.buffer.active.type !== "alternate") {
+          const lines = normalLines()
+          const oldLen = lines ? lines.length : t.buffer.active.length
+          snapTimes = times.slice()
+          snapWrapped = readWrappedFlags(t, oldLen)
+        } else {
+          snapTimes = []
+          snapWrapped = []
+        }
+      } catch {
+        snapTimes = []
+        snapWrapped = []
+      }
+      orig(cols, rows)
+      try {
+        remapTimesAfterResize()
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  function onTermResized() {
+    const t = options.getTerm()
+    if (!t || !store.lineTimestampEnabled) return
+    const lines = normalLines()
+    if (lines && lines !== subbedLines) resubscribe(lines)
+    // 行时间戳的重映射在 patchResize 的快照里完成（onResize 触发于 reflow 中，
+    // 此刻旧布局已不可读）；这里只消费 trim 计数、避免 onBatchParsed 重复平移
     trimBase = cumTrim
     schedulePaint()
   }
@@ -671,13 +747,9 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
 
   function install() {
     patchWrite()
+    patchResize()
     const t = options.getTerm()
     if (t) {
-      try {
-        lastCols = t.cols
-      } catch {
-        // ignore
-      }
       try {
         termDisposers.push(t.onScroll(() => schedulePaint()))
         termDisposers.push(t.onResize(() => onTermResized()))
@@ -735,6 +807,20 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
       writePatched = false
       origWrite = null
     }
+    if (resizePatched && origResize) {
+      const t = options.getTerm()
+      if (t) {
+        try {
+          t.resize = origResize
+        } catch {
+          // ignore
+        }
+      }
+      resizePatched = false
+      origResize = null
+    }
+    snapTimes = []
+    snapWrapped = []
     if (paintRaf !== null) {
       cancelAnimationFrame(paintRaf)
       paintRaf = null
