@@ -48,6 +48,11 @@ export default {
       "Applies to backend HTTP requests such as AI requests, model list fetching and S3 backup; SSH terminal connections are not proxied. Follow-system reads OS proxy settings and HTTP(S)_PROXY environment variables. AI sessions must be reopened to pick up changes.",
     proxyUrlInvalid: "Proxy URL must start with http://, https:// or socks5://",
     proxySaveFailed: "Failed to save proxy settings",
+    integrationTitle: "System Integration",
+    contextMenu: "Explorer Context Menu",
+    contextMenuDesc:
+      "Show \"Open in Ashell\" in the right-click menu for folders, folder backgrounds and drives, opening a local terminal at that directory.",
+    contextMenuSetFailed: "Failed to update the context menu",
   },
   theme: {
     appearance: "Appearance",

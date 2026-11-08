@@ -10,7 +10,8 @@
         "uninstallerIcon": "icons/icon.ico",
         "headerImage": "icons/nsis/installer-header.bmp",
         "sidebarImage": "icons/nsis/installer-sidebar.bmp",
-        "languages": ["SimpChinese", "English"]
+        "languages": ["SimpChinese", "English"],
+        "installerHooks": "./nsis/installer-hooks.nsh"
       }
     }
   }

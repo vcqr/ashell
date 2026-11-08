@@ -49,6 +49,8 @@ desktop = [
     "dep:tauri-plugin-autostart",
     "dep:tauri-plugin-global-shortcut",
     "dep:tauri-plugin-notification",
+    "dep:tauri-plugin-single-instance",
+    "dep:windows-registry",
     "dep:windows",
     "dep:webview2-com",
     "dep:font-kit",
@@ -75,6 +77,8 @@ tauri-plugin-autostart = { version = "2", optional = true }
 tauri-plugin-global-shortcut = { version = "2", optional = true }
 # 系统级通知：SSH 会话断开且窗口失焦时提醒用户（应用内通知看不见）
 tauri-plugin-notification = { version = "2", optional = true }
+# 单实例：资源管理器右键「在 Ashell 中打开」二次拉起时把目录参数转发给已运行实例
+tauri-plugin-single-instance = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # sudo 官方密码提示的括号锚正则（handlers/terminal.rs 的 SUDO_BRACKET_RE）；
@@ -177,6 +181,9 @@ windows-sys = { version = "0.61", features = ["Win32_System_Threading", "Win32_F
 # 仅桌面目标使用（lib.rs disable_browser_accelerators），随 desktop feature 开关
 windows = { version = "0.62", optional = true }
 webview2-com = { version = "0.39", optional = true }
+# 注册表读写（右键「在 Ashell 中打开」应用内开关）：独立小 crate，
+# 只依赖 windows-link 一族，不触碰上面被钉版本的 windows / webview2-com
+windows-registry = { version = "0.100", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

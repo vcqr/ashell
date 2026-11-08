@@ -47,6 +47,11 @@ export default {
       "作用于 AI 请求、模型列表获取与 S3 备份等后端 HTTP 请求，SSH 终端连接不经过代理；跟随系统读取系统代理设置与 HTTP(S)_PROXY 环境变量；AI 会话需重新打开后生效。",
     proxyUrlInvalid: "代理地址需以 http://、https:// 或 socks5:// 开头",
     proxySaveFailed: "代理设置保存失败",
+    integrationTitle: "系统集成",
+    contextMenu: "资源管理器右键菜单",
+    contextMenuDesc:
+      "在右键菜单中显示「在 Ashell 中打开」：覆盖文件夹、文件夹内空白处与驱动器，点击即以该目录为工作区打开本地终端。",
+    contextMenuSetFailed: "右键菜单设置失败",
   },
   theme: {
     appearance: "外观",

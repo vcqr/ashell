@@ -7,7 +7,7 @@ import {
   setLocalePreference,
   type LocalePreference,
 } from "@/locales";
-import { isTauri } from "@/utils/platform";
+import { detectWindows, isTauri } from "@/utils/platform";
 import { devtoolsEnabled, setDevtoolsEnabled } from "@/utils/devtools";
 import { useProxyStore, type ProxyMode } from "@/stores/proxy";
 
@@ -39,6 +39,17 @@ const proxyStore = useProxyStore();
 
 onMounted(() => {
   proxyStore.load();
+  // 右键菜单开关：仅 Windows 桌面端，注册表当前状态从后端读取
+  if (isTauri && detectWindows()) {
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke<boolean>("context_menu_installed")
+        .then((installed) => {
+          contextMenuAvailable.value = true;
+          contextMenuOn.value = installed;
+        })
+        .catch(() => {}),
+    );
+  }
 });
 
 const proxyModeOptions = computed<SelectOption[]>(() => [
@@ -57,6 +68,23 @@ function onProxyModeChange(value: ProxyMode) {
 }
 
 const proxyUrlPattern = /^(https?|socks5h?):\/\//i;
+
+// ── 资源管理器右键菜单「在 Ashell 中打开」（仅 Windows 桌面端）──
+// 命令探测成功才显示该行（兼容旧后端/浏览器形态）；开关失败时回滚并提示
+const contextMenuAvailable = ref(false);
+const contextMenuOn = ref(false);
+const contextMenuError = ref("");
+
+async function onContextMenuChange(value: boolean) {
+  contextMenuOn.value = value;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("context_menu_set", { enable: value });
+  } catch {
+    contextMenuOn.value = !value;
+    contextMenuError.value = t("settings.general.contextMenuSetFailed");
+  }
+}
 
 function saveProxyUrl() {
   const url = proxyStore.url.trim();
@@ -162,6 +190,24 @@ function saveProxyNoProxy() {
             </div>
           </div>
         </div>
+
+        <template v-if="contextMenuAvailable">
+          <div class="settings-subgroup">{{ t("settings.general.integrationTitle") }}</div>
+          <div class="settings-block">
+            <div class="setting-row">
+              <div class="setting-row-main">
+                <div class="setting-row-label">{{ t("settings.general.contextMenu") }}</div>
+                <div class="setting-row-desc">{{ t("settings.general.contextMenuDesc") }}</div>
+              </div>
+              <div class="setting-row-control">
+                <NSwitch :value="contextMenuOn" @update:value="onContextMenuChange" />
+              </div>
+            </div>
+          </div>
+          <p v-if="contextMenuError" class="settings-hint context-menu-error">
+            {{ contextMenuError }}
+          </p>
+        </template>
       </template>
     </NForm>
   </section>
@@ -178,7 +224,8 @@ function saveProxyNoProxy() {
   width: 320px;
 }
 
-.proxy-error {
+.proxy-error,
+.context-menu-error {
   color: var(--ashell-danger, #e5484d);
 }
 </style>

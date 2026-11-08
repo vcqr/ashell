@@ -176,6 +176,31 @@ const {
   splitGridTab,
 } = useTabs();
 
+// ── 资源管理器右键「在 Ashell 中打开」──
+// 以目录为 cwd 开一个本地终端标签（shell 留空走默认 shell 设置），标题用目录名。
+// 首启走拉模式（launch_take_dir 一次性领取，避免后端 emit 早于前端挂监听的竞态）；
+// 二次拉起走推模式（single-instance 回调只发主窗口）。独立窗口复用本组件，
+// 但 take 语义保证只有先挂载的主窗口能领到首启目录。
+function openDirInTab(dir: string) {
+  const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
+  openLocal(undefined, undefined, { initialCwd: dir, title: name });
+}
+
+if (isTauri) {
+  void import("@tauri-apps/api/core").then(({ invoke }) =>
+    invoke<string | null>("launch_take_dir")
+      .then((dir) => {
+        if (dir) openDirInTab(dir);
+      })
+      .catch(() => {}),
+  );
+  void import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<string>("open-in-ashell", (e) => {
+      if (typeof e.payload === "string" && e.payload) openDirInTab(e.payload);
+    }).catch(() => {}),
+  );
+}
+
 // ── 退出确认（托盘关闭策略为"退出应用"时的误触保护）──
 // 本窗口的活动终端连接数推送给后端（主窗口与各独立终端窗口各报各的，
 // 后端求和）；退出路径被后端拦截后经 tray-quit-confirm 事件唤起弹窗。

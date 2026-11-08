@@ -8,10 +8,14 @@
 mod ai_env;
 mod commands;
 mod config;
+#[cfg(all(windows, feature = "desktop"))]
+mod context_menu;
 mod errors;
 mod handlers;
 #[cfg(feature = "desktop")]
 mod hotkey;
+#[cfg(all(windows, feature = "desktop"))]
+mod launch;
 mod middleware;
 mod models;
 mod opener;
@@ -231,7 +235,14 @@ pub fn run() {
         .write_style(env_logger::WriteStyle::Always)
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // 单实例插件必须最先注册：资源管理器右键「在 Ashell 中打开」等二次拉起时，
+    // 把命令行目录参数转发给已运行实例（关闭=隐藏到托盘，应用常驻后台）
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        launch::handle_second_instance(app, &args);
+    }));
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -283,6 +294,11 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // 首启带目录参数（资源管理器右键「在 Ashell 中打开」）：
+            // 存入 PENDING_DIR，等前端主窗口挂载后 launch_take_dir 领取
+            #[cfg(windows)]
+            launch::store_pending_dir_from_argv();
+
             // 自定义应用菜单，使 macOS "关于" 面板显示正确的应用图标
             let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
             let about_metadata = AboutMetadataBuilder::new()
@@ -396,6 +412,9 @@ pub fn run() {
             get_ai_dir,
             devtools_set,
             devtools_toggle,
+            context_menu::context_menu_installed,
+            context_menu::context_menu_set,
+            launch::launch_take_dir,
             commands::dialog::save_text_file,
             commands::dialog::pick_image_file,
             commands::dialog::pick_private_key_file,
