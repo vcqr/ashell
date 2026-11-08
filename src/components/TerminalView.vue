@@ -381,7 +381,10 @@ function applyTheme() {
   terminalBackground.value = String(theme.background ?? "transparent")
 }
 
-function setStatus(status: TermStatus, meta?: { cause?: "user"; reason?: string }) {
+function setStatus(
+  status: TermStatus,
+  meta?: { cause?: "user"; reason?: string; code?: string },
+) {
   currentStatus.value = status
   emit("status-change", props.tab.key, status, meta)
   if (status === "connecting") {
@@ -1531,11 +1534,18 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           const m = msg as { code?: string }
           lastSessionEndCode = m.code ?? ""
           if (lastSessionEndCode && te(`terminal.sessionEndCodes.${lastSessionEndCode}`)) {
-            term?.writeln(
-              // \r\n 前缀与其他 [ashell] 提示一致：会话可能停在 shell 提示符
-              // （光标在行中），不换行会把提示直接拼在提示符后面
-              `\r\n\x1b[33m[ashell] ${t(`terminal.sessionEndCodes.${lastSessionEndCode}`)}\x1b[0m`,
-            )
+            const code = lastSessionEndCode
+            // xterm 的 write 异步排队：此刻先到的数据帧（如退出时的 "logout\r\n"）
+            // 可能尚未解析完，直接读 cursorX 拿到的是旧值。空 write 的回调按 FIFO
+            // 在队列全部解析完后触发，作同步屏障后再按真实光标位决定是否换行：
+            // 正常退出远端输出自带换行（光标已在行首），直接写不产生空行；
+            // 异常断开常停在提示符行中，仍加 \r\n 避免提示拼在提示符后
+            term?.write("", () => {
+              const atLineStart = (term?.buffer.active.cursorX ?? 0) === 0
+              term?.writeln(
+                `${atLineStart ? "" : "\r\n"}\x1b[33m[ashell] ${t(`terminal.sessionEndCodes.${code}`)}\x1b[0m`,
+              )
+            })
           }
           return
         }
@@ -1656,7 +1666,9 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
         : ""
     setStatus(
       neverConnected ? "error" : "closed",
-      !neverConnected && sessionEndReason ? { reason: sessionEndReason } : undefined,
+      !neverConnected && sessionEndReason
+        ? { reason: sessionEndReason, code: lastSessionEndCode }
+        : undefined,
     )
     // local 终端 shell 进程已退出，无法重连，直接关闭 tab
     if (props.tab.kind === "local") {

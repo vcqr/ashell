@@ -848,7 +848,7 @@ export function useTabs() {
   function onStatusChange(
     tabKey: string,
     status: NonNullable<TerminalTab["status"]>,
-    meta?: { cause?: "user"; reason?: string },
+    meta?: { cause?: "user"; reason?: string; code?: string },
   ) {
     const t = tabs.value.find((x) => x.key === tabKey);
     if (!t) return;
@@ -883,9 +883,12 @@ export function useTabs() {
     }
     // keep 策略：开启自动重连时不打扰（重连成功后自动恢复）；
     // 未开自动重连时轻提示，避免用户在其他标签页错过断开事件。
-    // 用户主动断开不提示：终端内已写明"已由用户断开"，再弹通知是打扰
+    // 用户主动断开不提示：终端内已写明"已由用户断开"，再弹通知是打扰。
+    // shell 正常退出（用户敲 exit/logout，session_exited）同属预期内结束，
+    // 终端已写明"Shell 会话已结束"，只对异常断开（网络/服务端）提醒
     if (meta?.cause === "user") return;
     if (!terminalStore.autoReconnect) {
+      if (meta?.code === "session_exited") return;
       notifySessionClosed(t, meta?.reason);
     }
   }
