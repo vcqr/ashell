@@ -882,7 +882,9 @@ export function useTabs() {
       return;
     }
     // keep 策略：开启自动重连时不打扰（重连成功后自动恢复）；
-    // 未开自动重连时轻提示，避免用户在其他标签页错过断开事件
+    // 未开自动重连时轻提示，避免用户在其他标签页错过断开事件。
+    // 用户主动断开不提示：终端内已写明"已由用户断开"，再弹通知是打扰
+    if (meta?.cause === "user") return;
     if (!terminalStore.autoReconnect) {
       notifySessionClosed(t, meta?.reason);
     }
