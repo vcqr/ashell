@@ -873,8 +873,9 @@ export function useTabs() {
     if (!t.everConnected) return;
     const action = terminalStore.disconnectAction;
     if (action === "closeTab" || action === "closeWindow") {
-      if (meta?.cause === "user") {
-        // 用户主动断开：立即执行，无需缓冲
+      // 用户主动断开与 shell 正常退出（敲 exit/logout，session_exited）都是
+      // 预期内结束：立即执行关闭策略，倒计时缓冲只留给意外断开
+      if (meta?.cause === "user" || meta?.code === "session_exited") {
         applyDisconnectAction(tabKey, action);
       } else {
         scheduleDisconnectClose(t, action);
