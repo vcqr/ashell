@@ -171,11 +171,10 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     times.splice(start, Math.min(e.amount, times.length - start))
   }
 
-  /** CSI L 插行：新行按当前时间记录 */
+  /** CSI L 插行：插入的是空行，不记时间，等内容写入后由 onRenderRows 补记 */
   function onInsertEvent(e: { index: number; amount: number }) {
     if (!store.lineTimestampEnabled) return
-    const now = Date.now()
-    const inserted = new Array<number | undefined>(e.amount).fill(now)
+    const inserted = new Array<number | undefined>(e.amount).fill(undefined)
     const start = Math.max(0, Math.min(e.index, times.length))
     times.splice(start, 0, ...inserted)
   }
@@ -342,10 +341,24 @@ export function useTerminalTimestamps(options: TerminalTimestampsOptions) {
     const appended = len - times.length
     if (appended > 0) {
       const now = Date.now()
-      for (let i = 0; i < appended; i++) times.push(now)
+      // 只给非空行记时间：初始预建空行、ConPTY 开启 gutter/resize 重绘时的
+      // 空白填充行不产生时间戳（与 onRenderRows 只记非空行的口径一致），
+      // 否则整屏空行盖同一毫秒的戳，gutter 看起来像坏了
+      const base = times.length
+      for (let i = 0; i < appended; i++) {
+        let blank = true
+        try {
+          const line = active.getLine(base + i)
+          blank = !line || line.translateToString(true).length === 0
+        } catch {
+          blank = false
+        }
+        times.push(blank ? undefined : now)
+      }
     } else if (appended < 0) {
-      // 行数骤减且无对应 trim 事件：clear()/reset() 换了新 lines，全部行按新建记录
-      times = new Array<number | undefined>(len).fill(Date.now())
+      // 行数骤减且无对应 trim 事件：clear()/reset() 换了新 lines，全部行按
+      // 空白重建，等 onRenderRows 渲染到非空内容时再补记
+      times = new Array<number | undefined>(len).fill(undefined)
       trimBase = cumTrim
     }
     schedulePaint()
