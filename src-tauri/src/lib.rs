@@ -412,8 +412,13 @@ pub fn run() {
             get_ai_dir,
             devtools_set,
             devtools_toggle,
+            // generate_handler 支持条目级 cfg（宏把属性原样输出到 match 分支）：
+            // 注册表右键菜单与资源管理器接管是 Windows 专属，Linux/macOS 桌面构建剔除
+            #[cfg(all(windows, feature = "desktop"))]
             context_menu::context_menu_installed,
+            #[cfg(all(windows, feature = "desktop"))]
             context_menu::context_menu_set,
+            #[cfg(all(windows, feature = "desktop"))]
             launch::launch_take_dir,
             commands::dialog::save_text_file,
             commands::dialog::pick_image_file,
