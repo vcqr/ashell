@@ -48,7 +48,9 @@ pub(crate) async fn handle_winpty(
     shell_command: Option<String>,
     initial_cwd: Option<String>,
 ) {
-    log::info!("local_pty_winpty: connected sid={sid} shell={shell:?}");
+    log::info!(
+        "local_pty_winpty: connected sid={sid} shell={shell:?} shell_command={shell_command:?}"
+    );
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
@@ -104,11 +106,18 @@ pub(crate) async fn handle_winpty(
         cwd.as_ref().map(|c| c.to_string_lossy()),
     );
 
+    let program_display = appname.to_string_lossy().into_owned();
     if let Err(e) = pty.spawn(appname, Some(cmdline), cwd, env_block) {
+        // program_display 帮助终端里直接看出"找不到的到底是谁"：整条命令
+        // 覆盖（自定义启动项）若含空格路径未加引号，首段会被 split_command_line
+        // 切碎（如 C:\Program），此处一目了然
         log::error!("local_pty_winpty spawn: {e:?}");
         let _ = ws_tx
             .send(Message::Text(
-                format!("\x1b[31m[ashell] spawn shell failed: {e:?}\x1b[0m").into(),
+                format!(
+                    "\x1b[31m[ashell] spawn shell failed (app: {program_display}): {e:?}\x1b[0m"
+                )
+                .into(),
             ))
             .await;
         ssh_svc::remove_terminal_channels(&sid).await;

@@ -671,7 +671,9 @@ pub async fn handle(
     shell_command: Option<String>,
     initial_cwd: Option<String>,
 ) {
-    log::info!("local_pty: connected sid={sid} shell={shell:?}");
+    log::info!(
+        "local_pty: connected sid={sid} shell={shell:?} shell_command={shell_command:?}"
+    );
 
     // 无 ConPTY 的系统（Win10 1809 前 / Server 2016 / Wine）：portable-pty 会在
     // openpty 里 panic（load_conpty 对缺符号直接 .expect()），必须挡在门外。
