@@ -15,7 +15,7 @@
 //! 存在无 ConPTY 的现实用户群（WoA 设备全系 1809+，见 resources/winpty/README.md）。
 #![cfg(all(target_os = "windows", target_arch = "x86_64"))]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::OsStringExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -93,6 +93,16 @@ pub(crate) async fn handle_winpty(
         cmd.cwd(cwd);
     }
     let (appname, cmdline, cwd, env_block) = transcribe_command(&cmd);
+
+    // spawn 参数进日志（连接是低频事件）：appname 为空串表示走 cmdline 首词的
+    // CreateProcess 常规搜索；真机排查 "CreateProcess failed os error 2" 类
+    // 失败时，这行能看到确切传给 winpty 的程序与命令行
+    log::info!(
+        "local_pty_winpty: spawn app={:?} cmdline={:?} cwd={:?} sid={sid}",
+        appname.to_string_lossy(),
+        cmdline.to_string_lossy(),
+        cwd.as_ref().map(|c| c.to_string_lossy()),
+    );
 
     if let Err(e) = pty.spawn(appname, Some(cmdline), cwd, env_block) {
         log::error!("local_pty_winpty spawn: {e:?}");
@@ -352,10 +362,39 @@ pub(crate) async fn handle_winpty(
     let _ = ws_tx.close().await;
 }
 
+/// 裸程序名解析为绝对路径：CreateProcess 的 lpApplicationName 非 NULL 时不做
+/// PATH 搜索（winpty 的 spawn_config 把 appname 原样传给它），裸名必然
+/// "os error 2"。解析链：PATH → %SystemRoot%\System32 →
+/// System32\WindowsPowerShell\v1.0（旧系统/精简环境的 PATH 常缺后两者）。
+/// 带路径分隔符或本就存在的名字原样返回；全部失败返回 None。
+fn resolve_program(program: &OsStr) -> Option<OsString> {
+    let lossy = program.to_string_lossy();
+    if lossy.contains('\\') || lossy.contains('/') || Path::new(program).is_file() {
+        return Some(program.to_os_string());
+    }
+    if let Some(p) = which_in_path(&lossy) {
+        return Some(p.into_os_string());
+    }
+    let system_root = std::env::var_os("SystemRoot")?;
+    let system_root = std::path::PathBuf::from(system_root);
+    [
+        system_root.join("System32").join(program),
+        system_root
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join(program),
+    ]
+    .into_iter()
+    .find(|p| p.is_file())
+    .map(|p| p.into_os_string())
+}
+
 /// CommandBuilder → winpty spawn 四参数。
-/// - appname：argv[0]；裸程序名经 PATH 解析为绝对路径——CreateProcess 的
-///   lpApplicationName 不做 PATH 搜索，winpty 的 spawn_config 直接使用它；
-///   解析失败保留原名，让 winpty 的报错自然暴露。
+/// - appname：argv[0] 尽量解析为绝对路径（见 `resolve_program`）；解析彻底
+///   失败时置为空串——winpty 对空 appname 按 NULL 处理，CreateProcess 退化为
+///   按 cmdline 首词做常规搜索（应用目录/cwd/System32/PATH），是裸名唯一可能
+///   成功的形态（非空 lpApplicationName 不搜索，必报 os error 2）。
 /// - cmdline：argv 引号拼接（含空白/引号的段落加双引号），首段为程序本身。
 /// - env：`KEY=VALUE\0` 逐对 UTF-16 块，按名排序（Windows 惯例）；
 ///   winpty-rs 会补最后一个 \0 形成双 \0 结尾的标准环境块。
@@ -364,17 +403,7 @@ fn transcribe_command(
 ) -> (OsString, OsString, Option<OsString>, Option<OsString>) {
     let argv = cmd.get_argv();
     let raw_program = argv.first().cloned().unwrap_or_default();
-    let program: OsString = {
-        let lossy = raw_program.to_string_lossy();
-        if lossy.contains('\\') || lossy.contains('/') || Path::new(&raw_program).is_file() {
-            raw_program.clone()
-        } else {
-            match which_in_path(&lossy) {
-                Some(p) => p.into_os_string(),
-                None => raw_program.clone(),
-            }
-        }
-    };
+    let program: OsString = resolve_program(&raw_program).unwrap_or_default();
 
     let mut parts: Vec<OsString> = Vec::with_capacity(argv.len());
     parts.push(program.clone());
