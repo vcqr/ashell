@@ -42,7 +42,7 @@ use crate::util;
 
 /// 识别出的 shell 类别，决定 cwd 上报（OSC 9;9）的注入方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShellKind {
+pub(crate) enum ShellKind {
     PowerShell,
     Cmd,
     Bash,
@@ -56,6 +56,7 @@ enum ShellKind {
 /// 直接 .expect() panic（其 win/psuedocon.rs:48，且先于侧载 conpty.dll 分支），
 /// 优雅降级路径（openpty Err 分支）永远走不到，只能防在门外。
 /// 结果进程内缓存（系统能力不会运行期变化）。
+/// x86_64 上探测为 false 时转 winpty 回退后端（local_pty_winpty）；ARM64 上为 fatal。
 #[cfg(windows)]
 pub fn conpty_supported() -> bool {
     static SUPPORTED: OnceLock<bool> = OnceLock::new();
@@ -76,6 +77,28 @@ pub fn conpty_supported() -> bool {
     true
 }
 
+/// 本地终端整体可用性（terminal_capable API / 前端置灰信号）：
+/// - x86_64 Windows：winpty 回退后端随包分发（winpty.dll 是 exe 的静态导入，
+///   缺它 app 本就无法启动），恒可用；
+/// - ARM64 Windows：winpty 上游无 arm64 二进制（见 resources/winpty/README.md），
+///   只取决于 ConPTY 探测；
+/// - 非 Windows：Unix openpty 内核原生能力，恒可用。
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+pub fn local_terminal_supported() -> bool {
+    true
+}
+
+#[cfg(all(target_os = "windows", not(target_arch = "x86_64")))]
+pub fn local_terminal_supported() -> bool {
+    conpty_supported()
+}
+
+#[cfg(not(windows))]
+pub fn local_terminal_supported() -> bool {
+    // Unix openpty 为内核原生能力，恒可用；经 conpty_supported() 返回
+    conpty_supported()
+}
+
 fn kind_of(program: &str) -> ShellKind {
     let name = std::path::Path::new(program)
         .file_stem()
@@ -93,7 +116,7 @@ fn kind_of(program: &str) -> ShellKind {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
-enum ClientMsg {
+pub(crate) enum ClientMsg {
     Cmd { data: String },
     Resize { cols: u16, rows: u16 },
     Ping,
@@ -102,9 +125,9 @@ enum ClientMsg {
 }
 
 #[derive(Debug, Serialize)]
-struct ReadyMsg<'a> {
-    kind: &'a str,
-    sid: &'a str,
+pub(crate) struct ReadyMsg<'a> {
+    pub(crate) kind: &'a str,
+    pub(crate) sid: &'a str,
 }
 
 /// 引号感知的命令行分词：按空白切分，双/单引号包裹的段落保留空白；
@@ -278,7 +301,7 @@ fn resolve_parts(shell: Option<&str>) -> ResolvedParts {
 /// 覆盖非空时整条生效：引号感知分词（见 `split_command_line`），首段为
 /// 程序、其余为参数；shell 类别仍按程序名识别，cwd 上报注入继续生效。
 /// 覆盖为空/纯空白时按 shell 候选默认解析（`resolve_parts`）。
-fn resolve_command(
+pub(crate) fn resolve_command(
     shell: Option<&str>,
     command_override: Option<&str>,
 ) -> (CommandBuilder, ShellKind) {
@@ -319,8 +342,10 @@ pub fn format_shell_preview(shell: Option<&str>) -> String {
     items.join(" ")
 }
 
-/// 极简 PATH 查找：用于 Windows auto 路径下判断 powershell.exe 是否存在。
-fn which_in_path(name: &str) -> Option<std::path::PathBuf> {
+/// 极简 PATH 查找：用于 Windows auto 路径下判断 powershell.exe 是否存在；
+/// winpty 会话侧也用它把裸程序名解析成绝对路径（CreateProcess 的
+/// lpApplicationName 不走 PATH 搜索）。
+pub(crate) fn which_in_path(name: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let candidate = dir.join(name);
@@ -433,7 +458,7 @@ fn bash_rcfile() -> &'static Option<std::path::PathBuf> {
     })
 }
 
-fn apply_cwd_reporting(cmd: &mut CommandBuilder, kind: ShellKind) {
+pub(crate) fn apply_cwd_reporting(cmd: &mut CommandBuilder, kind: ShellKind) {
     match kind {
         ShellKind::PowerShell => {
             if cfg!(windows) {
@@ -476,7 +501,33 @@ fn apply_cwd_reporting(cmd: &mut CommandBuilder, kind: ShellKind) {
     }
 }
 
-fn inherit_env(cmd: &mut CommandBuilder) {
+/// 会话内初始 cwd 的优先级：重启代回到上一代 shell 经 OSC 9;9 上报的最近目录；
+/// 其次自定义启动项指定的初始目录（须真实存在的目录）；都没有再落家目录。
+/// ConPTY（local_pty::handle）与 winpty（local_pty_winpty::handle_winpty）
+/// 两条会话循环共用。
+pub(crate) fn resolve_session_cwd(
+    last_cwd: &Arc<Mutex<Option<String>>>,
+    initial_cwd: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    last_cwd
+        .lock()
+        .unwrap()
+        .clone()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            initial_cwd
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.is_dir())
+        })
+        .or_else(|| {
+            // 家目录不做存在性校验（与既有行为一致）
+            std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                .map(std::path::PathBuf::from)
+                .ok()
+        })
+}
+
+pub(crate) fn inherit_env(cmd: &mut CommandBuilder) {
     for (k, v) in std::env::vars() {
         // macOS/Linux 下不传 PATH：GUI app（从 Finder/Dock 拉起）的 PATH 通常只有
         // /usr/bin:/bin:/usr/sbin:/sbin，缺 homebrew / nvm / cargo bin。把残缺 PATH
@@ -495,7 +546,7 @@ fn inherit_env(cmd: &mut CommandBuilder) {
 }
 
 /// 在字节流中捕获 OSC 9;9 cwd 上报（BEL 或 ST 结尾），跨 chunk 保留未完结的尾部。
-fn scan_cwd_osc(buf: &mut Vec<u8>, out: &Arc<Mutex<Option<String>>>) {
+pub(crate) fn scan_cwd_osc(buf: &mut Vec<u8>, out: &Arc<Mutex<Option<String>>>) {
     const HEAD: &[u8] = b"\x1b]9;9;";
     loop {
         let Some(start) = buf.windows(HEAD.len()).position(|w| w == HEAD) else {
@@ -539,7 +590,7 @@ fn scan_cwd_osc(buf: &mut Vec<u8>, out: &Arc<Mutex<Option<String>>>) {
 /// debug 日志输出实际写入字节的前 96 字节十六进制：排查 conhost 输入解析
 /// 类问题时用于区分「前端发了什么」与「真正进入 PTY 管道的字节」。
 /// hex 按需构造——这是每次按键都走的热路径，日志关闭时不应白白分配。
-fn write_input(writer: &mut dyn std::io::Write, data: &[u8], ctx: &str) -> bool {
+pub(crate) fn write_input(writer: &mut dyn std::io::Write, data: &[u8], ctx: &str) -> bool {
     if log::log_enabled!(log::Level::Debug) {
         const HEX_DUMP_CAP: usize = 96;
         let head = &data[..data.len().min(HEX_DUMP_CAP)];
@@ -600,7 +651,7 @@ fn encode_win32_input(data: &str) -> Vec<u8> {
 
 /// 规一化行尾、按需 win32-input-mode 编码后写入 PTY；
 /// 返回 true 表示写入失败（调用方应退出主循环）。
-fn write_text_input(writer: &mut dyn std::io::Write, data: &str, ctx: &str) -> bool {
+pub(crate) fn write_text_input(writer: &mut dyn std::io::Write, data: &str, ctx: &str) -> bool {
     let normalized = data.replace("\r\n", "\r").replace('\n', "\r");
     // debug 记录原始输入（RUST_LOG=debug 可见）：排查输入侧插入/丢失类问题时
     // 用于区分「前端发了什么」与「shell 收到什么」，{:?} 让空格与转义一目了然
@@ -623,8 +674,22 @@ pub async fn handle(
     log::info!("local_pty: connected sid={sid} shell={shell:?}");
 
     // 无 ConPTY 的系统（Win10 1809 前 / Server 2016 / Wine）：portable-pty 会在
-    // openpty 里 panic，必须挡在门外。发 fatal 帧（文案由前端按 code 走 i18n）
-    // 后直接收尾，不进入会话循环。
+    // openpty 里 panic（load_conpty 对缺符号直接 .expect()），必须挡在门外。
+    // - x86_64：转 winpty 回退会话（resources/winpty/README.md），本函数不再继续；
+    // - ARM64：winpty 上游无 arm64 二进制，维持 fatal 拒绝（文案由前端按 code 走 i18n）。
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    if !conpty_supported() {
+        log::info!("local_pty: 系统缺少 ConPTY 支持，转 winpty 回退后端 sid={sid}");
+        return crate::service::local_pty_winpty::handle_winpty(
+            socket,
+            sid,
+            shell,
+            shell_command,
+            initial_cwd,
+        )
+        .await;
+    }
+    #[cfg(all(target_os = "windows", not(target_arch = "x86_64")))]
     if !conpty_supported() {
         log::error!(
             "local_pty: 系统缺少 ConPTY 支持（需 Windows 10 1809+ / Server 2019+），拒绝会话 sid={sid}"
@@ -688,16 +753,8 @@ pub async fn handle(
         apply_cwd_reporting(&mut cmd, shell_kind);
         // 重启代优先回到上一代 shell 的工作目录；其次用自定义启动项指定的
         // 初始目录（须真实存在的目录），都没有再落家目录
-        let cwd = last_cwd.lock().unwrap().clone().or_else(|| {
-            initial_cwd
-                .clone()
-                .filter(|p| std::path::Path::new(p).is_dir())
-        });
-        if let Some(cwd) = cwd {
+        if let Some(cwd) = resolve_session_cwd(&last_cwd, initial_cwd.as_deref()) {
             cmd.cwd(cwd);
-        } else if let Ok(home) = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        {
-            cmd.cwd(home);
         }
 
         let mut child = match pair.slave.spawn_command(cmd) {

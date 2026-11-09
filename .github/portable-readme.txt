@@ -9,6 +9,8 @@ AShell v{{VERSION}} Windows 便携版
 - app-ai.exe        AI 助手 sidecar 进程（AI 功能依赖，请勿单独删除）
 - OpenConsole.exe   本地终端 ConPTY 宿主（本地终端功能依赖）
 - conpty.dll        本地终端 ConPTY 组件（同上）
+- winpty.dll        本地终端 winpty 组件（无 ConPTY 老系统回退，勿单独删除）
+- winpty-agent.exe  本地终端 winpty 代理进程（同上，须与 winpty.dll 同目录）
 
 注意事项
 --------

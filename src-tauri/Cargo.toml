@@ -185,5 +185,16 @@ webview2-com = { version = "0.39", optional = true }
 # 只依赖 windows-link 一族，不触碰上面被钉版本的 windows / webview2-com
 windows-registry = { version = "0.100", optional = true }
 
+# 老 Windows（Win10 1809 前 / Server 2016 / Wine）本地终端的 winpty 回退后端
+# （仅 x86_64，见 resources/winpty/README.md 与 service/local_pty_winpty.rs）。
+# 必须精确钉死 1.0.8：1.0.x 之间有过行为/API 调整（EOF 语义 1.0.8 本身就是
+# breaking change）。conpty_local 必须显式启用：winpty-rs 的 build.rs 在 Win10
+# 2004+ 构建机上会自动启用 ConPTY 后端并静态导入 kernel32!CreatePseudoConsole，
+# 缺该 feature 时产物在老系统启动即崩；启用后符号改由随包 conpty.dll 解析
+# （版本由仓库根 .cargo/config.toml 的 WINPTY_RS_CONPTY_VERSION 钉住，
+# 与 resources/conpty 同一 NuGet 包）。
+[target.'cfg(all(target_os = "windows", target_arch = "x86_64"))'.dependencies]
+winpty-rs = { version = "=1.0.8", features = ["winpty", "conpty_local"] }
+
 [dev-dependencies]
 tempfile = "3"

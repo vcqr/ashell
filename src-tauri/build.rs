@@ -107,6 +107,24 @@ fn main() {
         for file in ["conpty.dll", "OpenConsole.exe"] {
             copy_if_unchanged(&src_dir.join(file), &stage.join(file));
         }
+
+        // 3) winpty 回退后端（老系统本地终端，见 resources/winpty/README.md）：
+        //    仅 x86_64 参与——winpty 上游无 arm64 二进制，ARM64 Windows 也不存在
+        //    无 ConPTY 的现实用户群（WoA 设备全系 1809+）。winpty.dll 是
+        //    ashell.exe 的静态导入（winpty-rs 的 winpty feature 为编译期链接），
+        //    必须与 exe 同目录；winpty-agent.exe 必须与 winpty.dll 同目录
+        //    （winpty 上游 AgentLocation 从 dll 自身所在目录查找 agent，不走 PATH）。
+        //    暂存目录两种架构都创建（tauri.win64.conf.json 仅 x86_64 引用）。
+        let winpty_stage = std::path::Path::new(&manifest_dir).join("resources/winpty/bin");
+        std::fs::create_dir_all(&winpty_stage).expect("创建 winpty 暂存目录");
+        if arch == "x86_64" {
+            let winpty_src = std::path::Path::new(&manifest_dir).join("resources/winpty/x86_64");
+            for file in ["winpty.dll", "winpty-agent.exe"] {
+                copy_if_unchanged(&winpty_src.join(file), &exe_dir.join(file));
+                copy_if_unchanged(&winpty_src.join(file), &winpty_stage.join(file));
+                println!("cargo:rerun-if-changed=resources/winpty/x86_64/{file}");
+            }
+        }
     }
 
     // tauri-build 负责桌面壳的资源/上下文代码生成；

@@ -5,6 +5,7 @@ pub mod icons;
 pub mod known_host;
 pub mod local_fs;
 pub mod local_pty;
+pub mod local_pty_winpty;
 pub mod serial;
 pub mod sftp;
 pub mod ssh;

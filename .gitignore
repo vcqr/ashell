@@ -36,3 +36,5 @@ tmp/
 
 # ConPTY 官方侧载二进制的构建暂存（build.rs 按 target 架构生成，勿提交）
 /src-tauri/resources/conpty/bin/
+# winpty 回退后端的构建暂存（同上，tauri.win64.conf.json 映射用）
+/src-tauri/resources/winpty/bin/

@@ -30,10 +30,11 @@ jobs:
           - platform: macos-15-intel
             target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin"
-          # Windows x86_64
+          # Windows x86_64（win64 覆盖配置追加 winpty 资源映射，deep-merge 到
+          # tauri.windows.conf.json 的 resources 对象上；ARM64 不引用它）
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-            args: "--target x86_64-pc-windows-msvc"
+            args: "--target x86_64-pc-windows-msvc --config src-tauri/tauri.win64.conf.json"
           # Windows ARM64
           - platform: windows-11-arm
             target: aarch64-pc-windows-msvc
@@ -75,6 +76,30 @@ jobs:
 
       - name: install sidecar dependencies
         run: cd sidecar-ai && npm install
+
+      # winpty 构建工具链（仅 x86_64 Windows）：winpty-rs 的 build.rs 需要在
+      # PATH 上找到 winpty-agent.exe（探测 + PE 架构校验）、在其根目录下的
+      # lib/ 找到 winpty.lib（导入库，MSVC 链接用）；conpty_local feature 还
+      # 需要 nuget.exe 拉取 Microsoft.Windows.Console.ConPTY（版本由仓库根
+      # .cargo/config.toml 钉住，与 resources/conpty 同源）。ARM64 无 winpty
+      # 上游二进制、winpty-rs 不参与该目标构建，步骤整体跳过。
+      - name: install winpty toolchain (windows x86_64 only)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dir = "$env:RUNNER_TEMP/winpty-0.4.3"
+          if (-not (Test-Path "$dir/x64/lib/winpty.lib")) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $zip = "$env:RUNNER_TEMP/winpty-0.4.3-msvc2015.zip"
+            Invoke-WebRequest -Uri "https://github.com/rprichard/winpty/releases/download/0.4.3/winpty-0.4.3-msvc2015.zip" -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath $dir -Force
+          }
+          if (-not (Get-Command nuget.exe -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" -OutFile "$dir/nuget.exe"
+          }
+          Add-Content $env:GITHUB_PATH "$dir"
+          Add-Content $env:GITHUB_PATH "$dir/x64/bin"
 
       - name: generate release notes
         id: release_notes
@@ -125,6 +150,11 @@ jobs:
           $stage = "portable-staging/AShell"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "$dir\ashell.exe", "$dir\app-ai.exe", "$dir\OpenConsole.exe", "$dir\conpty.dll" -Destination $stage
+          if ($arch -eq "x64") {
+            # winpty 回退后端（老系统本地终端）随包；ARM64 无 winpty 上游
+            # 二进制，构建不含也不需要这两个文件
+            Copy-Item "$dir\winpty.dll", "$dir\winpty-agent.exe" -Destination $stage
+          }
           $readme = (Get-Content .github/portable-readme.txt -Raw -Encoding utf8).Replace("{{VERSION}}", $version)
           Set-Content -Path "$stage/使用说明.txt" -Value $readme -Encoding utf8
           Compress-Archive -Path "portable-staging\AShell" -DestinationPath $zip -Force

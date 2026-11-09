@@ -1,0 +1,15 @@
+# cargo 配置按 CWD 向上查找：tauri-action 从仓库根调用 cargo，src-tauri 内调用
+# 也会向上命中本文件，故必须放仓库根而非 src-tauri 下。
+
+[env]
+# winpty-rs conpty_local 拉取的 NuGet 包版本：与 src-tauri/resources/conpty
+# 同源（Microsoft.Windows.Console.ConPTY 1.24.260710001），保证链接用的
+# conpty.lib 与随包分发的 conpty.dll 导出一致，两边升级必须同步。
+WINPTY_RS_CONPTY_VERSION = "1.24.260710001"
+
+[target.x86_64-pc-windows-msvc]
+# winpty-rs 的 ConPTY 后端（build.rs 自动启用 + conpty_local）静态导入
+# conpty.dll，但本应用从不调用该后端（老系统走 winpty、新系统走
+# portable-pty）。延迟加载让 conpty.dll 只在真正引用时才装载，规避 Wine 等
+# 环境下 conpty.dll 加载失败导致整个 app 无法启动的风险。
+rustflags = ["-C", "link-args=/DELAYLOAD:conpty.dll delayimp.lib"]
