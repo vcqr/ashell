@@ -33,20 +33,31 @@ ConPTY，而 portable-pty 0.9 对缺符号会直接 panic（其 win/psuedocon.rs
   复制到产物 exe 旁，并暂存固定名到 `resources/winpty/bin/`
   （gitignore）供 tauri.win64.conf.json 资源映射。
 
-## 构建期工具链（CI x86_64 Windows job）
+## 构建期工具链（winpty-rs 以编译期链接使用 winpty，非 LoadLibrary）
 
-winpty-rs 以编译期链接方式使用 winpty（非 LoadLibrary），构建机需要：
+CI x86_64 Windows job 与本地 Windows 开机构建都需要：
 
-- `winpty-agent.exe` 在 PATH 上（build.rs 探测 + PE 架构校验）；
-- `winpty.lib` 可被找到（agent 同目录 / winpty 根目录 / `LIB` 均可，CI 用
-  同一份 zip 解压出的 `x64/lib/winpty.lib`，位于 winpty 根目录下）；
+- `winpty-agent.exe` 在 PATH 上（winpty-rs build.rs 探测 + PE 架构校验）；
+- `winpty.lib` 可被找到（agent 同目录 / winpty 根目录 / `LIB` 均可）；
 - `nuget.exe`（conpty_local feature 拉取 Microsoft.Windows.Console.ConPTY，
   版本由仓库根 `.cargo/config.toml` 的 `WINPTY_RS_CONPTY_VERSION` 钉住，
-  与 `resources/conpty` 同一 NuGet 包）。
+  与 `resources/conpty` 同一 NuGet 包；缺失时 build.rs panic
+  "NuGet is required to build winpty-rs"）。
+
+**本地 Windows 开机最简做法**：`x86_64/` 目录同时入库了
+`winpty-agent.exe` / `winpty.dll` / `winpty.lib` 三个文件，把
+`src-tauri\resources\winpty\x86_64` 加入 PATH 即同时满足 agent 探测
+（agent 同目录即 winpty.lib）与导入库查找；nuget.exe 单独安装一次
+（`Invoke-WebRequest https://dist.nuget.org/win-x86-commandline/latest/nuget.exe`
+下载后放入任一 PATH 目录）。
+
+CI 用同一份官方 zip（`x64/bin` 加 PATH、`x64/lib/winpty.lib` 在 winpty
+根目录下被检索），见 .github/workflows/build.yml 的 winpty 工具链步骤。
 
 ## 升级方式
 
-从 winpty 新 release 下载 msvc2015 zip，替换 `x86_64/` 下的两个文件，
-并同步检查 winpty-rs 版本兼容性（其 build.rs 对 dll 做 PE 架构校验）。
-同时更新 `.cargo/config.toml` 里的 ConPTY NuGet 版本与 `resources/conpty/`
+从 winpty 新 release 下载 msvc2015 zip，替换 `x86_64/` 下的三个文件
+（winpty.dll / winpty-agent.exe / winpty.lib），并同步检查 winpty-rs
+版本兼容性（其 build.rs 对 dll 做 PE 架构校验）。同时更新
+`.cargo/config.toml` 里的 ConPTY NuGet 版本与 `resources/conpty/`
 （两者必须同版本，保证 conpty.lib 与随包 conpty.dll 导出一致）。
