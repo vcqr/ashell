@@ -97,6 +97,8 @@ export default {
     input_timeout: "Timed out waiting for input",
     load_host: "Failed to load host config",
     open_session: "Failed to open terminal session",
+    conpty_unsupported:
+      "ConPTY is not available on this system; local terminal requires Windows 10 1809+ / Server 2019+",
   },
   sessionClosedTitle: "Session disconnected",
   sessionClosedDetail:

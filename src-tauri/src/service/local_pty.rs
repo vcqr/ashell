@@ -50,6 +50,32 @@ enum ShellKind {
     Other,
 }
 
+/// 探测系统是否具备 ConPTY 能力：kernel32 是否导出 CreatePseudoConsole
+/// （Windows 10 1809 / Server 2019 起才有；三个 ConPTY 符号同版引入，查一个即可）。
+/// 必须在 openpty 之前自己先探测：portable-pty 0.9 的 load_conpty 对缺符号
+/// 直接 .expect() panic（其 win/psuedocon.rs:48，且先于侧载 conpty.dll 分支），
+/// 优雅降级路径（openpty Err 分支）永远走不到，只能防在门外。
+/// 结果进程内缓存（系统能力不会运行期变化）。
+#[cfg(windows)]
+pub fn conpty_supported() -> bool {
+    static SUPPORTED: OnceLock<bool> = OnceLock::new();
+    *SUPPORTED.get_or_init(|| unsafe {
+        use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module: Vec<u16> = "kernel32.dll\0".encode_utf16().collect();
+        let handle = GetModuleHandleW(module.as_ptr());
+        if handle.is_null() {
+            return false;
+        }
+        GetProcAddress(handle, b"CreatePseudoConsole\0".as_ptr()).is_some()
+    })
+}
+
+/// 非 Windows 走 Unix openpty（内核原生能力），恒可用
+#[cfg(not(windows))]
+pub fn conpty_supported() -> bool {
+    true
+}
+
 fn kind_of(program: &str) -> ShellKind {
     let name = std::path::Path::new(program)
         .file_stem()
@@ -595,6 +621,24 @@ pub async fn handle(
     initial_cwd: Option<String>,
 ) {
     log::info!("local_pty: connected sid={sid} shell={shell:?}");
+
+    // 无 ConPTY 的系统（Win10 1809 前 / Server 2016 / Wine）：portable-pty 会在
+    // openpty 里 panic，必须挡在门外。发 fatal 帧（文案由前端按 code 走 i18n）
+    // 后直接收尾，不进入会话循环。
+    if !conpty_supported() {
+        log::error!(
+            "local_pty: 系统缺少 ConPTY 支持（需 Windows 10 1809+ / Server 2019+），拒绝会话 sid={sid}"
+        );
+        let (mut ws_tx, _ws_rx) = socket.split();
+        let fatal = serde_json::json!({
+            "kind": "fatal",
+            "message": "ConPTY is not available on this system (Windows 10 1809+ / Server 2019+ required)",
+            "code": "conpty_unsupported",
+        });
+        let _ = ws_tx.send(Message::Text(fatal.to_string().into())).await;
+        let _ = ws_tx.close().await;
+        return;
+    }
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 

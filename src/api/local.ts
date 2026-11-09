@@ -14,6 +14,20 @@ export function buildLocalTerminalWsUrl(
   return buildWsUrl("/api/local/terminal", query)
 }
 
+/** 本地终端是否可用：Windows 上探测 kernel32 是否导出 CreatePseudoConsole
+ *  （Win10 1809 前 / Server 2016 / Wine 为 false），缺它时 portable-pty 会直接
+ *  panic，后端已在 ws 入口挡住。前端据此置灰各入口。结果进程内缓存一次；
+ *  查询失败按可用处理（真不可用时连接侧仍有 fatal 兜底）。 */
+let capablePromise: Promise<boolean> | null = null
+export function terminalCapable(): Promise<boolean> {
+  capablePromise ??= request<{ supported: boolean }>(
+    "/api/local/terminal_capable",
+  )
+    .then((r) => r.supported)
+    .catch(() => true)
+  return capablePromise
+}
+
 /** 预览 shell 候选的实际启动命令（程序 + 参数，后端按平台解析，含
  *  Git Bash 路径探测等）；shell 为空 = 平台 auto。设置→启动 的
  *  "启动命令"文本框 placeholder 与「填充默认」按钮取这个值。 */

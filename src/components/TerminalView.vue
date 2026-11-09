@@ -1553,7 +1553,14 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           const m = msg as { message?: string; code?: string }
           lastFatalReason = m.message ?? ""
           lastFatalCode = m.code ?? ""
-          term?.writeln(`\r\n\x1b[31m[ashell] ${m.message ?? t("terminal.connFatal")}\x1b[0m`)
+          // 有分类码且已收录文案时优先 i18n（i18n 在前端做），否则展示后端原文
+          const codeText =
+            m.code && te(`terminal.fatalCodes.${m.code}`)
+              ? t(`terminal.fatalCodes.${m.code}`)
+              : null
+          term?.writeln(
+            `\r\n\x1b[31m[ashell] ${codeText ?? (m.message ?? t("terminal.connFatal"))}\x1b[0m`,
+          )
           return
         }
         if (msg.kind === "auth_required") {

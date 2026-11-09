@@ -95,6 +95,11 @@ pub fn build_router(state: AppState) -> Router {
         )
         // 本地 PTY 终端 WebSocket
         .route("/api/local/terminal", get(handlers::local::ws_handler))
+        // 本地终端可用性（Windows ConPTY 探测，供前端置灰入口）
+        .route(
+            "/api/local/terminal_capable",
+            get(handlers::local::terminal_capable),
+        )
         // 本地 shell 启动命令预览（设置→启动）
         .route(
             "/api/local/shell_preview",

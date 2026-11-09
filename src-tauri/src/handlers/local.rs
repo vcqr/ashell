@@ -65,6 +65,20 @@ pub async fn ws_handler(
     })
 }
 
+/// 本地终端可用性：Windows 上探测 kernel32 是否导出 CreatePseudoConsole
+///（Win10 1809 前 / Server 2016 / Wine 为 false）。前端据此置灰
+///「新建本地终端」各入口，避免打开后只见 fatal 帧断连。
+/// 非 Windows 恒 true（Unix openpty 为内核原生能力）。
+#[derive(Debug, Serialize)]
+pub struct TerminalCapableResp {
+    pub supported: bool,
+}
+
+pub async fn terminal_capable() -> AppResult<Json<ApiResponse<TerminalCapableResp>>> {
+    let supported = local_pty::conpty_supported();
+    Ok(ApiResponse::ok(TerminalCapableResp { supported }))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ShellPreviewQuery {
     /// shell 候选：powershell/pwsh/cmd/bash/zsh/sh/fish/git-bash 或绝对路径；

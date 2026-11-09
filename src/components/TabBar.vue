@@ -35,6 +35,7 @@ import { useIconStore } from '@/stores/icons'
 import { useBroadcastStore } from '@/stores/broadcast'
 import { shellOptionsForPlatform } from '@/stores/startup'
 import { useTerminalProfilesStore } from '@/stores/terminalProfiles'
+import { useLocalPtyCapable } from '@/composables/useLocalPtyCapable'
 import type { TerminalTab } from '@/types'
 
 const props = defineProps<{
@@ -305,6 +306,10 @@ function onItemContextMenu(e: MouseEvent, key: string) {
   })
 }
 
+// 无 ConPTY 的系统（Win10 1809 前 / Server 2016 / Wine）：所有走本地 PTY 的
+// 菜单项（local / shell:* / profile:*）置灰，后端连接侧另有 fatal 兜底
+const localPtyCapable = useLocalPtyCapable()
+
 const newTabOptions = computed<DropdownOption[]>(() => [
   {
     label: t('terminal.tabBar.openHost'),
@@ -315,6 +320,7 @@ const newTabOptions = computed<DropdownOption[]>(() => [
     label: t('terminal.tabBar.newLocal'),
     key: 'local',
     icon: renderMenuIcon(RiTerminalBoxLine),
+    disabled: !localPtyCapable.value,
   },
   // 平台可用的 shell 类型直开项（Windows Terminal 风格）：
   // 按类型新开 tab，用平台默认参数，不套用设置的「启动命令」覆盖；
@@ -325,6 +331,7 @@ const newTabOptions = computed<DropdownOption[]>(() => [
       label: o.label,
       key: `shell:${o.value}`,
       icon: renderLibraryMenuIcon(o.icon),
+      disabled: !localPtyCapable.value,
     }),
   ),
   // 用户自定义启动项（设置→启动 维护；name/command 缺一的不展示）
@@ -336,6 +343,7 @@ const newTabOptions = computed<DropdownOption[]>(() => [
         label: p.name.trim(),
         key: `profile:${p.id}`,
         icon: renderLibraryMenuIcon(p.icon),
+        disabled: !localPtyCapable.value,
       }),
     ),
 ])

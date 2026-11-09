@@ -97,6 +97,8 @@ export default {
     input_timeout: "等待输入超时",
     load_host: "加载主机配置失败",
     open_session: "打开终端会话失败",
+    conpty_unsupported:
+      "当前系统缺少 ConPTY 支持，无法打开本地终端（需要 Windows 10 1809+ / Server 2019+）",
   },
   sessionClosedTitle: "会话已断开",
   sessionClosedDetail: "「{target}」的会话已断开，可在标签页中重新连接。",

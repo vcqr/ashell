@@ -60,6 +60,7 @@ import { useTerminalStore } from "@/stores/terminal";
 import { useStartupStore } from "@/stores/startup";
 import { useTrayStore } from "@/stores/tray";
 import { useTheme } from "@/composables/useTheme";
+import { useLocalPtyCapable } from "@/composables/useLocalPtyCapable";
 import {
   useTabs,
   HOST_SESSION_STATUS_KEY,
@@ -82,6 +83,9 @@ void terminalStore.loadSystemFonts();
 const startupStore = useStartupStore();
 
 const keybindingStore = useKeybindingStore();
+
+// 本地终端可用性（Windows ConPTY 探测）：欢迎页「新建本地终端」入口置灰
+const localPtyCapable = useLocalPtyCapable();
 
 // 空态欢迎页的快捷键提示：从键位 store 动态读取，
 // 跟随用户自定义键位与 mac/win 平台差异；绑定为空时返回空串（隐藏提示）
@@ -824,6 +828,8 @@ if (!isTauri) {
                       type="button"
                       class="empty-row"
                       data-testid="empty-new-local"
+                      :disabled="!localPtyCapable"
+                      :title="localPtyCapable ? undefined : t('terminal.fatalCodes.conpty_unsupported')"
                       @click="openLocal()"
                     >
                       <NIcon :size="16"><RiTerminalBoxLine /></NIcon>
@@ -1258,6 +1264,16 @@ if (!isTauri) {
 
 .empty-row:hover {
   background: var(--ashell-hover);
+}
+
+/* 无 ConPTY 系统下「新建本地终端」置灰： muted + 不响应 hover 高亮 */
+.empty-row:disabled {
+  color: var(--ashell-text-muted);
+  cursor: not-allowed;
+}
+
+.empty-row:disabled:hover {
+  background: transparent;
 }
 
 .empty-row .n-icon {
