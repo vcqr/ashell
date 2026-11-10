@@ -113,7 +113,10 @@ fn main() {
         //    编译期链接，仅 x86_64 目标参与链接），必须与 exe 同目录，缺文件时
         //    加载器直接报错无法启动；winpty-agent.exe 必须与 winpty.dll 同目录
         //    （winpty 上游 AgentLocation 从 dll 自身所在目录查找 agent，不走
-        //    PATH）。
+        //    PATH）；winpty.lib 是纯构建期的导入库，运行时无用，但必须跟随
+        //    agent 落位——winpty-rs 的 build.rs 重跑时会在 exe 目录等位置探测
+        //    agent，发现"有 agent 无 lib"会直接 panic（显式启用了 winpty
+        //    feature 时），lib 跟随复制即可闭环。
         //    两种架构都复制/暂存：资源映射在 tauri.windows.conf.json 中对全部
         //    Windows 构建生效（本地 tauri build 不传 --config 也能带上，否则
         //    本地打的安装包缺文件、装上即 "winpty.dll was not found"）；
@@ -123,10 +126,13 @@ fn main() {
         let winpty_stage = std::path::Path::new(&manifest_dir).join("resources/winpty/bin");
         std::fs::create_dir_all(&winpty_stage).expect("创建 winpty 暂存目录");
         let winpty_src = std::path::Path::new(&manifest_dir).join("resources/winpty/x86_64");
-        for file in ["winpty.dll", "winpty-agent.exe"] {
+        for file in ["winpty.dll", "winpty-agent.exe", "winpty.lib"] {
             copy_if_unchanged(&winpty_src.join(file), &exe_dir.join(file));
-            copy_if_unchanged(&winpty_src.join(file), &winpty_stage.join(file));
             println!("cargo:rerun-if-changed=resources/winpty/x86_64/{file}");
+        }
+        // 暂存目录只放分发文件（lib 不进安装包）
+        for file in ["winpty.dll", "winpty-agent.exe"] {
+            copy_if_unchanged(&winpty_src.join(file), &winpty_stage.join(file));
         }
     }
 
