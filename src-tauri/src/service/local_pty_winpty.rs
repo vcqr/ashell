@@ -152,6 +152,7 @@ pub(crate) async fn handle_winpty(
     let sid_read = sid.clone();
     let read_task = tokio::task::spawn_blocking(move || {
         let mut osc_carry: Vec<u8> = Vec::new();
+        let mut first_chunk_logged = false;
         loop {
             if read_stop.load(Ordering::Relaxed) {
                 break;
@@ -167,6 +168,15 @@ pub(crate) async fn handle_winpty(
                     if bytes.is_empty() {
                         std::thread::sleep(READ_POLL);
                         continue;
+                    }
+                    // 每会话首块输出进日志：秒退类问题（shell 起来就死）能看到
+                    // 死前打印了什么（usage / 报错 / DLL 加载失败对话框文本等）
+                    if !first_chunk_logged {
+                        first_chunk_logged = true;
+                        let head: String = String::from_utf8_lossy(&bytes[..bytes.len().min(160)])
+                            .escape_default()
+                            .collect();
+                        log::info!("local_pty_winpty: 输出首块 sid={sid_read}: {head}");
                     }
                     osc_carry.extend_from_slice(&bytes);
                     scan_cwd_osc(&mut osc_carry, &cwd_sink);
@@ -370,9 +380,10 @@ pub(crate) async fn handle_winpty(
     // 秒退提示：spawn 到会话结束不足 1s，多半是启动项配错了程序（典型：把
     // git.exe 当 shell——打印 usage 即退）。终端里直接给出退出码线索，
     // 不让用户只看到一个一闪而过的空会话
+    let exit_status = pty.get_exitstatus().ok().flatten();
     if spawn_started.elapsed() < Duration::from_secs(1) {
-        match pty.get_exitstatus() {
-            Ok(Some(code)) => {
+        match exit_status {
+            Some(code) => {
                 let _ = ws_tx
                     .send(Message::Text(
                         format!(
@@ -382,7 +393,7 @@ pub(crate) async fn handle_winpty(
                     ))
                     .await;
             }
-            Ok(None) | Err(_) => {
+            None => {
                 let _ = ws_tx
                     .send(Message::Text(
                         "\x1b[31m[ashell] shell exited immediately\x1b[0m"
@@ -393,7 +404,9 @@ pub(crate) async fn handle_winpty(
             }
         }
     }
-    log::info!("local_pty_winpty cleanup sid={sid}");
+    log::info!(
+        "local_pty_winpty cleanup sid={sid} exit_status={exit_status:?}"
+    );
     ssh_svc::remove_terminal_channels(&sid).await;
     let _ = ws_tx.close().await;
 }
