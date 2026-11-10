@@ -20,7 +20,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
@@ -107,6 +107,7 @@ pub(crate) async fn handle_winpty(
     );
 
     let program_display = appname.to_string_lossy().into_owned();
+    let spawn_started = Instant::now();
     if let Err(e) = pty.spawn(appname, Some(cmdline), cwd, env_block) {
         // program_display 帮助终端里直接看出"找不到的到底是谁"：整条命令
         // 覆盖（自定义启动项）若含空格路径未加引号，首段会被 split_command_line
@@ -365,6 +366,32 @@ pub(crate) async fn handle_winpty(
     let tail_text = util::utf8_flush(&mut utf8_tail);
     if !tail_text.is_empty() {
         let _ = output_tx.send(tail_text);
+    }
+    // 秒退提示：spawn 到会话结束不足 1s，多半是启动项配错了程序（典型：把
+    // git.exe 当 shell——打印 usage 即退）。终端里直接给出退出码线索，
+    // 不让用户只看到一个一闪而过的空会话
+    if spawn_started.elapsed() < Duration::from_secs(1) {
+        match pty.get_exitstatus() {
+            Ok(Some(code)) => {
+                let _ = ws_tx
+                    .send(Message::Text(
+                        format!(
+                            "\x1b[31m[ashell] shell exited immediately (code {code})\x1b[0m"
+                        )
+                        .into(),
+                    ))
+                    .await;
+            }
+            Ok(None) | Err(_) => {
+                let _ = ws_tx
+                    .send(Message::Text(
+                        "\x1b[31m[ashell] shell exited immediately\x1b[0m"
+                            .to_string()
+                            .into(),
+                    ))
+                    .await;
+            }
+        }
     }
     log::info!("local_pty_winpty cleanup sid={sid}");
     ssh_svc::remove_terminal_channels(&sid).await;
