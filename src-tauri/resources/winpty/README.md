@@ -54,6 +54,27 @@ CI x86_64 Windows job 与本地 Windows 开机构建都需要：
 CI 用同一份官方 zip（`x64/bin` 加 PATH、`x64/lib/winpty.lib` 在 winpty
 根目录下被检索），见 .github/workflows/build.yml 的 winpty 工具链步骤。
 
+## 已知限制：MSYS2 交互 shell（git-bash）在无 ConPTY 系统上不可用
+
+实测（Windows Server 2016，无 ConPTY）：MSYS2/git-bash 的**交互** shell 挂在
+winpty 隐藏控制台上会静默秒退（exit 0 / 126，无任何输出），**非交互**（`bash -c`）
+完全正常；同机 cmd.exe / powershell 挂在 winpty 控制台上完整可用。
+
+已排除的方向（全部无效，属 cygwin/MSYS2 运行时与 winpty console 的相性问题，
+非本应用集成问题）：
+
+- bin\bash.exe 与 usr\bin\bash.exe 两个入口（bin 包装器另有独立问题：以子进程
+  交互形态启动报 exit 126，故候选路径一律优先 usr\bin 真身）
+- 自带 winpty 0.4.3 与 Git for Windows 自带 winpty 0.4.3（同版本）
+- WINPTY_FLAG_COLOR_ESCAPES / CONERR 路由、CYGWIN=disable_pcon / notty
+- 环境剥离/补全（MSYSTEM/HOME/TERM）、--rcfile 各形态（/dev/null、/etc/profile、
+  纯钩子、ashell 完整形态）
+
+bash 在 MSYS 自有 pty（mintty / git-bash.exe 启动器）上一切正常——该路线不经过
+winpty，ashell 无法借用；Git for Windows 也不随包分发 `script` 等 pty 中转工具，
+没有现成的桥可搭。因此：无 ConPTY 系统上本地终端请使用 cmd / powershell / pwsh；
+git-bash 请在 ashell 外经 git-bash.exe（mintty）使用。秒退时终端内会显示针对性提示。
+
 ## 升级方式
 
 从 winpty 新 release 下载 msvc2015 zip，替换 `x86_64/` 下的三个文件

@@ -30,7 +30,7 @@ use winptyrs::{PTY, PTYArgs, PTYBackend};
 
 use crate::service::local_pty::{
     apply_cwd_reporting, inherit_env, resolve_command, resolve_session_cwd, scan_cwd_osc,
-    which_in_path, write_input, write_text_input, ClientMsg, ReadyMsg,
+    which_in_path, write_input, write_text_input, ClientMsg, ReadyMsg, ShellKind,
 };
 use crate::service::ssh as ssh_svc;
 use crate::util;
@@ -379,30 +379,26 @@ pub(crate) async fn handle_winpty(
     }
     // 秒退提示：spawn 到会话结束不足 1s，多半是启动项配错了程序（典型：把
     // git.exe 当 shell——打印 usage 即退）。终端里直接给出退出码线索，
-    // 不让用户只看到一个一闪而过的空会话
+    // 不让用户只看到一个一闪而过的空会话。
+    // MSYS2 交互 shell（git-bash 等）与 winpty 隐藏控制台在无 ConPTY 系统
+    // （Server 2016 等）上存在 cygwin 运行时级不相容：非交互（-c）正常、
+    // 交互（-i）秒退，穷尽旗标/CYGWIN tunables/环境/二进制路径均无解，
+    // 只能如实引导改用原生 console 的 shell（详见 resources/winpty/README.md）。
     let exit_status = pty.get_exitstatus().ok().flatten();
     if spawn_started.elapsed() < Duration::from_secs(1) {
-        match exit_status {
-            Some(code) => {
-                let _ = ws_tx
-                    .send(Message::Text(
-                        format!(
-                            "\x1b[31m[ashell] shell exited immediately (code {code})\x1b[0m"
-                        )
-                        .into(),
-                    ))
-                    .await;
-            }
-            None => {
-                let _ = ws_tx
-                    .send(Message::Text(
-                        "\x1b[31m[ashell] shell exited immediately\x1b[0m"
-                            .to_string()
-                            .into(),
-                    ))
-                    .await;
-            }
+        let msys_hint = matches!(shell_kind, ShellKind::Bash | ShellKind::Zsh);
+        let mut msg = match exit_status {
+            Some(code) => format!("\x1b[31m[ashell] shell exited immediately (code {code})\x1b[0m"),
+            None => "\x1b[31m[ashell] shell exited immediately\x1b[0m".to_string(),
+        };
+        if msys_hint {
+            msg.push_str(
+                "\n\x1b[33m[ashell] MSYS2 interactive shells (git-bash) are incompatible with \
+                 winpty consoles on this system (no ConPTY). Use cmd / powershell here, or run \
+                 git-bash.exe (mintty) outside ashell.\x1b[0m",
+            );
         }
+        let _ = ws_tx.send(Message::Text(msg.into())).await;
     }
     log::info!(
         "local_pty_winpty cleanup sid={sid} exit_status={exit_status:?}"
