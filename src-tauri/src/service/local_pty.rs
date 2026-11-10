@@ -227,20 +227,23 @@ fn resolve_parts(shell: Option<&str>) -> ResolvedParts {
             "git-bash" | "bash" => {
                 // Git Bash 常见路径：机器级安装（Program Files）+ 用户级安装
                 // （Git for Windows 安装器可选 per-user，落 %LOCALAPPDATA%\Programs\Git）。
+                // 一律优先 usr\bin\bash.exe（真身，Git Bash 快捷方式即用它）：
+                // bin\bash.exe 是包装器，实测在 Server 2016 等系统上以子进程
+                // 交互形态启动会 exit 126（无法拉起真身），usr\bin 无此问题。
                 // 注意：这里不加 -i，由 apply_cwd_reporting
                 // 统一追加（--rcfile 必须排在 -i 之前，见其注释）
-                let local_app_data = std::env::var_os("LOCALAPPDATA")
-                    .map(std::path::PathBuf::from);
-                let mut candidates = vec![
-                    std::path::PathBuf::from("C:\\Program Files\\Git\\bin\\bash.exe"),
-                    std::path::PathBuf::from("C:\\Program Files (x86)\\Git\\bin\\bash.exe"),
+                let roots = [
+                    Some(std::path::PathBuf::from("C:\\Program Files\\Git")),
+                    Some(std::path::PathBuf::from("C:\\Program Files (x86)\\Git")),
+                    std::env::var_os("LOCALAPPDATA")
+                        .map(|lad| std::path::PathBuf::from(lad).join("Programs").join("Git")),
                 ];
-                if let Some(lad) = local_app_data {
-                    candidates.push(lad.join("Programs").join("Git").join("bin").join("bash.exe"));
-                }
-                for p in candidates {
-                    if p.exists() {
-                        return parts(&p.to_string_lossy(), &[], ShellKind::Bash);
+                for root in roots.into_iter().flatten() {
+                    for rel in ["usr\\bin\\bash.exe", "bin\\bash.exe"] {
+                        let p = root.join(rel);
+                        if p.exists() {
+                            return parts(&p.to_string_lossy(), &[], ShellKind::Bash);
+                        }
                     }
                 }
                 parts("bash.exe", &[], ShellKind::Bash)
