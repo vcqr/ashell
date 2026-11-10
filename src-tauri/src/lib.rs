@@ -219,9 +219,57 @@ async fn start_api_server() -> anyhow::Result<ApiInfo> {
     Ok(info)
 }
 
+/// Windows GUI 子系统（release 构建）从 cmd / Windows Terminal 启动时，进程
+/// 不附着控制台且 stderr 句柄无效，env_logger 的输出会静默丢失。此处在
+/// **stderr 尚无有效句柄**时 AttachConsole 到父进程控制台，并把
+/// stdout/stderr 重接到 CONOUT$：
+/// - cmd（经典 conhost）与 Windows Terminal：父控制台存在 → 日志可见；
+/// - git-bash（mintty）：stdio 是继承的管道句柄（有效）→ 跳过，行为不变；
+/// - `ashell.exe 2>log` 重定向：句柄有效 → 跳过，重定向继续生效；
+/// - 双击 / 资源管理器启动：无父控制台，AttachConsole 失败 → 保持静默，
+///   不闪临时黑窗（不用 AllocConsole）。
+/// 必须在日志初始化（stderr 句柄首次解析）之前调用。
+#[cfg(windows)]
+fn reattach_console_for_logging() {
+    use windows_sys::Win32::Foundation::{GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::Console::{
+        AttachConsole, ATTACH_PARENT_PROCESS, GetStdHandle, SetStdHandle, STD_ERROR_HANDLE,
+        STD_OUTPUT_HANDLE,
+    };
+    unsafe {
+        let stderr = GetStdHandle(STD_ERROR_HANDLE);
+        let stderr_valid = !stderr.is_null() && stderr != INVALID_HANDLE_VALUE;
+        if stderr_valid {
+            return;
+        }
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return;
+        }
+        let name: Vec<u16> = "CONOUT$\0".encode_utf16().collect();
+        let conout = CreateFileW(
+            name.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        );
+        if !conout.is_null() && conout != INVALID_HANDLE_VALUE {
+            SetStdHandle(STD_OUTPUT_HANDLE, conout);
+            SetStdHandle(STD_ERROR_HANDLE, conout);
+        }
+    }
+}
+
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    reattach_console_for_logging();
     // 初始化日志
     // tracing-subscriber 处理 tracing 事件；env_logger 处理 log 宏输出（替代 tracing-log 桥接）
     tracing_subscriber::fmt()
