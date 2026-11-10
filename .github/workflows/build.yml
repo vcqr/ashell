@@ -30,11 +30,11 @@ jobs:
           - platform: macos-15-intel
             target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin"
-          # Windows x86_64（win64 覆盖配置追加 winpty 资源映射，deep-merge 到
-          # tauri.windows.conf.json 的 resources 对象上；ARM64 不引用它）
+          # Windows x86_64（winpty 资源映射在 tauri.windows.conf.json 中对全部
+          # Windows 构建生效，无需按架构传覆盖配置）
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-            args: "--target x86_64-pc-windows-msvc --config src-tauri/tauri.win64.conf.json"
+            args: "--target x86_64-pc-windows-msvc"
           # Windows ARM64
           - platform: windows-11-arm
             target: aarch64-pc-windows-msvc

@@ -8,8 +8,12 @@
 WINPTY_RS_CONPTY_VERSION = "1.24.260710001"
 
 [target.x86_64-pc-windows-msvc]
-# winpty-rs 的 ConPTY 后端（build.rs 自动启用 + conpty_local）静态导入
-# conpty.dll，但本应用从不调用该后端（老系统走 winpty、新系统走
-# portable-pty）。延迟加载让 conpty.dll 只在真正引用时才装载，规避 Wine 等
-# 环境下 conpty.dll 加载失败导致整个 app 无法启动的风险。
-rustflags = ["-C", "link-args=/DELAYLOAD:conpty.dll delayimp.lib"]
+# 两个静态导入的延迟加载：
+# - conpty.dll：winpty-rs 的 ConPTY 后端（build.rs 自动启用 + conpty_local）静态
+#   导入它，但本应用从不调用该后端（老系统走 winpty、新系统走 portable-pty）。
+#   延迟加载规避 Wine 等环境下 conpty.dll 加载失败导致整个 app 无法启动。
+# - winpty.dll：老系统回退后端的运行库。正常分发下它与 exe 同目录，但即使
+#   分发缺文件，延迟加载也能保证 app 本体在 Win10 1809+/Win11 上照常启动
+#   （仅在真正走到 winpty 后端时才会解析），不再出现
+#   "The code execution cannot proceed because winpty.dll was not found"。
+rustflags = ["-C", "link-args=/DELAYLOAD:conpty.dll /DELAYLOAD:winpty.dll delayimp.lib"]

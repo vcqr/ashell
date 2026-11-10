@@ -2,7 +2,9 @@
   "bundle": {
     "resources": {
       "resources/conpty/bin/conpty.dll": "conpty.dll",
-      "resources/conpty/bin/OpenConsole.exe": "OpenConsole.exe"
+      "resources/conpty/bin/OpenConsole.exe": "OpenConsole.exe",
+      "resources/winpty/bin/winpty.dll": "winpty.dll",
+      "resources/winpty/bin/winpty-agent.exe": "winpty-agent.exe"
     },
     "windows": {
       "nsis": {

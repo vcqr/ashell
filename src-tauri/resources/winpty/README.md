@@ -23,15 +23,17 @@ ConPTY，而 portable-pty 0.9 对缺符号会直接 panic（其 win/psuedocon.rs
 
 ## 分发要求（与 conpty/ 同模式但更严格）
 
-- `winpty.dll` 是 ashell.exe（x86_64 Windows 构建）的**静态导入**：缺它
-  进程根本无法启动，因此必须随**所有** x86_64 Windows 分发包一起交付
-  （NSIS 安装包经 `tauri.win64.conf.json` 映射到安装根目录、便携包由 CI
-  收集、开发构建由 build.rs 复制到 exe 旁）。
+- `winpty.dll` 是 ashell.exe（x86_64 Windows 构建）的**静态导入**（另有
+  `/DELAYLOAD:winpty.dll` 兜底：即使分发缺文件，app 本体在 1809+ 系统上
+  仍能启动，只有真正走到 winpty 后端时才解析），必须随**所有** x86_64
+  Windows 分发包一起交付。资源映射在 `tauri.windows.conf.json` 中对全部
+  Windows 构建生效（本地 `tauri build` 与 CI 一致，无需额外 --config）；
+  ARM64 构建不导入该 dll，包内多出的 x64 文件属无害冗余。
 - `winpty-agent.exe` 必须与 `winpty.dll` **同目录**：winpty 上游
   AgentLocation 从 dll 自身所在目录查找 agent，不走 PATH。
-- build.rs（`CARGO_CFG_TARGET_OS == "windows"` 且 `x86_64` 时）把两个文件
-  复制到产物 exe 旁，并暂存固定名到 `resources/winpty/bin/`
-  （gitignore）供 tauri.win64.conf.json 资源映射。
+- build.rs（`CARGO_CFG_TARGET_OS == "windows"` 时）把两个文件复制到产物
+  exe 旁，并暂存固定名到 `resources/winpty/bin/`（gitignore）供
+  tauri.windows.conf.json 资源映射。
 
 ## 构建期工具链（winpty-rs 以编译期链接使用 winpty，非 LoadLibrary）
 

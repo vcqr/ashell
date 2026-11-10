@@ -1,8 +1,0 @@
-{
-  "bundle": {
-    "resources": {
-      "resources/winpty/bin/winpty.dll": "winpty.dll",
-      "resources/winpty/bin/winpty-agent.exe": "winpty-agent.exe"
-    }
-  }
-}

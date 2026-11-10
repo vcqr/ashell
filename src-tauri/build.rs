@@ -109,21 +109,24 @@ fn main() {
         }
 
         // 3) winpty 回退后端（老系统本地终端，见 resources/winpty/README.md）：
-        //    仅 x86_64 参与——winpty 上游无 arm64 二进制，ARM64 Windows 也不存在
-        //    无 ConPTY 的现实用户群（WoA 设备全系 1809+）。winpty.dll 是
-        //    ashell.exe 的静态导入（winpty-rs 的 winpty feature 为编译期链接），
-        //    必须与 exe 同目录；winpty-agent.exe 必须与 winpty.dll 同目录
-        //    （winpty 上游 AgentLocation 从 dll 自身所在目录查找 agent，不走 PATH）。
-        //    暂存目录两种架构都创建（tauri.win64.conf.json 仅 x86_64 引用）。
+        //    winpty.dll 是 ashell.exe 的静态导入（winpty-rs 的 winpty feature 为
+        //    编译期链接，仅 x86_64 目标参与链接），必须与 exe 同目录，缺文件时
+        //    加载器直接报错无法启动；winpty-agent.exe 必须与 winpty.dll 同目录
+        //    （winpty 上游 AgentLocation 从 dll 自身所在目录查找 agent，不走
+        //    PATH）。
+        //    两种架构都复制/暂存：资源映射在 tauri.windows.conf.json 中对全部
+        //    Windows 构建生效（本地 tauri build 不传 --config 也能带上，否则
+        //    本地打的安装包缺文件、装上即 "winpty.dll was not found"）；
+        //    ARM64 exe 并不导入 winpty.dll，包内多出的 x64 文件属无害冗余
+        //    （winpty 上游无 arm64 二进制）。另有 /DELAYLOAD:winpty.dll
+        //    （仓库根 .cargo/config.toml）兜底：即便分发缺文件也不再阻塞启动。
         let winpty_stage = std::path::Path::new(&manifest_dir).join("resources/winpty/bin");
         std::fs::create_dir_all(&winpty_stage).expect("创建 winpty 暂存目录");
-        if arch == "x86_64" {
-            let winpty_src = std::path::Path::new(&manifest_dir).join("resources/winpty/x86_64");
-            for file in ["winpty.dll", "winpty-agent.exe"] {
-                copy_if_unchanged(&winpty_src.join(file), &exe_dir.join(file));
-                copy_if_unchanged(&winpty_src.join(file), &winpty_stage.join(file));
-                println!("cargo:rerun-if-changed=resources/winpty/x86_64/{file}");
-            }
+        let winpty_src = std::path::Path::new(&manifest_dir).join("resources/winpty/x86_64");
+        for file in ["winpty.dll", "winpty-agent.exe"] {
+            copy_if_unchanged(&winpty_src.join(file), &exe_dir.join(file));
+            copy_if_unchanged(&winpty_src.join(file), &winpty_stage.join(file));
+            println!("cargo:rerun-if-changed=resources/winpty/x86_64/{file}");
         }
     }
 

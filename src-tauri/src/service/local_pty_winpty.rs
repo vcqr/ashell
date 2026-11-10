@@ -67,6 +67,28 @@ pub(crate) async fn handle_winpty(
     // 1) 开 PTY。显式指定 WinPTY 后端：Auto 会先试 ConPTY，老系统上无意义。
     //    PTYArgs::default() 即 mouse_mode=NONE / timeout=10s / COLOR_ESCAPES，
     //    只覆盖初始尺寸（与 ConPTY 路径的默认 100x24 一致）。
+    //    先探测 winpty.dll 在位：正常分发下它与 exe 同目录（build.rs 复制 +
+    //    tauri.windows.conf.json 映射），万一缺失（手工精简的分发包等），
+    //    延迟加载会在首次调用时抛 SEH 崩掉整个 app——这里提前给出干净报错。
+    let winpty_dll = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("winpty.dll")));
+    if !winpty_dll.map(|p| p.is_file()).unwrap_or(false) {
+        log::error!(
+            "local_pty_winpty: winpty.dll 缺失（应为 exe 同目录分发文件） sid={sid}"
+        );
+        let _ = ws_tx
+            .send(Message::Text(
+                "\x1b[31m[ashell] winpty.dll is missing next to ashell.exe; \
+                 the installation is incomplete.\x1b[0m"
+                    .to_string()
+                    .into(),
+            ))
+            .await;
+        ssh_svc::remove_terminal_channels(&sid).await;
+        let _ = ws_tx.close().await;
+        return;
+    }
     let mut args = PTYArgs::default();
     args.cols = 100;
     args.rows = 24;
