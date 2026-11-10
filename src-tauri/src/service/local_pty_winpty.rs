@@ -455,6 +455,26 @@ fn transcribe_command(
     parts.extend(argv.iter().skip(1).cloned());
     let cmdline = quote_join(&parts);
 
+    // MSYS2 运行时检测：程序目录旁存在 msys-2.0.dll（git-bash 的 usr\bin 等）。
+    // MSYS2 交互 shell 直接挂在 winpty 隐藏控制台上会静默秒退（cygwin 运行时
+    // 相性，实测 Server 2016；非交互 -c 正常）。经 cmd.exe /c 间接启动后，
+    // 子进程 stdio 走继承句柄链，绕开该初始化路径——由用户在 Server 2016 上
+    // 以 cmd.exe /c "bash --login -i" 实测验证可用。无 ConPTY 系统上 cmd.exe
+    // 恒在（System32），包装对非 MSYS 程序零影响。
+    let msys_runtime = std::path::Path::new(&program)
+        .parent()
+        .map(|dir| dir.join("msys-2.0.dll").is_file())
+        .unwrap_or(false);
+    let (appname, cmdline) = if msys_runtime {
+        let cmd_exe = resolve_program(OsStr::new("cmd.exe")).unwrap_or_default();
+        // cmd 的引号剥离规则（/c 后首尾成对去除）：外层加一对，内层 quote_join
+        // 已按需给含空格的参数加了引号，两层叠加后恰好还原为正确命令行
+        let wrapped = format!("{} /c \"{}\"", cmd_exe.to_string_lossy(), cmdline.to_string_lossy());
+        (cmd_exe, OsString::from(wrapped))
+    } else {
+        (program.clone(), cmdline)
+    };
+
     let cwd = cmd.get_cwd().cloned();
 
     let mut pairs: Vec<(String, String)> = cmd
@@ -471,7 +491,7 @@ fn transcribe_command(
     }
     let env_block = OsString::from_wide(&wide);
 
-    (program, cmdline, cwd, Some(env_block))
+    (appname, cmdline, cwd, Some(env_block))
 }
 
 /// Windows 命令行引号拼接：含空白或引号的段落加双引号（内嵌引号转义）；

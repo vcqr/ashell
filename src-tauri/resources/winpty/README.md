@@ -54,7 +54,7 @@ CI x86_64 Windows job 与本地 Windows 开机构建都需要：
 CI 用同一份官方 zip（`x64/bin` 加 PATH、`x64/lib/winpty.lib` 在 winpty
 根目录下被检索），见 .github/workflows/build.yml 的 winpty 工具链步骤。
 
-## 已知限制：MSYS2 交互 shell（git-bash）在无 ConPTY 系统上不可用
+## 已知限制：MSYS2 交互 shell（git-bash）需经 cmd 间接启动
 
 实测（Windows Server 2016，无 ConPTY）：MSYS2/git-bash 的**交互** shell 挂在
 winpty 隐藏控制台上会静默秒退（exit 0 / 126，无任何输出），**非交互**（`bash -c`）
@@ -71,9 +71,12 @@ winpty 隐藏控制台上会静默秒退（exit 0 / 126，无任何输出），*
   纯钩子、ashell 完整形态）
 
 bash 在 MSYS 自有 pty（mintty / git-bash.exe 启动器）上一切正常——该路线不经过
-winpty，ashell 无法借用；Git for Windows 也不随包分发 `script` 等 pty 中转工具，
-没有现成的桥可搭。因此：无 ConPTY 系统上本地终端请使用 cmd / powershell / pwsh；
-git-bash 请在 ashell 外经 git-bash.exe（mintty）使用。秒退时终端内会显示针对性提示。
+winpty。**已落地的解法**：winpty 会话在检测到 MSYS2 运行时（程序目录旁存在
+`msys-2.0.dll`）时，自动经 `cmd.exe /c "<原命令行>"` 间接启动——cmd.exe 是原生
+控制台程序，在 winpty 控制台上初始化正常，bash 的 stdio 改走继承句柄链，绕开了
+出问题的 cygwin 控制台初始化路径。该形态（`cmd.exe /c "bash --login -i"`）由用户
+在 Server 2016 上实测验证可用；对非 MSYS 程序零影响。若间接启动仍秒退，终端内
+会显示针对性提示（回落建议 cmd / powershell）。
 
 ## 升级方式
 
