@@ -7,6 +7,13 @@
  *   包成 NDJSON 帧交给宿主（见 daemon.ts），由宿主按 ssid 解复用。
  *
  * JSON 信封统一为 { type, payload }。
+ *
+ * streaming 增量帧（AI_STREAMING=1 开启）构成显式的分段生命周期：
+ *   [AI_TEXT_START]/[AI_THINKING_START] → [AIMSG_DELTA]/[AI_THINKING_DELTA]* → [AIMSG]/[AI_THINKING](全文)
+ * 引擎在块结束时立即发全文帧（FINAL，权威文本）；任何其他帧发出前先 flush 该
+ * 会话的待发增量，保证段内顺序。FINAL 在前端有两种语义：有活跃同类气泡时覆盖
+ * 续写（打字机继续打完），无活跃气泡时按普通消息入列（block 模式只有 FINAL 帧，
+ * 走后者的旧语义，两端兼容）。
  */
 
 export interface AIMsg {
@@ -73,6 +80,7 @@ export function setEmitSink(sink: EmitSink | null): void {
 }
 
 function emit(sid: string, tag: string, msg: AIMsg): void {
+  flushPendingDeltas(sid);
   if (emitSink) {
     emitSink(sid, tag, msg, "");
     return;
@@ -82,12 +90,141 @@ function emit(sid: string, tag: string, msg: AIMsg): void {
 
 /** 控制行输出（END_OF_RESPONSE / SESSION_STOP 等 tag-only 行） */
 export function emitControl(sid: string, line: string): void {
+  flushPendingDeltas(sid);
   const m = /^(\[[A-Z_]+\])/.exec(line);
   if (emitSink && m) {
     emitSink(sid, m[1]!, null, line.slice(m[1]!.length));
     return;
   }
   console.log(line);
+}
+
+/* ── streaming 增量帧（AI_STREAMING=1 开启，灰度开关两引擎通用） ── */
+
+/** streaming 是否开启：仅在 ~/.ashell/ai/.env 显式 AI_STREAMING=1/true 时启用 */
+export function isStreamingEnabled(): boolean {
+  return process.env.AI_STREAMING === "1" || process.env.AI_STREAMING === "true";
+}
+
+/** 增量帧负载：seq 为每会话递增序号（仅诊断用，传输层本身有序无重排） */
+export interface AiDeltaPayload {
+  seq: number;
+  text: string;
+}
+
+type DeltaKind = "text" | "thinking";
+
+const DELTA_TAGS: Record<DeltaKind, string> = {
+  text: "[AIMSG_DELTA]",
+  thinking: "[AI_THINKING_DELTA]",
+};
+const DELTA_TYPES: Record<DeltaKind, string> = {
+  text: "assistant_delta",
+  thinking: "thinking_delta",
+};
+
+/** 聚合窗口：窗口内的片段合并成一帧发出，避免逐 token 打爆 WS/Tauri event */
+const DELTA_FLUSH_MS = 50;
+
+interface DeltaBuffer {
+  sid: string;
+  kind: DeltaKind;
+  text: string;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const deltaBuffers = new Map<string, DeltaBuffer>();
+const deltaSeq = new Map<string, number>();
+
+function deltaKey(sid: string, kind: DeltaKind): string {
+  return `${sid}\u0000${kind}`;
+}
+
+/** 立即出帧缓冲中的增量；空缓冲无害 */
+function flushDeltaBuffer(buf: DeltaBuffer): void {
+  if (buf.timer !== null) {
+    clearTimeout(buf.timer);
+    buf.timer = null;
+  }
+  if (!buf.text) {
+    deltaBuffers.delete(deltaKey(buf.sid, buf.kind));
+    return;
+  }
+  const seq = (deltaSeq.get(buf.sid) ?? 0) + 1;
+  deltaSeq.set(buf.sid, seq);
+  const text = buf.text;
+  buf.text = "";
+  emit(buf.sid, DELTA_TAGS[buf.kind], {
+    type: DELTA_TYPES[buf.kind],
+    payload: { seq, text },
+  });
+}
+
+/** 把某会话所有待发增量立即出帧：任何其他帧（含校准全帧、END_OF_RESPONSE）
+ *  发出前调用，保证增量与全帧的相对顺序。
+ *  重入保护：delta 帧本身也走 emit()，若不挡住会把其他 kind 的缓冲提前带出，
+ *  破坏外层循环确定的帧顺序 */
+let flushingDeltas = false;
+
+function flushPendingDeltas(sid: string): void {
+  if (flushingDeltas) return;
+  flushingDeltas = true;
+  try {
+    for (const kind of ["text", "thinking"] as const) {
+      const buf = deltaBuffers.get(deltaKey(sid, kind));
+      if (buf) flushDeltaBuffer(buf);
+    }
+  } finally {
+    flushingDeltas = false;
+  }
+}
+
+/** 测试/调试辅助：手动 flush 指定会话的待发增量（正常由 emit 路径自动触发） */
+export function flushSessionDeltas(sid: string): void {
+  flushPendingDeltas(sid);
+}
+
+/** 引擎入口：累积增量片段，按窗口聚合出帧（streaming 关闭时为 no-op） */
+function pushDelta(sid: string, kind: DeltaKind, text: string): void {
+  if (!isStreamingEnabled() || !text) return;
+  const key = deltaKey(sid, kind);
+  let buf = deltaBuffers.get(key);
+  if (!buf) {
+    buf = { sid, kind, text: "", timer: null };
+    deltaBuffers.set(key, buf);
+  }
+  buf.text += text;
+  if (buf.timer === null) {
+    buf.timer = setTimeout(() => {
+      buf!.timer = null;
+      flushDeltaBuffer(buf!);
+    }, DELTA_FLUSH_MS);
+  }
+}
+
+/** assistant 正文增量片段 */
+export function emitAIMSGDelta(sid: string, text: string): void {
+  pushDelta(sid, "text", text);
+}
+
+/** thinking 增量片段 */
+export function emitThinkingDelta(sid: string, text: string): void {
+  pushDelta(sid, "thinking", text);
+}
+
+/**
+ * 内容块开始帧（仅 streaming 模式）：引擎每开始一个 text/thinking 块发一帧，
+ * 前端据此关闭上一个流式气泡并新开一个。与 DELTA/FINAL 构成显式的分段生命周期：
+ * START → DELTA* → FINAL(全文)，段与段之间严格串行，前端无需猜测帧归属。
+ */
+export function emitTextStart(sid: string): void {
+  if (!isStreamingEnabled()) return;
+  emit(sid, "[AI_TEXT_START]", { type: "assistant_text_start" });
+}
+
+export function emitThinkingStart(sid: string): void {
+  if (!isStreamingEnabled()) return;
+  emit(sid, "[AI_THINKING_START]", { type: "thinking_start" });
 }
 
 /** assistant 正文消息 */

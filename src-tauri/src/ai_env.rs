@@ -44,6 +44,8 @@ const KEY_AI_CONTEXT_WINDOW: &str = "AI_CONTEXT_WINDOW";
 const KEY_AI_MAX_TOKENS: &str = "AI_MAX_TOKENS";
 /// 上下文保留对话轮数上限（空 = 不限制；pi 滑窗裁剪，claude 超限触发 /compact）
 const KEY_AI_MAX_ROUNDS: &str = "AI_MAX_ROUNDS";
+/// AI 流式输出开关（'1' = 开启，空/'0' = 关；sidecar 增量帧 [AIMSG_DELTA]/[AI_THINKING_DELTA]）
+const KEY_AI_STREAMING: &str = "AI_STREAMING";
 
 /// 前端 AI 设置弹窗的 schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -76,6 +78,8 @@ pub struct AiModelConfig {
     pub ai_max_tokens: String,
     /// 上下文保留对话轮数上限（空 = 不限制，两引擎通用）
     pub ai_max_rounds: String,
+    /// AI 流式输出开关（'1' = 开启，空/'0' = 关，两引擎通用）
+    pub ai_streaming: String,
 }
 
 fn env_path() -> Result<PathBuf, String> {
@@ -108,6 +112,7 @@ pub(crate) fn read_env_config() -> Result<AiModelConfig, String> {
         ai_context_window: map.get(KEY_AI_CONTEXT_WINDOW).cloned().unwrap_or_default(),
         ai_max_tokens: map.get(KEY_AI_MAX_TOKENS).cloned().unwrap_or_default(),
         ai_max_rounds: map.get(KEY_AI_MAX_ROUNDS).cloned().unwrap_or_default(),
+        ai_streaming: map.get(KEY_AI_STREAMING).cloned().unwrap_or_default(),
     })
 }
 
@@ -138,6 +143,7 @@ pub(crate) fn write_env_config(config: AiModelConfig) -> Result<(), String> {
     updates.insert(KEY_AI_CONTEXT_WINDOW, config.ai_context_window.trim().to_string());
     updates.insert(KEY_AI_MAX_TOKENS, config.ai_max_tokens.trim().to_string());
     updates.insert(KEY_AI_MAX_ROUNDS, config.ai_max_rounds.trim().to_string());
+    updates.insert(KEY_AI_STREAMING, config.ai_streaming.trim().to_string());
 
     let merged = merge_env(&existing, &updates);
 

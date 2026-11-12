@@ -412,6 +412,19 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v16: ai_engines 增加 streaming 开关（'1' = 开启 AI 流式输出，空/'0' = 关；
+    // 物化到 .env 的 AI_STREAMING 供 sidecar 读取）
+    if current < 16 {
+        sqlx::query("ALTER TABLE ai_engines ADD COLUMN streaming TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (16)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 

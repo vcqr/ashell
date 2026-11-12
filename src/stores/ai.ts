@@ -4,6 +4,16 @@ import { buildWsUrl, request } from '@/api/client'
 import { isTauri } from '@/utils/platform'
 import type { AiUsageStats, ChatMessage, ProcessStep } from '@/types'
 
+/** 单个 kind（text/thinking）的流式段状态 */
+export interface StreamSeg {
+  /** 该段对应的气泡消息 id */
+  msgId: number
+  /** 已收到但尚未"打"出来的增量文本（打字机缓冲） */
+  pending: string
+  /** 分段已 FINAL（全文帧已到）：动画追平后立即收尾气泡 */
+  finishing: boolean
+}
+
 /** 单个 ssid 对应的 AI 会话状态 */
 export interface AiSession {
   ssid: string
@@ -15,6 +25,14 @@ export interface AiSession {
   sidecarPid: number | null
   /** 当前正在累积的"中间过程"消息 id；为 null 表示当前无活跃过程块 */
   currentProcessMsgId: number | null
+  /**
+   * 按 kind 独立跟踪的流式段。pi 的事件流是交错的（thinking_end 晚于
+   * text_start/text_delta），FINAL 必须路由到自己的段而非"当前活跃气泡"，
+   * 否则 thinking 全文会被错推成新气泡造成内容双份。
+   */
+  streamSegs: { text?: StreamSeg; thinking?: StreamSeg }
+  /** 本轮已结束（END/STOPPED 已到）：各段动画追平后自动收尾 */
+  streamTurnOver: boolean
   /** 最近一次上报的上下文占用（[AI_USAGE] 帧更新；null 表示未知，如刚压缩完） */
   contextUsage: Pick<AiUsageStats, 'contextTokens' | 'contextWindow' | 'contextPercent'> | null
   /** stdout 监听句柄（Web 端为关闭 sidecar 流 WS 的函数） */
@@ -42,6 +60,8 @@ function emptySession(ssid: string): AiSession {
     isApprovalActive: false,
     sidecarPid: null,
     currentProcessMsgId: null,
+    streamSegs: {},
+    streamTurnOver: false,
     contextUsage: null,
     unlistenStdout: null,
     unlistenStderr: null,
@@ -144,6 +164,210 @@ export const useAiStore = defineStore('ai', () => {
     sessions.value = { ...sessions.value, [ssid]: { ...s, currentProcessMsgId: null } }
   }
 
+  let streamTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * 打字机动画循环：50ms 一拍，把各段 streamSegs[kind].pending 按自适应速率
+   * 逐字渲染进气泡。步长 = max(2, pending/10)：上游真流式时近乎实时，大块突发
+   * （如 openrouter 免费档的缓冲响应）约 0.5s 内平滑追平。
+   * 循环常驻（空闲拍开销可忽略），首轮增量时惰性启动。
+   */
+  function ensureStreamAnimator() {
+    if (streamTimer !== null) return;
+    streamTimer = setInterval(() => {
+      for (const s of Object.values(sessions.value)) {
+        // 顺序化打字：thinking 段存在期间（含 FINAL 后的收尾排空阶段），正文一律
+        // 不打——有的模型交替发送 thinking/text delta，「FINAL 才放行」仍会在
+        // thinking 尾巴未打完时放正文进场，形成尾部并行。段关闭（排空 + FINAL
+        // 都完成）后正文才开始；end 事件总会到达，不会饿死。
+        // 无 thinking 段的轮次正文照常打字，不受影响。
+        const kinds: Array<'text' | 'thinking'> = s.streamSegs.thinking
+          ? ["thinking"]
+          : ["thinking", "text"];
+        if (!kinds.some((k) => s.streamSegs[k]?.pending)) continue;
+        let cur = s;
+        for (const kind of kinds) {
+          const seg = cur.streamSegs[kind];
+          if (!seg?.pending) continue;
+          const step = Math.max(2, Math.ceil(seg.pending.length / 10));
+          const shown = seg.pending.slice(0, step);
+          const rest = seg.pending.slice(step);
+          const idx = cur.messages.findIndex((m) => m.id === seg.msgId);
+          const segs = { ...cur.streamSegs };
+          if (idx < 0) {
+            // 气泡 id 失效（历史被清空等）：丢弃该段
+            delete segs[kind];
+            cur = { ...cur, streamSegs: segs };
+            continue;
+          }
+        const finished = rest === "";
+        // 分段 FINAL 或轮末已到：追平后收尾该段气泡
+        const close = finished && (seg.finishing || cur.streamTurnOver);
+        const next = [...cur.messages];
+        next[idx] = {
+          ...cur.messages[idx]!,
+          content: (cur.messages[idx]!.content ?? "") + shown,
+          isStreaming: !close,
+        };
+        if (close) delete segs[kind];
+        else segs[kind] = { ...seg, pending: rest };
+        // 全部段收尾完毕：轮末延迟收尾状态复位（否则残留的 turnOver 会把
+        // 下一轮的段在首次追平时误关闭，造成内容错段/双份）
+        if (!segs.text && !segs.thinking) cur = { ...cur, streamTurnOver: false };
+        cur = { ...cur, messages: next, streamSegs: segs };
+        }
+        sessions.value = { ...sessions.value, [s.ssid]: cur };
+      }
+    }, 50);
+  }
+
+  /** 关闭某个 kind 的流式段：冲入未渲染的 pending 防丢字，气泡置为已收尾 */
+  function closeStreamingSeg(s: AiSession, kind: 'text' | 'thinking'): AiSession {
+    const seg = s.streamSegs[kind]
+    if (!seg) return s
+    const idx = s.messages.findIndex((m) => m.id === seg.msgId)
+    const segs = { ...s.streamSegs }
+    delete segs[kind]
+    if (idx < 0) return { ...s, streamSegs: segs }
+    const next = [...s.messages]
+    next[idx] = {
+      ...next[idx]!,
+      content: (next[idx]!.content ?? "") + seg.pending,
+      isStreaming: false,
+    }
+    return { ...s, messages: next, streamSegs: segs }
+  }
+
+  /**
+   * 新开一个 kind 的流式段（[AI_TEXT_START]/[AI_THINKING_START] 帧）：该 kind
+   * 上一段仍在时先收尾（冲刷缓冲），创建空的 isStreaming 气泡。其他 kind 的
+   * 活跃段不受影响——pi 的事件流交错，thinking 段可能跨着 text 段才结束。
+   */
+  function startStreamingBubble(ssid: string, kind: 'text' | 'thinking', time: string) {
+    let s = ensure(ssid)
+    if (s.streamSegs[kind]) {
+      s = closeStreamingSeg(s, kind)
+      sessions.value = { ...sessions.value, [ssid]: s }
+    }
+    const id = s.seq + 1
+    const msg: ChatMessage = {
+      id,
+      role: 'assistant',
+      content: '',
+      time,
+      thinking: kind === 'thinking',
+      isStreaming: true,
+    }
+    sessions.value = {
+      ...sessions.value,
+      [ssid]: {
+        ...s,
+        seq: id,
+        messages: [...s.messages, msg],
+        // 新段开始即本轮活跃：清掉上一轮可能残留的延迟收尾标记
+        streamTurnOver: false,
+        streamSegs: {
+          ...s.streamSegs,
+          [kind]: { msgId: id, pending: '', finishing: false },
+        },
+      },
+    }
+  }
+
+  /**
+   * 流式累积增量（[AIMSG_DELTA]/[AI_THINKING_DELTA] 帧）：压入对应 kind 段的
+   * 打字机缓冲（动画循环渲染）。段不存在时隐式新建（引擎正常都先发 START）。
+   */
+  function appendStreamingMessage(
+    ssid: string,
+    kind: 'text' | 'thinking',
+    text: string,
+    time: string,
+  ) {
+    if (!text) return
+    let s = ensure(ssid)
+    let seg = s.streamSegs[kind]
+    if (seg && seg.finishing) {
+      // 已 FINAL 的段又来了增量（理论不出现）：收尾旧段另起新段
+      s = closeStreamingSeg(s, kind)
+      sessions.value = { ...sessions.value, [ssid]: s }
+      seg = undefined
+    }
+    if (!seg) {
+      startStreamingBubble(ssid, kind, time)
+      s = ensure(ssid)
+      seg = s.streamSegs[kind]
+    }
+    sessions.value = {
+      ...sessions.value,
+      [ssid]: {
+        ...s,
+        streamSegs: { ...s.streamSegs, [kind]: { ...seg!, pending: seg!.pending + text } },
+      },
+    }
+    ensureStreamAnimator()
+  }
+
+  /**
+   * 分段 FINAL（[AIMSG]/[AI_THINKING] 全文帧，块结束时引擎立即发出）：路由到
+   * 该 kind 自己的段——全文是已打内容的延续时把剩余部分接进打字机缓冲（突发
+   * 上游下 FINAL 与最后 delta 同拍到达，动画继续打完）；前缀不连续（增量丢帧）
+   * 时整体覆盖。缓冲已空立即收尾，否则动画追平后自动收尾。
+   * 无对应段（block 模式）返回 'push'，由调用方按普通消息入列。
+   */
+  function finalizeStreamingSegment(
+    ssid: string,
+    kind: 'text' | 'thinking',
+    fullText: string,
+  ): 'consumed' | 'push' {
+    const s = sessions.value[ssid]
+    if (!s) return 'push'
+    const seg = s.streamSegs[kind]
+    if (!seg) return 'push'
+    const idx = s.messages.findIndex((m) => m.id === seg.msgId)
+    if (idx < 0) {
+      sessions.value = { ...sessions.value, [ssid]: closeStreamingSeg(s, kind) }
+      return 'push'
+    }
+    const typed = s.messages[idx]!.content ?? ''
+    const continuous = fullText.startsWith(typed)
+    const pending = continuous ? fullText.slice(typed.length) : ''
+    const segs = { ...s.streamSegs }
+    const next = [...s.messages]
+    if (!pending) {
+      // 缓冲为空（含前缀不连续的丢帧修复）：立即以权威全文收尾
+      next[idx] = { ...s.messages[idx]!, content: fullText, isStreaming: false }
+      delete segs[kind]
+      sessions.value = { ...sessions.value, [ssid]: { ...s, messages: next, streamSegs: segs } }
+      return 'consumed'
+    }
+    // 动画未追平：FINAL 后动画继续打剩余部分，追平自动收尾
+    segs[kind] = { ...seg, pending, finishing: true }
+    sessions.value = { ...sessions.value, [ssid]: { ...s, streamSegs: segs } }
+    ensureStreamAnimator()
+    return 'consumed'
+  }
+
+  /**
+   * 轮末清理：仍有未打完的缓冲时默认延迟收尾（动画追平后各段自动关泡）；
+   * snap=true（用户手动中断）立即定格为已收到的全文。
+   */
+  function endStreamingTurn(ssid: string, snap = false) {
+    const s = sessions.value[ssid]
+    if (!s) return
+    const hasOpenSeg = !!(s.streamSegs.text || s.streamSegs.thinking)
+    if (!hasOpenSeg && !s.streamTurnOver) return
+    const pendingLeft = (['text', 'thinking'] as const).some((k) => s.streamSegs[k]?.pending)
+    if (!snap && pendingLeft) {
+      sessions.value = { ...sessions.value, [ssid]: { ...s, streamTurnOver: true } }
+      return
+    }
+    let cur = s
+    for (const k of ['text', 'thinking'] as const) {
+      cur = closeStreamingSeg(cur, k)
+    }
+    sessions.value = { ...sessions.value, [ssid]: { ...cur, streamTurnOver: false } }
+  }
+
   /**
    * 把本轮 token 用量附着到最后一条 assistant 消息（[AI_USAGE] 帧在轮末到达，
    * 此时该轮的 AIMSG 已推送；跳过过程块向前找，找不到就丢弃）。
@@ -181,6 +405,8 @@ export const useAiStore = defineStore('ai', () => {
         isApprovalActive: false,
         isTyping: false,
         currentProcessMsgId: null,
+        streamSegs: {},
+        streamTurnOver: false,
         contextUsage: null,
       },
     }
@@ -454,6 +680,10 @@ export const useAiStore = defineStore('ai', () => {
     updateMessage,
     appendProcessStep,
     finalizeProcess,
+    startStreamingBubble,
+    appendStreamingMessage,
+    finalizeStreamingSegment,
+    endStreamingTurn,
     attachUsage,
     clearMessages,
     hydrate,

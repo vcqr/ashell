@@ -346,6 +346,10 @@ const DOMPURIFY_CONFIG = {
 
 marked.setOptions({ breaks: true, gfm: true });
 
+// 流式增量渲染降级开关：isStreaming 气泡解析期间置位，code 渲染器跳过 hljs
+// 高亮（增量帧 ~20/s 高频到达，全文校准帧到达后会以非流式完整重渲并进缓存）
+let streamingRender = false;
+
 const codeHighlightExtension = {
   name: "code",
   // marked 类型里 renderer 接收通用 Token；名为 "code" 的扩展运行时只会收到 Tokens.Code
@@ -354,6 +358,12 @@ const codeHighlightExtension = {
     const text = codeToken.text || "";
     const lang = codeToken.lang || "";
     const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
+    if (streamingRender) {
+      const langLabel =
+        language !== "plaintext" ? `<div class="code-lang">${language}</div>` : "";
+      const copyBtn = `<span class="code-copy-btn" data-copy-code title="${t("common.copy")}">⧉</span>`;
+      return `<div class="code-block">${langLabel}${copyBtn}<pre><code class="hljs language-${language}">${escapeHtml(text)}</code></pre></div>`;
+    }
     const highlighted = hljs.highlight(text, { language }).value;
     const langLabel =
       language !== "plaintext"
@@ -384,9 +394,21 @@ function escapeHtml(text: string): string {
 const markdownCache = new Map<string, string>();
 const MARKDOWN_CACHE_MAX = 500;
 
-function parseMarkdown(content: string): string {
+function parseMarkdown(content: string, streaming = false): string {
   const cached = markdownCache.get(content);
   if (cached !== undefined) return cached;
+  // 流式中间态不入缓存：内容串逐帧变化不可复用，且未高亮结果会顶掉历史条目
+  if (streaming) {
+    streamingRender = true;
+    try {
+      return DOMPurify.sanitize(
+        marked.parse(content) as string,
+        DOMPURIFY_CONFIG,
+      );
+    } finally {
+      streamingRender = false;
+    }
+  }
   const html = DOMPurify.sanitize(
     marked.parse(content) as string,
     DOMPURIFY_CONFIG,
@@ -705,13 +727,8 @@ function restoreHandoverHistory() {
 
 function handleSidecarOutput(ssid: string, line: string) {
   if (line.startsWith("[END_OF_RESPONSE]")) {
-    const session = aiStore.sessions[ssid];
-    if (session) {
-      const streamingMsg = session.messages.find((m) => m.isStreaming);
-      if (streamingMsg) {
-        aiStore.updateMessage(ssid, streamingMsg.id, { isStreaming: false });
-      }
-    }
+    // 流式气泡的收尾由 endStreamingTurn 统一处理（打字机未追平时延迟关闭）
+    aiStore.endStreamingTurn(ssid);
     aiStore.finalizeProcess(ssid);
     aiStore.patch(ssid, { isTyping: false, isApprovalActive: false });
     return;
@@ -719,13 +736,7 @@ function handleSidecarOutput(ssid: string, line: string) {
 
   if (line.startsWith("[SESSION_STOP]")) {
     const aiMsg = line.substring("[SESSION_STOP]".length).trim();
-    const session = aiStore.sessions[ssid];
-    if (session) {
-      const streamingMsg = session.messages.find((m) => m.isStreaming);
-      if (streamingMsg) {
-        aiStore.updateMessage(ssid, streamingMsg.id, { isStreaming: false });
-      }
-    }
+    aiStore.endStreamingTurn(ssid);
     aiStore.finalizeProcess(ssid);
     aiStore.patch(ssid, {
       isTyping: false,
@@ -743,13 +754,7 @@ function handleSidecarOutput(ssid: string, line: string) {
   }
 
   if (line.startsWith("[STOPPED]")) {
-    const session = aiStore.sessions[ssid];
-    if (session) {
-      const streamingMsg = session.messages.find((m) => m.isStreaming);
-      if (streamingMsg) {
-        aiStore.updateMessage(ssid, streamingMsg.id, { isStreaming: false });
-      }
-    }
+    aiStore.endStreamingTurn(ssid);
     aiStore.finalizeProcess(ssid);
     aiStore.patch(ssid, { isTyping: false, isApprovalActive: false });
     pushAssistantMessage(ssid, t("ai.stopped"));
@@ -806,11 +811,43 @@ function handleSidecarOutput(ssid: string, line: string) {
     return;
   }
 
+  if (line.startsWith("[AI_TEXT_START]")) {
+    // 流式分段开始：关旧泡、开新空泡（后续 DELTA 进打字机缓冲）
+    aiStore.finalizeProcess(ssid);
+    aiStore.startStreamingBubble(ssid, "text", nowStr());
+    return;
+  }
+
+  if (line.startsWith("[AI_THINKING_START]")) {
+    aiStore.finalizeProcess(ssid);
+    aiStore.startStreamingBubble(ssid, "thinking", nowStr());
+    return;
+  }
+
+  if (line.startsWith("[AIMSG_DELTA]")) {
+    // 流式增量：累积到当前 text 流式气泡（无气泡时隐式新建）
+    const msg = JSON.parse(line.substring("[AIMSG_DELTA]".length));
+    aiStore.finalizeProcess(ssid);
+    aiStore.appendStreamingMessage(ssid, "text", String(msg.payload?.text ?? ""), nowStr());
+    return;
+  }
+
+  if (line.startsWith("[AI_THINKING_DELTA]")) {
+    const msg = JSON.parse(line.substring("[AI_THINKING_DELTA]".length));
+    aiStore.finalizeProcess(ssid);
+    aiStore.appendStreamingMessage(ssid, "thinking", String(msg.payload?.text ?? ""), nowStr());
+    return;
+  }
+
   if (line.startsWith("[AIMSG]")) {
     const aiMsg = line.substring("[AIMSG]".length);
     const msg = JSON.parse(aiMsg);
     aiStore.finalizeProcess(ssid);
-    pushAssistantMessage(ssid, msg.payload);
+    // 分段 FINAL（块结束的权威全文）：路由到 text 段续写/修复后收尾；
+    // 无对应段（block 模式）按普通消息入列
+    if (aiStore.finalizeStreamingSegment(ssid, "text", msg.payload) === "push") {
+      pushAssistantMessage(ssid, msg.payload);
+    }
     return;
   }
 
@@ -818,7 +855,9 @@ function handleSidecarOutput(ssid: string, line: string) {
     const aiMsg = line.substring("[AI_THINKING]".length);
     const msg = JSON.parse(aiMsg);
     aiStore.finalizeProcess(ssid);
-    pushAssistantMessage(ssid, msg.payload, true);
+    if (aiStore.finalizeStreamingSegment(ssid, "thinking", msg.payload) === "push") {
+      pushAssistantMessage(ssid, msg.payload, true);
+    }
     return;
   }
 
@@ -1036,10 +1075,8 @@ async function handleStopSession() {
   if (!session || session.sidecarPid === null) return;
 
   await aiStore.writeTo(ssid, "__STOP__\n");
-  const streamingMsg = session.messages.find((m) => m.isStreaming);
-  if (streamingMsg) {
-    aiStore.updateMessage(ssid, streamingMsg.id, { isStreaming: false });
-  }
+  // 手动中断立即定格为已收到的全文（sidecar 稍后补发的 [STOPPED] 会再走一次无害清理）
+  aiStore.endStreamingTurn(ssid, true);
   aiStore.patch(ssid, { isTyping: false, isApprovalActive: false });
 }
 
@@ -1464,13 +1501,16 @@ defineExpose({
                     </details>
                   </template>
                   <template v-else-if="m.thinking">
-                    <details class="thinking-block">
+                    <!-- 流式期间自动展开、完成后自动折叠：open 跟随 isStreaming。
+                         流式中 vdom 值恒为 true，Vue 不会重写 DOM，用户手动折叠
+                         不被顶回；结束后 true→false 触发一次折叠写回 -->
+                    <details class="thinking-block" :open="m.isStreaming">
                       <summary class="thinking-summary">
-                        <span>{{ t("ai.thinking") }}</span>
+                        <span>{{ m.isStreaming ? t("ai.thinkingStreaming") : t("ai.thinking") }}</span>
                       </summary>
                       <div
                         class="thinking-content markdown-body"
-                        v-html="parseMarkdown(m.content)"
+                        v-html="parseMarkdown(m.content, m.isStreaming)"
                       />
                     </details>
                   </template>
@@ -1532,7 +1572,7 @@ defineExpose({
                   <template v-else-if="m.role === 'assistant' && m.content">
                     <div
                       class="markdown-body"
-                      v-html="parseMarkdown(m.content)"
+                      v-html="parseMarkdown(m.content, m.isStreaming)"
                     />
                   </template>
                   <template v-else-if="m.content">

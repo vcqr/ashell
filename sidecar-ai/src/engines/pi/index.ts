@@ -13,12 +13,17 @@ import path from "node:path";
 import os from "node:os";
 import {
   emitAIMSG,
+  emitAIMSGDelta,
   emitCompact,
   emitSystemError,
+  emitTextStart,
   emitThinking,
+  emitThinkingDelta,
+  emitThinkingStart,
   emitToolCall,
   emitToolRet,
   emitUsage,
+  isStreamingEnabled,
 } from "../../protocol";
 import { displayTodoProgress, type TodoItem } from "../../progress";
 import { createCmdExecTool } from "./cmdExecTool";
@@ -205,14 +210,38 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
 
   function handleSessionEvent(event: AgentSessionEvent) {
     switch (event.type) {
+      case "message_update": {
+        // streaming 分段生命周期：text/thinking 的 start/delta/end 一一转译。
+        // end 事件携带该块全文，立即发 FINAL；聚合节流在协议层
+        if (!isStreamingEnabled()) break;
+        const ame = event.assistantMessageEvent;
+        if (ame.type === "text_start") {
+          emitTextStart(ctx.ssid);
+        } else if (ame.type === "thinking_start") {
+          emitThinkingStart(ctx.ssid);
+        } else if (ame.type === "text_delta" && ame.delta) {
+          emitAIMSGDelta(ctx.ssid, ame.delta);
+        } else if (ame.type === "thinking_delta" && ame.delta) {
+          emitThinkingDelta(ctx.ssid, ame.delta);
+        } else if (ame.type === "text_end" && ame.content) {
+          emitAIMSG(ctx.ssid, ame.content);
+        } else if (ame.type === "thinking_end" && ame.content) {
+          emitThinking(ctx.ssid, ame.content);
+        }
+        break;
+      }
+
       case "message_end": {
         const msg = event.message as any;
         if (msg.role === "assistant") {
+          // streaming 模式下 text/thinking 已在块结束时 FINAL，此处只补工具调用；
+          // block 模式（或未产出流式事件）走旧路径整段发出
+          const streamingDone = isStreamingEnabled();
           for (const block of msg.content) {
             if (block.type === "text") {
-              emitAIMSG(ctx.ssid, block.text);
+              if (!streamingDone) emitAIMSG(ctx.ssid, block.text);
             } else if (block.type === "thinking") {
-              emitThinking(ctx.ssid, block.thinking);
+              if (!streamingDone) emitThinking(ctx.ssid, block.thinking);
             } else if (block.type === "toolCall") {
               // TodoWrite 的进度由 todoWriteTool 的 onUpdate 推送，跳过工具调用展示
               if (block.name === "TodoWrite") continue;

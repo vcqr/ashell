@@ -4,6 +4,7 @@ export default {
   name: "AI 助手",
   modelLabel: "Model: {model}",
   thinking: "思考过程",
+  thinkingStreaming: "思考中…",
   interrupt: "中断当前回复",
   restart: "重新开始会话（清空历史并重启 sidecar）",
   settings: "设置",

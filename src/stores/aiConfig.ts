@@ -46,13 +46,26 @@ export const useAiConfigStore = defineStore("aiConfig", () => {
   );
 
   async function load() {
-    try {
-      const [state, list] = await Promise.all([listAiEngines(), listAiProviders()]);
-      enginesState.value = state;
-      providers.value = list;
-      loaded = true;
-    } catch (err) {
-      console.error("[aiConfig] load failed:", err);
+    // 启动竞态防御：应用刚启动时 API 服务可能尚未完成端口绑定，首次请求会
+    // 失败（表现为模型选择器长时间空白，直到设置面板打开才触发重载）。
+    // 失败自动退避重试，服务就绪后任一次成功即完成加载。
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const [state, list] = await Promise.all([listAiEngines(), listAiProviders()]);
+        enginesState.value = state;
+        providers.value = list;
+        loaded = true;
+        return;
+      } catch (err) {
+        console.error(
+          `[aiConfig] load attempt ${attempt}/${maxAttempts} failed:`,
+          err,
+        );
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
+      }
     }
   }
 
@@ -80,6 +93,7 @@ export const useAiConfigStore = defineStore("aiConfig", () => {
     context_window?: string;
     max_tokens?: string;
     max_rounds?: string;
+    streaming?: string;
   }) {
     const engine = enginesState.value?.active_engine;
     if (!engine || busy.value) return null;

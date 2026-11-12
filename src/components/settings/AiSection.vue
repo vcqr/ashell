@@ -75,6 +75,7 @@ async function patchEngine(input: {
   context_window?: string;
   max_tokens?: string;
   max_rounds?: string;
+  streaming?: string;
 }) {
   try {
     await aiConfig.patchEngine(input);
@@ -94,6 +95,7 @@ function tokenFieldOrNull(value: string | undefined): number | null {
 const ctxWindowInput = ref<number | null>(null);
 const maxTokensInput = ref<number | null>(null);
 const maxRoundsInput = ref<number | null>(null);
+const streamingOn = ref(false);
 
 // 仅在引擎行切换 / 首次加载时从 store 拉取，避免保存回写覆盖正在编辑的值
 watch(
@@ -102,12 +104,27 @@ watch(
     ctxWindowInput.value = tokenFieldOrNull(currentEngine.value?.context_window);
     maxTokensInput.value = tokenFieldOrNull(currentEngine.value?.max_tokens);
     maxRoundsInput.value = tokenFieldOrNull(currentEngine.value?.max_rounds);
+    streamingOn.value = currentEngine.value?.streaming === "1";
   },
   { immediate: true },
 );
 
 function patchTokenField(field: "context_window" | "max_tokens" | "max_rounds", v: number | null) {
   void patchEngine({ [field]: v && v > 0 ? String(Math.floor(v)) : "" });
+}
+
+function patchStreaming(v: boolean) {
+  // 乐观更新：点击立即响应，失败再回滚（busy 期间被丢弃的请求也回滚）
+  if (v === streamingOn.value) return;
+  streamingOn.value = v;
+  void Promise.resolve(aiConfig.patchEngine({ streaming: v ? "1" : "0" }))
+    .then((updated) => {
+      if (!updated) streamingOn.value = !v;
+    })
+    .catch((e) => {
+      streamingOn.value = !v;
+      message.error(t("settings.ai.saveFailed", { error: String(e) }));
+    });
 }
 
 // ── Claude Code 路径 ──
@@ -305,6 +322,19 @@ onMounted(async () => {
               clearable
               :placeholder="t('settings.ai.engine.tokenFieldPlaceholder')"
               @update:value="(v: number | null) => patchTokenField('max_rounds', v)"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row-main">
+            <div class="setting-row-label">{{ t("settings.ai.engine.streaming") }}</div>
+            <div class="setting-row-desc">{{ t("settings.ai.engine.streamingHint") }}</div>
+          </div>
+          <div class="setting-row-control">
+            <NSwitch
+              :value="streamingOn"
+              :disabled="engineSaving"
+              @update:value="(v: boolean) => patchStreaming(v)"
             />
           </div>
         </div>

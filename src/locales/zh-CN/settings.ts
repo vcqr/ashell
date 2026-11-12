@@ -323,6 +323,8 @@ export default {
       tokenFieldPlaceholder: "留空使用模型默认",
       tokenFieldHint: "留空使用模型默认值；配置后 AI 面板按此比例显示上下文占用",
       maxRoundsHint: "上下文最多保留最近 N 轮对话，超过后自动收敛（pi 滑窗裁剪 / claude 摘要压缩），留空不限制",
+      streaming: "流式输出",
+      streamingHint: "AI 回复逐段实时上屏（打字机效果）；关闭后按整段返回。下一个新会话生效",
       hint: "引擎、模型供应商与模型配置即时写入，下一个新会话生效；进行中的会话不受影响。",
     },
     claudePath: "Claude Code 路径",

@@ -325,6 +325,8 @@ export default {
       tokenFieldPlaceholder: "Empty for model default",
       tokenFieldHint: "Empty = model default; when set, the AI panel shows context usage against this value",
       maxRoundsHint: "Context keeps at most the last N rounds and converges beyond that (pi sliding window / claude summarization); empty = unlimited",
+      streaming: "Streaming Output",
+      streamingHint: "Render AI replies incrementally as they arrive (typewriter effect); off = block responses. Takes effect on the next new session",
       hint: "Engine, model provider and model changes are written immediately and take effect on the next new session; running sessions are unaffected.",
     },
     claudePath: "Claude Code Path",

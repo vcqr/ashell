@@ -54,6 +54,7 @@ const MANAGED_ENV_KEYS = [
   "AI_CONTEXT_WINDOW",
   "AI_MAX_TOKENS",
   "AI_MAX_ROUNDS",
+  "AI_STREAMING",
 ];
 
 interface CreateFrame {
@@ -313,6 +314,9 @@ function applySessionEnv(homedir: string): void {
 export async function runDaemon(opts: DaemonOptions = {}): Promise<void> {
   // stdout 承载帧协议：把所有调试日志重定向到 stderr，防止杂散输出破坏分帧
   console.log = (...args: unknown[]) => console.warn(...args);
+  // 协议版本标记：宿主 stderr 日志可见，用于核对运行中的 daemon 是否含
+  // 分段流式协议（START/DELTA/FINAL）；与磁盘二进制新旧无关，以进程为准
+  console.warn("[DAEMON] protocol v2: segment streaming (START/DELTA/FINAL)");
 
   const core = new DaemonCore(opts);
 

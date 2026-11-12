@@ -3,14 +3,20 @@ import {
   END_OF_RESPONSE,
   SESSION_STOP,
   emitAIMSG,
+  emitAIMSGDelta,
   emitAskUserQuestion,
   emitControl,
   emitStopped,
   emitSystemError,
   emitThinking,
+  emitThinkingDelta,
   emitToolCall,
   emitToolConfirm,
   emitToolRet,
+  flushSessionDeltas,
+  emitTextStart,
+  emitThinkingStart,
+  isStreamingEnabled,
   setEmitSink,
   type EmitSink,
 } from "./protocol";
@@ -136,5 +142,144 @@ describe("protocol emit sink（daemon 模式）", () => {
     // sink 撤销后回到旧版行为
     const lines = captureLines(() => emitAIMSG("B", "back"));
     expect(lines).toEqual(['[AIMSG]{"type":"assistant","payload":"back"}']);
+  });
+});
+
+describe("protocol streaming 增量帧", () => {
+  /** 收集 sink 帧，测试结束撤销 sink 并还原 AI_STREAMING */
+  function withSink(fn: () => Promise<void> | void): Promise<Array<{ sid: string; tag: string; body: unknown | null; tail: string }>> {
+    return (async () => {
+      const frames: Array<{ sid: string; tag: string; body: unknown | null; tail: string }> = [];
+      const sink: EmitSink = (sid, tag, body, tail) => frames.push({ sid, tag, body, tail });
+      setEmitSink(sink);
+      try {
+        await fn();
+      } finally {
+        setEmitSink(null);
+        delete process.env.AI_STREAMING;
+      }
+      return frames;
+    })();
+  }
+
+  test("isStreamingEnabled 仅在 AI_STREAMING=1/true 时开启", () => {
+    delete process.env.AI_STREAMING;
+    expect(isStreamingEnabled()).toBe(false);
+    process.env.AI_STREAMING = "0";
+    expect(isStreamingEnabled()).toBe(false);
+    process.env.AI_STREAMING = "1";
+    expect(isStreamingEnabled()).toBe(true);
+    process.env.AI_STREAMING = "true";
+    expect(isStreamingEnabled()).toBe(true);
+    delete process.env.AI_STREAMING;
+  });
+
+  test("streaming 关闭时 delta 为 no-op", async () => {
+    delete process.env.AI_STREAMING;
+    const frames = await withSink(() => {
+      emitAIMSGDelta("off-1", "hello");
+      flushSessionDeltas("off-1");
+    });
+    expect(frames).toEqual([]);
+  });
+
+  test("聚合窗口内多次 delta 合并为一帧，seq 递增，携带累积文本", async () => {
+    process.env.AI_STREAMING = "1";
+    const frames = await withSink(async () => {
+      emitAIMSGDelta("s-delta", "he");
+      emitAIMSGDelta("s-delta", "llo");
+      emitThinkingDelta("s-delta", "hmm");
+      // 窗口未到期：flush 手动触发，两个 kind 各出一帧
+      flushSessionDeltas("s-delta");
+      await new Promise((r) => setTimeout(r, 5));
+    });
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toEqual({
+      sid: "s-delta",
+      tag: "[AIMSG_DELTA]",
+      body: { type: "assistant_delta", payload: { seq: 1, text: "hello" } },
+      tail: "",
+    });
+    expect(frames[1]).toEqual({
+      sid: "s-delta",
+      tag: "[AI_THINKING_DELTA]",
+      body: { type: "thinking_delta", payload: { seq: 2, text: "hmm" } },
+      tail: "",
+    });
+  });
+
+  test("窗口到期自动 flush（~50ms）", async () => {
+    process.env.AI_STREAMING = "1";
+    const frames = await withSink(async () => {
+      emitAIMSGDelta("s-timer", "tick");
+      await new Promise((r) => setTimeout(r, 80));
+    });
+    expect(frames).toHaveLength(1);
+    expect(frames[0]!.tag).toBe("[AIMSG_DELTA]");
+    expect((frames[0]!.body as { payload: { text: string } }).payload.text).toBe("tick");
+  });
+
+  test("全帧发出前先 flush 待发增量（增量 → 校准全帧顺序）", async () => {
+    process.env.AI_STREAMING = "1";
+    const frames = await withSink(() => {
+      emitAIMSGDelta("s-order", "part");
+      emitAIMSG("s-order", "part whole");
+    });
+    expect(frames).toHaveLength(2);
+    expect(frames[0]!.tag).toBe("[AIMSG_DELTA]");
+    expect(frames[0]!.body).toEqual({ type: "assistant_delta", payload: { seq: 1, text: "part" } });
+    expect(frames[1]!.tag).toBe("[AIMSG]");
+    expect(frames[1]!.body).toEqual({ type: "assistant", payload: "part whole" });
+  });
+
+  test("END_OF_RESPONSE 前 flush 增量，轮末不丢尾帧", async () => {
+    process.env.AI_STREAMING = "1";
+    const frames = await withSink(() => {
+      emitAIMSGDelta("s-end", "tail");
+      emitControl("s-end", END_OF_RESPONSE);
+    });
+    expect(frames).toHaveLength(2);
+    expect(frames[0]!.tag).toBe("[AIMSG_DELTA]");
+    expect(frames[1]!.tag).toBe("[END_OF_RESPONSE]");
+  });
+
+  test("START 帧仅 streaming 模式发出，且先 flush 待发增量", async () => {
+    process.env.AI_STREAMING = "0";
+    const off = await withSink(() => {
+      emitTextStart("s-start0");
+      emitThinkingStart("s-start0");
+    });
+    expect(off).toEqual([]);
+
+    process.env.AI_STREAMING = "1";
+    const frames = await withSink(() => {
+      emitAIMSGDelta("s-start", "seg1");
+      emitTextStart("s-start");
+    });
+    expect(frames).toHaveLength(2);
+    expect(frames[0]!.tag).toBe("[AIMSG_DELTA]");
+    expect(frames[1]!.tag).toBe("[AI_TEXT_START]");
+    expect(frames[1]!.body).toEqual({ type: "assistant_text_start" });
+  });
+
+  test("分段生命周期：START → DELTA → FINAL 全文帧顺序完整", async () => {
+    process.env.AI_STREAMING = "1";
+    const frames = await withSink(() => {
+      emitThinkingStart("s-life");
+      emitThinkingDelta("s-life", "think");
+      emitThinking("s-life", "think hard");
+      emitTextStart("s-life");
+      emitAIMSGDelta("s-life", "hello ");
+      emitAIMSGDelta("s-life", "world");
+      emitAIMSG("s-life", "hello world");
+    });
+    expect(frames.map((f) => f.tag)).toEqual([
+      "[AI_THINKING_START]",
+      "[AI_THINKING_DELTA]",
+      "[AI_THINKING]",
+      "[AI_TEXT_START]",
+      "[AIMSG_DELTA]",
+      "[AIMSG]",
+    ]);
   });
 });

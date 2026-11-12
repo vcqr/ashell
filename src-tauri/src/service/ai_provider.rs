@@ -400,6 +400,12 @@ pub async fn update_engine(
     );
     let max_tokens = normalize_token_field(input.max_tokens.as_deref(), &current.max_tokens);
     let max_rounds = normalize_token_field(input.max_rounds.as_deref(), &current.max_rounds);
+    // streaming 开关：'1'/'0' 二值，其余值忽略保持现状
+    let streaming = match input.streaming.as_deref().map(str::trim) {
+        Some("1") => "1".to_string(),
+        Some("0") => "0".to_string(),
+        _ => current.streaming.clone(),
+    };
 
     sqlx::query(
         r#"UPDATE ai_engines SET
@@ -409,6 +415,7 @@ pub async fn update_engine(
              context_window = ?,
              max_tokens = ?,
              max_rounds = ?,
+             streaming = ?,
              updated_at = datetime('now')
            WHERE engine = ?"#,
     )
@@ -418,6 +425,7 @@ pub async fn update_engine(
     .bind(&context_window)
     .bind(&max_tokens)
     .bind(&max_rounds)
+    .bind(&streaming)
     .bind(engine)
     .execute(pool)
     .await?;
@@ -487,6 +495,7 @@ async fn materialize_env(pool: &DbPool, key: &[u8; 32]) -> AppResult<()> {
         cfg.ai_context_window = row.context_window.clone();
         cfg.ai_max_tokens = row.max_tokens.clone();
         cfg.ai_max_rounds = row.max_rounds.clone();
+        cfg.ai_streaming = row.streaming.clone();
         if let Some(pid) = row.provider_id.as_deref() {
             if let Ok(provider) = get_by_id(pool, key, pid).await {
                 if engine == ENGINE_PI {

@@ -6,12 +6,18 @@ import { askUserQuestion, type AskUserQuestionItem } from "../../askUser";
 import { STOP_SENTINEL } from "../../stdin";
 import {
   emitAIMSG,
+  emitAIMSGDelta,
   emitCompact,
   emitSystemError,
+  emitTextStart,
+  emitThinking,
+  emitThinkingDelta,
+  emitThinkingStart,
   emitToolCall,
   emitToolConfirm,
   emitToolRet,
   emitUsage,
+  isStreamingEnabled,
 } from "../../protocol";
 import { displayTodoProgress, type TodoItem } from "../../progress";
 import { createCmdExecMcpServer } from "./cmdMcpTool";
@@ -145,6 +151,9 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
           ],
           pathToClaudeCodeExecutable: cliPath,
           settingSources: ["project", "local"],
+          // streaming 灰度开关：增量 stream_event 与完整消息并存，完整帧照发
+          // 兼做前端校准；静默 /compact 轮不需要增量
+          ...(isStreamingEnabled() && !silent && { includePartialMessages: true }),
           canUseTool,
           hooks: {},
           systemPrompt: {
@@ -156,8 +165,54 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
       });
 
       currentQuery = queryIterator;
+      // 分段生命周期状态（每轮重置）：是否见过流式事件、按块索引累积的增量与块类型
+      let streamedAny = false;
+      const blockAcc = new Map<number, string>();
+      const blockTypes = new Map<number, "text" | "thinking">();
 
       for await (const message of queryIterator) {
+        // streaming 分段：content_block_start → START，delta 累积并转发，
+        // content_block_stop → 立即 FINAL（全文），完整消息阶段跳过已发段。
+        // parent_tool_use_id 非空的是子 agent 流，一期不上屏直接忽略
+        if (
+          !silent &&
+          isStreamingEnabled() &&
+          message.type === "stream_event" &&
+          message.parent_tool_use_id === null
+        ) {
+          const ev = message.event;
+          if (ev.type === "content_block_start") {
+            const bt = ev.content_block?.type;
+            if (bt === "text" || bt === "thinking") {
+              streamedAny = true;
+              blockTypes.set(ev.index, bt);
+              blockAcc.set(ev.index, "");
+              if (bt === "text") emitTextStart(ctx.ssid);
+              else emitThinkingStart(ctx.ssid);
+            }
+          } else if (ev.type === "content_block_delta") {
+            const delta = ev.delta;
+            if (delta.type === "text_delta" && delta.text) {
+              streamedAny = true;
+              blockAcc.set(ev.index, (blockAcc.get(ev.index) ?? "") + delta.text);
+              emitAIMSGDelta(ctx.ssid, delta.text);
+            } else if (delta.type === "thinking_delta" && delta.thinking) {
+              streamedAny = true;
+              blockAcc.set(ev.index, (blockAcc.get(ev.index) ?? "") + delta.thinking);
+              emitThinkingDelta(ctx.ssid, delta.thinking);
+            }
+          } else if (ev.type === "content_block_stop") {
+            const bt = blockTypes.get(ev.index);
+            const acc = blockAcc.get(ev.index);
+            if (bt && acc !== undefined) {
+              if (bt === "text") emitAIMSG(ctx.ssid, acc);
+              else emitThinking(ctx.ssid, acc);
+              blockTypes.delete(ev.index);
+              blockAcc.delete(ev.index);
+            }
+          }
+        }
+
         if (message.type === "system") {
           if (message.subtype === "init") {
             sessionId = message.session_id;
@@ -231,9 +286,18 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
         }
 
         if (!silent && message.type === "assistant" && message.message?.content) {
+          // streaming 模式下 text/thinking 段已在 content_block_stop 时 FINAL，
+          // 完整消息只补工具调用；block 模式（或该消息未产出任何流式事件）走旧路径
+          const streamingDone = isStreamingEnabled() && streamedAny;
           for (const block of message.message.content) {
             if ("text" in block) {
-              emitAIMSG(ctx.ssid, block.text);
+              if (!streamingDone) emitAIMSG(ctx.ssid, block.text);
+            } else if ("thinking" in block) {
+              // 本消息未产出流式事件（block 模式，或流式下该消息未走 stream_event）
+              // 时补发 thinking 全帧，保证 block 模式下思考内容不丢
+              if (!streamingDone && block.thinking) {
+                emitThinking(ctx.ssid, block.thinking);
+              }
             } else if ("name" in block) {
               const input = (block.input ?? {}) as Record<string, any>;
               if (block.name === "TodoWrite") {

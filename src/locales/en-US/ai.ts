@@ -4,6 +4,7 @@ export default {
   name: "AI Assistant",
   modelLabel: "Model: {model}",
   thinking: "Thinking",
+  thinkingStreaming: "Thinking…",
   interrupt: "Interrupt current response",
   restart: "Restart session (clear history and restart sidecar)",
   settings: "Settings",

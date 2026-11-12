@@ -537,6 +537,8 @@ export interface AiEngine {
   max_tokens: string
   /** 上下文保留对话轮数上限（空串 = 不限制，仅 pi 生效） */
   max_rounds: string
+  /** AI 流式输出开关（'1' = 开启，空串/'0' = 关，两引擎通用） */
+  streaming: string
   updated_at?: string | null
 }
 
@@ -547,6 +549,7 @@ export interface AiEngineUpdate {
   context_window?: string
   max_tokens?: string
   max_rounds?: string
+  streaming?: string
 }
 
 export interface AiEnginesState {

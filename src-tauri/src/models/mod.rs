@@ -242,6 +242,8 @@ pub struct AiEngine {
     pub max_tokens: String,
     /// 上下文保留对话轮数上限（空串 = 不限制，仅 pi 引擎生效）
     pub max_rounds: String,
+    /// AI 流式输出开关（'1' = 开启，空串/'0' = 关，两引擎通用）
+    pub streaming: String,
     pub updated_at: Option<String>,
 }
 
@@ -279,6 +281,7 @@ pub struct AiEngineUpdate {
     pub context_window: Option<String>,
     pub max_tokens: Option<String>,
     pub max_rounds: Option<String>,
+    pub streaming: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
