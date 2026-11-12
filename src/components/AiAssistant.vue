@@ -12,6 +12,7 @@ import {
   RiExternalLinkLine,
   RiFileCopyLine,
   RiKeyboardLine,
+  RiBrainLine,
   RiPushpinFill,
   RiPushpinLine,
   RiRefreshLine,
@@ -23,7 +24,6 @@ import {
   RiStarLine,
   RiStopCircleLine,
   RiToolsLine,
-  RiUserLine,
 } from "@remixicon/vue";
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, watchEffect } from "vue";
 import { storeToRefs } from "pinia";
@@ -537,16 +537,142 @@ function ctxTooltip(): string {
   return lines.join("\n");
 }
 
-/** 过程块折叠态文案：工具调用次数 + 最近一次工具名 */
-function processSummary(steps: ProcessStep[] | undefined): string {
-  if (!steps || steps.length === 0) return t("ai.process.empty");
-  const toolCalls = steps.filter((s) => s.type === "tool_call");
-  const count = toolCalls.length;
-  const lastName = toolCalls[toolCalls.length - 1]?.toolName;
-  if (count === 0) return t("ai.process.onlyReturns", { n: steps.length });
-  if (lastName) return t("ai.process.summary", { count, name: lastName });
-  return t("ai.process.count", { count });
+// ── ZCode 式消息分段：思考/工具过程聚合为可折叠活动组，正文无气泡呈现 ──
+
+type ChatSegment =
+  | { kind: "user"; msg: ChatMessage }
+  | { kind: "activity"; id: number; msgs: ChatMessage[] }
+  | { kind: "plain"; msg: ChatMessage };
+
+// 每秒 tick：驱动流式期间活动组/行耗时文案刷新
+const nowTick = ref(Date.now());
+let nowTimer: ReturnType<typeof setInterval> | null = null;
+
+const chatSegments = computed<ChatSegment[]>(() => {
+  const segs: ChatSegment[] = [];
+  let activity: ChatMessage[] | null = null;
+  const flush = () => {
+    if (!activity || activity.length === 0) {
+      activity = null;
+      return;
+    }
+    segs.push({ kind: "activity", id: activity[0]!.id, msgs: activity });
+    activity = null;
+  };
+  for (const m of messages.value) {
+    if (m.thinking || m.isProcess) {
+      if (!activity) activity = [];
+      activity.push(m);
+      continue;
+    }
+    flush();
+    segs.push({ kind: m.role === "user" ? "user" : "plain", msg: m });
+  }
+  flush();
+  return segs;
+});
+
+/** 活动组是否仍在流式进行：组内的 thinking 段还开着（本轮未结束）。
+ *  正文气泡（TEXT_START 创建的 plain 段）会打断连续活动段，不能只看
+ *  「是否位于列表末尾」 */
+function segLive(seg: Extract<ChatSegment, { kind: "activity" }>): boolean {
+  if (!isTyping.value) return false;
+  const thinkMsgId =
+    aiStore.sessions[currentSsid.value]?.streamSegs.thinking?.msgId ?? null;
+  return thinkMsgId !== null && seg.msgs.some((m) => m.id === thinkMsgId);
 }
+
+// 组展开状态：用户显式点按 > 默认（live 展开 / 完成折叠）
+const groupOpen = ref(new Map<number, boolean>());
+function toggleGroup(id: number) {
+  const next = new Map(groupOpen.value);
+  // 以生效状态（覆盖值 ?? live 默认）为基准取反：轮次结束后 segLive 恒为
+  // false，若用它当基准，第二次点击仍会算出「展开」导致再也折不回去
+  const seg = chatSegments.value.find(
+    (s): s is Extract<ChatSegment, { kind: "activity" }> => s.kind === "activity" && s.id === id,
+  );
+  const currently = seg ? groupExpanded(seg) : (groupOpen.value.get(id) ?? false);
+  next.set(id, !currently);
+  groupOpen.value = next;
+}
+function groupExpanded(seg: Extract<ChatSegment, { kind: "activity" }>): boolean {
+  return groupOpen.value.get(seg.id) ?? segLive(seg);
+}
+
+// 行展开状态（思考内容/过程步骤详情）：key = `t${msgId}` 或 `${msgId}:${stepIdx}`
+const rowOpenSet = ref(new Set<string>());
+function toggleRow(key: string) {
+  const next = new Set(rowOpenSet.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  rowOpenSet.value = next;
+}
+function rowOpen(key: string): boolean {
+  return rowOpenSet.value.has(key);
+}
+
+/** 活动组头部耗时：首行 ts → 组后第一条消息 ts（单思考轮时≈思考结束时刻；
+ *  live 组以当前时刻为终点） */
+function activityElapsed(seg: Extract<ChatSegment, { kind: "activity" }>): string {
+  const first = seg.msgs[0]?.ts;
+  if (!first) return "";
+  const last = segEndTs(seg);
+  const sec = Math.max(1, Math.round((last - first) / 1000));
+  return t("ai.workingFor", { sec });
+}
+
+/** 活动组的结束时刻：组后第一条消息的 ts（≈思考/工具全部结束）；
+ *  live 组用当前时刻；无后继消息时回退到末行 ts */
+function segEndTs(seg: Extract<ChatSegment, { kind: "activity" }>): number {
+  const lastMsg = seg.msgs[seg.msgs.length - 1]!;
+  const idx = messages.value.findIndex((m) => m.id === lastMsg.id);
+  const next = messages.value[idx + 1];
+  if (segLive(seg)) return nowTick.value;
+  return next?.ts ?? lastMsg.ts ?? 0;
+}
+
+/** 行耗时：到下一条活动消息（末行则到组后第一条消息）的秒数 */
+function rowDuration(
+  seg: Extract<ChatSegment, { kind: "activity" }>,
+  m: ChatMessage,
+): string {
+  if (!m.ts) return "";
+  const idx = seg.msgs.findIndex((x) => x.id === m.id);
+  const nextMsg =
+    seg.msgs[idx + 1] ?? messages.value[messages.value.findIndex((x) => x.id === m.id) + 1];
+  const end = nextMsg?.ts ?? (segLive(seg) ? nowTick.value : m.ts);
+  const sec = Math.max(1, Math.round((end - m.ts) / 1000));
+  return t("ai.rowDuration", { sec });
+}
+
+/** 过程步骤行标签：工具调用取命令首行，结果显示输出预览 */
+function stepLabel(step: ProcessStep): string {
+  if (step.type === "tool_call") {
+    const cmd = step.command?.split("\n")[0]?.trim();
+    if (cmd) return `${step.toolName} · ${cmd.slice(0, 72)}`;
+    if (step.argsJson) {
+      return `${step.toolName} · ${step.argsJson.replace(/\s+/g, " ").slice(0, 64)}`;
+    }
+    return step.toolName || t("ai.process.empty");
+  }
+  const src = step.output ?? step.content;
+  const plain = src
+    .replace(/[#*`>]/g, "")
+    .replace(/\\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain ? `结果 · ${plain.slice(0, 72)}` : "结果";
+}
+
+onMounted(() => {
+  nowTimer = setInterval(() => (nowTick.value = Date.now()), 1000);
+});
+onBeforeUnmount(() => {
+  if (nowTimer) {
+    clearInterval(nowTimer);
+    nowTimer = null;
+  }
+});
 
 // 贴底跟随：stick 状态机、瞬时滚动与内容增长 watcher 在 useStickToBottom
 const { stickBottom, onScroll: onChatScroll, scrollToBottom, scrollEl } =
@@ -554,7 +680,11 @@ const { stickBottom, onScroll: onChatScroll, scrollToBottom, scrollEl } =
     getEl: () =>
       scrollAreaEl.value?.querySelector<HTMLElement>(".n-scrollbar-container") ??
       null,
-    sources: () => [messages.value, isTyping.value],
+    sources: () => [
+      messages.value,
+      isTyping.value,
+      aiStore.liveText?.text?.length ?? 0,
+    ],
   });
 
 // 切换终端 tab / 重新打开面板：定位到新会话的最新消息并恢复跟随
@@ -865,18 +995,26 @@ function handleSidecarOutput(ssid: string, line: string) {
     const aiMsg = line.substring("[AITOOL]".length);
     const aiToolMsg = JSON.parse(aiMsg);
     const tool = aiToolMsg.payload;
+    const command = tool.command !== undefined && tool.command !== null ? String(tool.command) : undefined;
+    const argsJson = command ? undefined : tool.description ? String(tool.description) : undefined;
 
+    // content 保留干净的结构化 markdown（导出/复制兼容）；新界面行标签与展开体
+    // 使用 command/argsJson 结构化字段，不再把参数 JSON 混进展示文本
     let content = "";
-    if (tool.command === undefined) {
-      content = `> Tool Call **[${tool.name}]**\n`;
+    if (command) {
+      content = `> Tool Call **[${tool.name}]**\n**Command:**\n\`\`\`\n${command}\n\`\`\`\n`;
+    } else if (argsJson) {
+      content = `> Tool Call **[${tool.name}]**\n\`\`\`json\n${argsJson}\n\`\`\`\n`;
     } else {
-      content = `${tool.description}\n> Tool Call **[${tool.name}]**\n**Command:**\n\`\`\`\n${tool.command}\n\`\`\`\n`;
+      content = `> Tool Call **[${tool.name}]**\n`;
     }
 
     const step: ProcessStep = {
       type: "tool_call",
       content,
       toolName: String(tool.name ?? ""),
+      command,
+      argsJson,
       time: nowStr(),
     };
     aiStore.appendProcessStep(ssid, step);
@@ -887,13 +1025,23 @@ function handleSidecarOutput(ssid: string, line: string) {
     const aiMsg = line.substring("[TOOL_RET]".length);
     const msg = JSON.parse(aiMsg);
     const payload = msg.payload;
+    // 输出原文直接使用（字符串），不再 JSON.stringify 转义成单行垃圾
+    let output = "";
     let content = "";
-    for (const item of payload as Array<{ type: string; content: unknown }>) {
-      content += `**[${item.type}]**\n<details><summary>${t("ai.toolRetDetail")}</summary>\n\n\`\`\`json\n${JSON.stringify(item.content, null, 2)}\n\`\`\`\n</details>\n\n`;
+    for (const item of payload as Array<{ type: string; content: unknown; text?: unknown }>) {
+      const raw =
+        typeof item.content === "string"
+          ? item.content
+          : typeof item.text === "string"
+            ? item.text
+            : JSON.stringify(item.content ?? null, null, 2);
+      output += raw + "\n";
+      content += `**[${item.type}]**\n\`\`\`\n${raw}\n\`\`\`\n\n`;
     }
     const step: ProcessStep = {
       type: "tool_ret",
       content,
+      output: output.trimEnd(),
       time: nowStr(),
     };
     aiStore.appendProcessStep(ssid, step);
@@ -1464,166 +1612,206 @@ defineExpose({
               >
                 {{ t("ai.placeholder") }}
               </div>
-              <div
-                v-for="m in messages"
-                :key="m.id"
-                class="msg"
-                :class="m.role"
-              >
-                <NAvatar
-                  v-if="m.role === 'assistant'"
-                  round
-                  size="small"
-                  class="bubble-avatar assistant-avatar"
-                >
-                  <NIcon><RiSparklingLine /></NIcon>
-                </NAvatar>
-                <div
-                  class="bubble"
-                  :class="{ streaming: m.isStreaming, approval: !!m.approval }"
-                >
-                  <template v-if="m.isProcess && m.processSteps">
-                    <details class="process-block">
-                      <summary class="process-summary">
-                        <NIcon :size="12" class="process-icon"><RiToolsLine /></NIcon>
-                        <span class="process-summary-text">{{ processSummary(m.processSteps) }}</span>
-                        <span class="process-count">{{ m.processSteps.length }}</span>
-                      </summary>
-                      <div class="process-steps">
-                        <div
-                          v-for="(step, i) in m.processSteps"
-                          :key="i"
-                          class="process-step"
-                          :class="step.type === 'tool_call' ? 'step-call' : 'step-ret'"
-                          v-html="parseMarkdown(step.content)"
-                        />
-                      </div>
-                    </details>
-                  </template>
-                  <template v-else-if="m.thinking">
-                    <!-- 流式期间自动展开、完成后自动折叠：open 跟随 isStreaming。
-                         流式中 vdom 值恒为 true，Vue 不会重写 DOM，用户手动折叠
-                         不被顶回；结束后 true→false 触发一次折叠写回 -->
-                    <details class="thinking-block" :open="m.isStreaming">
-                      <summary class="thinking-summary">
-                        <span>{{ m.isStreaming ? t("ai.thinkingStreaming") : t("ai.thinking") }}</span>
-                      </summary>
-                      <div
-                        class="thinking-content markdown-body"
-                        v-html="parseMarkdown(m.content, m.isStreaming)"
-                      />
-                    </details>
-                  </template>
-                  <template v-else-if="m.approval">
-                    <div class="approval-head">
-                      <NIcon :size="14" class="approval-head-icon">
-                        <RiShieldKeyholeLine />
-                      </NIcon>
-                      <span class="approval-title">{{ t("ai.approval.title") }}</span>
-                      <span
-                        v-if="m.approval.status === 'pending' && isApprovalActive"
-                        class="approval-wait-dot"
-                      />
-                    </div>
-                    <pre v-if="m.approval.command" class="approval-cmd"><code>{{ m.approval.command }}</code></pre>
-                    <div v-if="m.approval.riskReason" class="approval-risk">
-                      <NIcon :size="13" class="approval-risk-icon">
-                        <RiErrorWarningLine />
-                      </NIcon>
-                      <span>{{ m.approval.riskReason }}</span>
-                    </div>
-                    <div class="approval-foot">
-                      <template v-if="m.approval.status === 'pending' && isApprovalActive">
-                        <!-- 次操作轻量化（secondary 灰底），主操作用品牌主色：
-                             琥珀警示卡内不再引入第三种色相，绿色只留给结果状态签 -->
-                        <NButton
-                          size="small"
-                          secondary
-                          class="approval-btn"
-                          @click="handleApprovalNo(m)"
-                        >
-                          {{ t("ai.approval.deny") }}
-                        </NButton>
-                        <NButton
-                          size="small"
-                          type="primary"
-                          class="approval-btn"
-                          @click="handleApprovalYes(m)"
-                        >
-                          {{ t("ai.approval.allow") }}
-                        </NButton>
-                      </template>
-                      <span
-                        v-else-if="m.approval.status === 'allowed'"
-                        class="approval-status ok"
+              <template v-for="seg in chatSegments" :key="seg.kind === 'activity' ? `act-${seg.id}` : `m-${seg.msg.id}`">
+                <!-- 用户消息：右侧气泡 -->
+                <div v-if="seg.kind === 'user'" class="msg user">
+                  <div class="bubble" :class="{ streaming: seg.msg.isStreaming }">
+                    <span v-if="seg.msg.source" class="bubble-source">{{ t("ai.fromWeixin") }}</span>
+                    <div class="bubble-content">{{ seg.msg.content }}</div>
+                    <div class="bubble-footer">
+                      <span class="bubble-time">{{ seg.msg.time }}</span>
+                      <button
+                        v-if="seg.msg.content"
+                        class="fav-btn"
+                        :class="{ active: phraseStore.isFavorited(seg.msg.content) }"
+                        :title="phraseStore.isFavorited(seg.msg.content) ? t('ai.quickPhrases.remove') : t('ai.quickPhrases.add')"
+                        @click="toggleFavorite(seg.msg.content)"
                       >
-                        <NIcon :size="13"><RiCheckboxCircleLine /></NIcon>
-                        {{ t("ai.approval.allowed") }}
-                      </span>
-                      <span v-else-if="m.approval.status === 'denied'" class="approval-status no">
-                        <NIcon :size="13"><RiCloseCircleLine /></NIcon>
-                        {{ t("ai.approval.denied") }}
-                      </span>
-                      <span v-else class="approval-status expired">
-                        {{ t("ai.approval.expired") }}
-                      </span>
+                        <NIcon :size="11">
+                          <RiStarFill v-if="phraseStore.isFavorited(seg.msg.content)" />
+                          <RiStarLine v-else />
+                        </NIcon>
+                      </button>
+                      <button
+                        v-if="seg.msg.content"
+                        class="fav-btn"
+                        :title="t('common.copy')"
+                        @click="copyText(seg.msg.content)"
+                      >
+                        <NIcon :size="11"><RiFileCopyLine /></NIcon>
+                      </button>
                     </div>
-                  </template>
-                  <template v-else-if="m.role === 'assistant' && m.content">
-                    <div
-                      class="markdown-body"
-                      v-html="parseMarkdown(m.content, m.isStreaming)"
-                    />
-                  </template>
-                  <template v-else-if="m.content">
-                    <span v-if="m.source" class="bubble-source">{{ t("ai.fromWeixin") }}</span>
-                    <div class="bubble-content">{{ m.content }}</div>
-                  </template>
-                  <span v-else class="dot">…</span>
-                  <div v-if="!m.isProcess" class="bubble-footer">
-                    <span class="bubble-time">{{ m.time }}</span>
-                    <NPopover
-                      v-if="m.role === 'assistant' && m.usage"
-                      trigger="hover"
-                      :show-arrow="false"
-                      :delay="200"
-                    >
-                      <template #trigger>
-                        <span class="bubble-usage">{{ formatUsage(m.usage) }}</span>
-                      </template>
-                      <span class="usage-tooltip">{{ usageTooltip(m.usage) }}</span>
-                    </NPopover>
-                    <button
-                      v-if="m.role === 'user' && m.content"
-                      class="fav-btn"
-                      :class="{ active: phraseStore.isFavorited(m.content) }"
-                      :title="phraseStore.isFavorited(m.content) ? t('ai.quickPhrases.remove') : t('ai.quickPhrases.add')"
-                      @click="toggleFavorite(m.content)"
-                    >
-                      <NIcon :size="11">
-                        <RiStarFill v-if="phraseStore.isFavorited(m.content)" />
-                        <RiStarLine v-else />
-                      </NIcon>
-                    </button>
-                    <button
-                      v-if="m.content"
-                      class="fav-btn"
-                      :title="t('common.copy')"
-                      @click="copyText(m.content)"
-                    >
-                      <NIcon :size="11"><RiFileCopyLine /></NIcon>
-                    </button>
                   </div>
                 </div>
-                <NAvatar
-                  v-if="m.role === 'user'"
-                  round
-                  size="small"
-                  class="bubble-avatar user-avatar"
+
+                <!-- 活动组：思考/工具行，流式期间展开、完成后折叠 -->
+                <div
+                  v-else-if="seg.kind === 'activity'"
+                  class="activity-group"
+                  :class="{ live: segLive(seg) }"
                 >
-                  <NIcon><RiUserLine /></NIcon>
-                </NAvatar>
-              </div>
+                  <button class="activity-header" @click="toggleGroup(seg.id)">
+                    <NIcon :size="13" class="activity-header-icon"><RiSparklingLine /></NIcon>
+                    <span class="activity-header-text">{{ activityElapsed(seg) }}</span>
+                    <NIcon
+                      :size="12"
+                      class="activity-chevron"
+                      :class="{ open: groupExpanded(seg) }"
+                    ><RiArrowDownSLine /></NIcon>
+                  </button>
+                  <div v-if="groupExpanded(seg)" class="activity-rows">
+                    <template v-for="m in seg.msgs" :key="m.id">
+                      <template v-if="m.thinking">
+                        <button class="activity-row" @click="toggleRow(`t${m.id}`)">
+                          <NIcon :size="14" class="activity-row-icon"><RiBrainLine /></NIcon>
+                          <span class="activity-row-label">{{ t("ai.rowThinking") }}</span>
+                          <span
+                            v-if="rowDuration(seg, m)"
+                            class="activity-row-dur"
+                          >{{ rowDuration(seg, m) }}</span>
+                          <NIcon
+                            :size="11"
+                            class="activity-row-chevron"
+                            :class="{ open: rowOpen(`t${m.id}`) }"
+                          ><RiArrowDownSLine /></NIcon>
+                        </button>
+                        <div
+                          v-if="aiStore.liveText?.msgId === m.id"
+                          class="activity-row-body streaming-raw"
+                        >{{ aiStore.liveText.text }}</div>
+                        <div
+                          v-else-if="rowOpen(`t${m.id}`)"
+                          class="activity-row-body markdown-body"
+                          v-html="parseMarkdown(m.content)"
+                        />
+                      </template>
+                      <template v-else-if="m.isProcess && m.processSteps">
+                        <template v-for="(step, i) in m.processSteps" :key="`${m.id}:${i}`">
+                          <button class="activity-row" @click="toggleRow(`${m.id}:${i}`)">
+                            <NIcon :size="14" class="activity-row-icon"><RiToolsLine /></NIcon>
+                            <span class="activity-row-label">{{ stepLabel(step) }}</span>
+                            <NIcon
+                              :size="11"
+                              class="activity-row-chevron"
+                              :class="{ open: rowOpen(`${m.id}:${i}`) }"
+                            ><RiArrowDownSLine /></NIcon>
+                          </button>
+                          <div
+                            v-if="rowOpen(`${m.id}:${i}`)"
+                            class="activity-row-body activity-detail"
+                          >
+                            <pre
+                              v-if="step.command"
+                              class="activity-code"
+                            ><code>{{ step.command }}</code></pre>
+                            <pre
+                              v-else-if="step.argsJson"
+                              class="activity-code"
+                            ><code>{{ step.argsJson }}</code></pre>
+                            <pre
+                              v-else-if="step.output"
+                              class="activity-code"
+                            ><code>{{ step.output }}</code></pre>
+                            <div v-else class="markdown-body" v-html="parseMarkdown(step.content)" />
+                          </div>
+                        </template>
+                      </template>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- 其余：assistant 正文（无气泡）/ 审批卡 -->
+                <div v-else class="msg assistant">
+                  <div class="bare-msg">
+                    <div v-if="seg.msg.approval" class="bubble approval">
+                      <div class="approval-head">
+                        <NIcon :size="14" class="approval-head-icon">
+                          <RiShieldKeyholeLine />
+                        </NIcon>
+                        <span class="approval-title">{{ t("ai.approval.title") }}</span>
+                        <span
+                          v-if="seg.msg.approval.status === 'pending' && isApprovalActive"
+                          class="approval-wait-dot"
+                        />
+                      </div>
+                      <pre v-if="seg.msg.approval.command" class="approval-cmd"><code>{{ seg.msg.approval.command }}</code></pre>
+                      <div v-if="seg.msg.approval.riskReason" class="approval-risk">
+                        <NIcon :size="13" class="approval-risk-icon">
+                          <RiErrorWarningLine />
+                        </NIcon>
+                        <span>{{ seg.msg.approval.riskReason }}</span>
+                      </div>
+                      <div class="approval-foot">
+                        <template v-if="seg.msg.approval.status === 'pending' && isApprovalActive">
+                          <NButton
+                            size="small"
+                            secondary
+                            class="approval-btn"
+                            @click="handleApprovalNo(seg.msg)"
+                          >
+                            {{ t("ai.approval.deny") }}
+                          </NButton>
+                          <NButton
+                            size="small"
+                            type="primary"
+                            class="approval-btn"
+                            @click="handleApprovalYes(seg.msg)"
+                          >
+                            {{ t("ai.approval.allow") }}
+                          </NButton>
+                        </template>
+                        <span
+                          v-else-if="seg.msg.approval.status === 'allowed'"
+                          class="approval-status ok"
+                        >
+                          <NIcon :size="13"><RiCheckboxCircleLine /></NIcon>
+                          {{ t("ai.approval.allowed") }}
+                        </span>
+                        <span v-else-if="seg.msg.approval.status === 'denied'" class="approval-status no">
+                          <NIcon :size="13"><RiCloseCircleLine /></NIcon>
+                          {{ t("ai.approval.denied") }}
+                        </span>
+                        <span v-else class="approval-status expired">
+                          {{ t("ai.approval.expired") }}
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      v-else-if="seg.msg.content"
+                      class="markdown-body bare-text"
+                      v-html="parseMarkdown(seg.msg.content)"
+                    />
+                    <div
+                      v-else-if="aiStore.liveText?.msgId === seg.msg.id"
+                      class="bare-text streaming-raw"
+                    >{{ aiStore.liveText.text }}</div>
+                    <span v-else class="dot">…</span>
+                    <div class="bubble-footer bare-footer">
+                      <span class="bubble-time">{{ seg.msg.time }}</span>
+                      <!-- 用量统计在回答完整呈现后才显示（流式打字期间隐藏） -->
+                      <NPopover
+                        v-if="seg.msg.role === 'assistant' && seg.msg.usage && !seg.msg.isStreaming"
+                        trigger="hover"
+                        :show-arrow="false"
+                        :delay="200"
+                      >
+                        <template #trigger>
+                          <span class="bubble-usage">{{ formatUsage(seg.msg.usage) }}</span>
+                        </template>
+                        <span class="usage-tooltip">{{ usageTooltip(seg.msg.usage) }}</span>
+                      </NPopover>
+                      <button
+                        v-if="seg.msg.content"
+                        class="fav-btn"
+                        :title="t('common.copy')"
+                        @click="copyText(seg.msg.content)"
+                      >
+                        <NIcon :size="11"><RiFileCopyLine /></NIcon>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </template>
 
               <div
                 v-if="isTyping && !messages.some((m) => m.isStreaming)"
@@ -2180,6 +2368,165 @@ defineExpose({
 .usage-tooltip {
   white-space: pre-line;
   font-size: 12px;
+}
+
+/* ── ZCode 式活动组：思考/工具过程折叠流水 ── */
+.activity-group {
+  margin: 4px 0;
+  min-width: 0;
+}
+
+.activity-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--ashell-text-subtle);
+  font-size: 12px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.activity-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ashell-text);
+}
+
+.activity-header-icon {
+  flex: none;
+  opacity: 0.8;
+}
+
+.activity-header-text {
+  white-space: nowrap;
+}
+
+.activity-chevron {
+  flex: none;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.activity-chevron.open {
+  transform: rotate(180deg);
+}
+
+.activity-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px 10px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(255, 255, 255, 0.07);
+}
+
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--ashell-text-subtle);
+  font-size: 12px;
+  padding: 3px 6px;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.activity-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ashell-text);
+}
+
+.activity-row-icon {
+  flex: none;
+  opacity: 0.85;
+}
+
+.activity-row-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-row-dur {
+  flex: none;
+  opacity: 0.8;
+}
+
+.activity-row-chevron {
+  flex: none;
+  margin-left: auto;
+  opacity: 0.6;
+  transition: transform 0.15s ease;
+}
+
+.activity-row-chevron.open {
+  transform: rotate(180deg);
+}
+
+.activity-row-body {
+  font-size: 12px;
+  color: var(--ashell-text-subtle);
+  padding: 2px 8px 6px 10px;
+  margin-left: 10px;
+  border-left: 2px solid rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+/* 活动行展开体里的命令/输出/参数代码块 */
+.activity-detail {
+  overflow-x: auto;
+}
+
+.activity-code {
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ashell-text);
+  /* 长命令/长输出自动折行，不出现横向滚动条 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 无气泡正文：assistant 回答直接铺在面板底色上 */
+.bare-msg {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px 0 0;
+}
+
+.bare-text {
+  color: var(--ashell-text);
+}
+
+/* 流式显示层（liveText）：纯文本节点，无 markdown 解析开销；段收尾时一次性
+   提交并切换为 markdown 渲染 */
+.streaming-raw {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ashell-text);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.bare-footer {
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+
+.bare-footer .bubble-usage {
+  margin-left: 0;
 }
 
 /* 模型选择旁的上下文占用状态位：迷你进度条 + 百分比文字 */

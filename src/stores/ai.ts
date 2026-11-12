@@ -10,8 +10,20 @@ export interface StreamSeg {
   msgId: number
   /** 已收到但尚未"打"出来的增量文本（打字机缓冲） */
   pending: string
+  /** 已逐字"打"出来的文本（显示层协议：经 liveText 上屏，段收尾时一次性
+   *  提交到 messages[].content 并渲染 markdown） */
+  typed: string
   /** 分段已 FINAL（全文帧已到）：动画追平后立即收尾气泡 */
   finishing: boolean
+}
+
+/** 流式显示层协议：当前打字中的段内容。独立于 messages 存放——打字机每拍的
+ *  更新只触发这一个文本节点重渲染，整表 messages/分段计算不受每拍扰动 */
+export interface LiveStreamText {
+  ssid: string
+  msgId: number
+  kind: 'text' | 'thinking'
+  text: string
 }
 
 /** 单个 ssid 对应的 AI 会话状态 */
@@ -79,6 +91,8 @@ function emptySession(ssid: string): AiSession {
 export const useAiStore = defineStore('ai', () => {
   /** ssid -> session */
   const sessions = ref<Record<string, AiSession>>({})
+  /** 流式显示层：当前打字中的段文本（每拍更新只重渲染该文本节点） */
+  const liveText = ref<LiveStreamText | null>(null)
 
   function ensure(ssid: string): AiSession {
     if (!sessions.value[ssid]) {
@@ -100,7 +114,7 @@ export const useAiStore = defineStore('ai', () => {
   function pushMessage(ssid: string, msg: Omit<ChatMessage, 'id'>): ChatMessage {
     const s = ensure(ssid)
     const id = s.seq + 1
-    const full: ChatMessage = { id, ...msg }
+    const full: ChatMessage = { id, ts: Date.now(), ...msg }
     sessions.value = {
       ...sessions.value,
       [ssid]: { ...s, seq: id, messages: [...s.messages, full] },
@@ -133,6 +147,7 @@ export const useAiStore = defineStore('ai', () => {
         role: 'assistant',
         content: '',
         time: step.time,
+        ts: Date.now(),
         isProcess: true,
         processSteps: [step],
       }
@@ -167,8 +182,8 @@ export const useAiStore = defineStore('ai', () => {
   let streamTimer: ReturnType<typeof setInterval> | null = null;
   /**
    * 打字机动画循环：50ms 一拍，把各段 streamSegs[kind].pending 按自适应速率
-   * 逐字渲染进气泡。步长 = max(2, pending/10)：上游真流式时近乎实时，大块突发
-   * （如 openrouter 免费档的缓冲响应）约 0.5s 内平滑追平。
+   * 逐字渲染进气泡。步长 = max(3, pending/6)：上游真流式时近乎实时，大块突发
+   * （如 openrouter 免费档的缓冲响应）约 0.4s 内平滑追平。
    * 循环常驻（空闲拍开销可忽略），首轮增量时惰性启动。
    */
   function ensureStreamAnimator() {
@@ -188,53 +203,60 @@ export const useAiStore = defineStore('ai', () => {
         for (const kind of kinds) {
           const seg = cur.streamSegs[kind];
           if (!seg?.pending) continue;
-          const step = Math.max(2, Math.ceil(seg.pending.length / 10));
+          const step = Math.max(3, Math.ceil(seg.pending.length / 6));
           const shown = seg.pending.slice(0, step);
           const rest = seg.pending.slice(step);
-          const idx = cur.messages.findIndex((m) => m.id === seg.msgId);
+          seg.typed = (seg.typed ?? "") + shown;
+          // 显示层：只更新 liveText，该文本节点之外的 UI 不受每拍扰动
+          liveText.value = { ssid: s.ssid, msgId: seg.msgId, kind, text: seg.typed };
           const segs = { ...cur.streamSegs };
-          if (idx < 0) {
-            // 气泡 id 失效（历史被清空等）：丢弃该段
+          const finished = rest === "";
+          // 分段 FINAL 或轮末已到：追平后收尾该段气泡——此刻才把全文一次性
+          // 提交到 messages[].content（markdown 渲染只发生这一次）
+          const close = finished && (seg.finishing || cur.streamTurnOver);
+          if (close) {
+            const idx = cur.messages.findIndex((m) => m.id === seg.msgId);
+            if (idx >= 0) {
+              const next = [...cur.messages];
+              next[idx] = { ...cur.messages[idx]!, content: seg.typed, isStreaming: false };
+              cur = { ...cur, messages: next };
+            }
             delete segs[kind];
-            cur = { ...cur, streamSegs: segs };
-            continue;
+            if (liveText.value?.msgId === seg.msgId) liveText.value = null;
+            // 全部段收尾完毕：轮末延迟收尾状态复位（否则残留的 turnOver 会把
+            // 下一轮的段在首次追平时误关闭，造成内容错段/双份）
+            if (!segs.text && !segs.thinking) cur = { ...cur, streamTurnOver: false };
+          } else {
+            segs[kind] = { ...seg, pending: rest };
           }
-        const finished = rest === "";
-        // 分段 FINAL 或轮末已到：追平后收尾该段气泡
-        const close = finished && (seg.finishing || cur.streamTurnOver);
-        const next = [...cur.messages];
-        next[idx] = {
-          ...cur.messages[idx]!,
-          content: (cur.messages[idx]!.content ?? "") + shown,
-          isStreaming: !close,
-        };
-        if (close) delete segs[kind];
-        else segs[kind] = { ...seg, pending: rest };
-        // 全部段收尾完毕：轮末延迟收尾状态复位（否则残留的 turnOver 会把
-        // 下一轮的段在首次追平时误关闭，造成内容错段/双份）
-        if (!segs.text && !segs.thinking) cur = { ...cur, streamTurnOver: false };
-        cur = { ...cur, messages: next, streamSegs: segs };
+          cur = { ...cur, streamSegs: segs };
         }
-        sessions.value = { ...sessions.value, [s.ssid]: cur };
+        if (cur !== s) sessions.value = { ...sessions.value, [s.ssid]: cur };
       }
     }, 50);
+  }
+
+  /** 段收尾时把全文一次性提交到消息（流式期间 content 保持空，渲染走 liveText） */
+  function commitSegContent(s: AiSession, seg: StreamSeg, content: string): AiSession {
+    const idx = s.messages.findIndex((m) => m.id === seg.msgId)
+    let out = s
+    if (idx >= 0) {
+      const next = [...s.messages]
+      next[idx] = { ...s.messages[idx]!, content, isStreaming: false }
+      out = { ...s, messages: next }
+    }
+    if (liveText.value?.msgId === seg.msgId) liveText.value = null
+    return out
   }
 
   /** 关闭某个 kind 的流式段：冲入未渲染的 pending 防丢字，气泡置为已收尾 */
   function closeStreamingSeg(s: AiSession, kind: 'text' | 'thinking'): AiSession {
     const seg = s.streamSegs[kind]
     if (!seg) return s
-    const idx = s.messages.findIndex((m) => m.id === seg.msgId)
     const segs = { ...s.streamSegs }
     delete segs[kind]
-    if (idx < 0) return { ...s, streamSegs: segs }
-    const next = [...s.messages]
-    next[idx] = {
-      ...next[idx]!,
-      content: (next[idx]!.content ?? "") + seg.pending,
-      isStreaming: false,
-    }
-    return { ...s, messages: next, streamSegs: segs }
+    const s2 = commitSegContent(s, seg, (seg.typed ?? "") + seg.pending)
+    return { ...s2, streamSegs: segs }
   }
 
   /**
@@ -254,6 +276,7 @@ export const useAiStore = defineStore('ai', () => {
       role: 'assistant',
       content: '',
       time,
+      ts: Date.now(),
       thinking: kind === 'thinking',
       isStreaming: true,
     }
@@ -267,7 +290,7 @@ export const useAiStore = defineStore('ai', () => {
         streamTurnOver: false,
         streamSegs: {
           ...s.streamSegs,
-          [kind]: { msgId: id, pending: '', finishing: false },
+          [kind]: { msgId: id, pending: '', typed: '', finishing: false },
         },
       },
     }
@@ -328,19 +351,28 @@ export const useAiStore = defineStore('ai', () => {
       sessions.value = { ...sessions.value, [ssid]: closeStreamingSeg(s, kind) }
       return 'push'
     }
-    const typed = s.messages[idx]!.content ?? ''
+    // 已"打"出来的前缀 = 段的 typed（流式期间 message.content 保持空，显示走 liveText）
+    const typed = seg.typed ?? ''
     const continuous = fullText.startsWith(typed)
-    const pending = continuous ? fullText.slice(typed.length) : ''
-    const segs = { ...s.streamSegs }
-    const next = [...s.messages]
-    if (!pending) {
-      // 缓冲为空（含前缀不连续的丢帧修复）：立即以权威全文收尾
-      next[idx] = { ...s.messages[idx]!, content: fullText, isStreaming: false }
+    if (!continuous) {
+      // 前缀不连续（增量丢帧）：整体以权威全文立即提交收尾
+      const out = commitSegContent(s, seg, fullText)
+      const segs = { ...out.streamSegs }
       delete segs[kind]
-      sessions.value = { ...sessions.value, [ssid]: { ...s, messages: next, streamSegs: segs } }
+      sessions.value = { ...sessions.value, [ssid]: { ...out, streamSegs: segs } }
       return 'consumed'
     }
-    // 动画未追平：FINAL 后动画继续打剩余部分，追平自动收尾
+    const pending = fullText.slice(typed.length)
+    if (!pending) {
+      // 缓冲已全部显示：立即以权威全文提交收尾
+      const out = commitSegContent(s, seg, fullText)
+      const segs = { ...out.streamSegs }
+      delete segs[kind]
+      sessions.value = { ...sessions.value, [ssid]: { ...out, streamSegs: segs } }
+      return 'consumed'
+    }
+    // 动画未追平：FINAL 后动画继续打剩余部分，追平自动提交收尾
+    const segs = { ...s.streamSegs }
     segs[kind] = { ...seg, pending, finishing: true }
     sessions.value = { ...sessions.value, [ssid]: { ...s, streamSegs: segs } }
     ensureStreamAnimator()
@@ -396,6 +428,7 @@ export const useAiStore = defineStore('ai', () => {
   function clearMessages(ssid: string) {
     const s = sessions.value[ssid]
     if (!s) return
+    if (liveText.value?.ssid === ssid) liveText.value = null
     sessions.value = {
       ...sessions.value,
       [ssid]: {
@@ -673,6 +706,7 @@ export const useAiStore = defineStore('ai', () => {
 
   return {
     sessions,
+    liveText,
     ensure,
     get,
     patch,

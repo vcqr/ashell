@@ -277,6 +277,12 @@ export interface ProcessStep {
   content: string
   /** 仅 tool_call 有；用于折叠态预览 */
   toolName?: string
+  /** 工具命令原文（tool_call）：活动行展开体直接渲染代码块 */
+  command?: string
+  /** 无命令工具的参数 JSON（tool_call）：如 Read 的 {file_path} */
+  argsJson?: string
+  /** 工具输出原文（tool_ret）：活动行展开体直接渲染代码块 */
+  output?: string
   time: string
 }
 
@@ -321,6 +327,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   time: string
+  /** 创建时刻（epoch ms）：活动组耗时计算用；旧持久化消息可能缺失 */
+  ts?: number
   isStreaming?: boolean
   /** 标记为"中间过程"消息：聚合 AITOOL/TOOL_RET，渲染为可折叠块 */
   isProcess?: boolean
