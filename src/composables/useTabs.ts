@@ -1049,14 +1049,21 @@ export function useTabs() {
   }
 
   /** keep 策略且未开自动重连时的断开轻提示：1.2s 窗口内多条合并为一条 */
-  const closedNotifyPending: { target: string; reason: string }[] = [];
+  const closedNotifyPending: { key: string; target: string; reason: string }[] = [];
   let closedNotifyTimer: number | null = null;
 
   function notifySessionClosed(t: TerminalTab, reason?: string) {
     const target = t.hostInfo
       ? `${t.hostInfo.username}@${t.hostInfo.addr}`
       : t.title;
-    closedNotifyPending.push({ target, reason: reason ?? "" });
+    // 同一 tab 只计一次：来源如 socket 异常断开的 error/close 连发会重复上报，
+    // 后到的事件 reason 更完整，直接覆盖
+    const existing = closedNotifyPending.find((x) => x.key === t.key);
+    if (existing) {
+      if (reason) existing.reason = reason;
+      return;
+    }
+    closedNotifyPending.push({ key: t.key, target, reason: reason ?? "" });
     if (closedNotifyTimer !== null) return;
     closedNotifyTimer = window.setTimeout(() => {
       closedNotifyTimer = null;

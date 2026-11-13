@@ -1652,6 +1652,9 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
   }
 
   socket.onerror = () => {
+    // 异常断开时 error 与 close 必然连发；会话已建立后上报权交给 onclose
+    // （携带本地化 reason），避免同一次断开向 useTabs 发两次 status-change
+    if (everConnected) return
     setStatus("error")
     showReconnectBtn.value = true
   }
