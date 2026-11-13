@@ -95,7 +95,7 @@ function tokenFieldOrNull(value: string | undefined): number | null {
 const ctxWindowInput = ref<number | null>(null);
 const maxTokensInput = ref<number | null>(null);
 const maxRoundsInput = ref<number | null>(null);
-const streamingOn = ref(false);
+const streamingOn = ref(true);
 
 // 仅在引擎行切换 / 首次加载时从 store 拉取，避免保存回写覆盖正在编辑的值
 watch(
@@ -104,7 +104,7 @@ watch(
     ctxWindowInput.value = tokenFieldOrNull(currentEngine.value?.context_window);
     maxTokensInput.value = tokenFieldOrNull(currentEngine.value?.max_tokens);
     maxRoundsInput.value = tokenFieldOrNull(currentEngine.value?.max_rounds);
-    streamingOn.value = currentEngine.value?.streaming === "1";
+    streamingOn.value = currentEngine.value?.streaming !== "0";
   },
   { immediate: true },
 );

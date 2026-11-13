@@ -197,10 +197,14 @@ describe("protocol streaming 增量帧", () => {
     })();
   }
 
-  test("isStreamingEnabled 仅在 AI_STREAMING=1/true 时开启", () => {
+  test("isStreamingEnabled 默认开启，显式 0/false 才关闭", () => {
     delete process.env.AI_STREAMING;
-    expect(isStreamingEnabled()).toBe(false);
+    expect(isStreamingEnabled()).toBe(true);
+    process.env.AI_STREAMING = "";
+    expect(isStreamingEnabled()).toBe(true);
     process.env.AI_STREAMING = "0";
+    expect(isStreamingEnabled()).toBe(false);
+    process.env.AI_STREAMING = "false";
     expect(isStreamingEnabled()).toBe(false);
     process.env.AI_STREAMING = "1";
     expect(isStreamingEnabled()).toBe(true);
@@ -210,12 +214,13 @@ describe("protocol streaming 增量帧", () => {
   });
 
   test("streaming 关闭时 delta 为 no-op", async () => {
-    delete process.env.AI_STREAMING;
+    process.env.AI_STREAMING = "0";
     const frames = await withSink(() => {
       emitAIMSGDelta("off-1", "hello");
       flushSessionDeltas("off-1");
     });
     expect(frames).toEqual([]);
+    delete process.env.AI_STREAMING;
   });
 
   test("聚合窗口内多次 delta 合并为一帧，seq 递增，携带累积文本", async () => {

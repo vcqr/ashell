@@ -8,7 +8,7 @@
  *
  * JSON 信封统一为 { type, payload }。
  *
- * streaming 增量帧（AI_STREAMING=1 开启）构成显式的分段生命周期：
+ * streaming 增量帧（默认开启，AI_STREAMING=0 显式关闭）构成显式的分段生命周期：
  *   [AI_TEXT_START]/[AI_THINKING_START] → [AIMSG_DELTA]/[AI_THINKING_DELTA]* → [AIMSG]/[AI_THINKING](全文)
  * 引擎在块结束时立即发全文帧（FINAL，权威文本）；任何其他帧发出前先 flush 该
  * 会话的待发增量，保证段内顺序。FINAL 在前端有两种语义：有活跃同类气泡时覆盖
@@ -109,11 +109,12 @@ export function emitControl(sid: string, line: string): void {
   console.log(line);
 }
 
-/* ── streaming 增量帧（AI_STREAMING=1 开启，灰度开关两引擎通用） ── */
+/* ── streaming 增量帧（默认开启，AI_STREAMING=0 显式关闭，两引擎通用） ── */
 
-/** streaming 是否开启：仅在 ~/.ashell/ai/.env 显式 AI_STREAMING=1/true 时启用 */
+/** streaming 是否开启：默认启用；仅当 ~/.ashell/ai/.env 显式 AI_STREAMING=0/false 时关闭 */
 export function isStreamingEnabled(): boolean {
-  return process.env.AI_STREAMING === "1" || process.env.AI_STREAMING === "true";
+  const v = (process.env.AI_STREAMING ?? "").trim().toLowerCase();
+  return v !== "0" && v !== "false";
 }
 
 /** 增量帧负载：seq 为每会话递增序号（仅诊断用，传输层本身有序无重排） */
