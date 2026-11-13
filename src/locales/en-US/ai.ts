@@ -19,6 +19,7 @@ export default {
   placeholder: "Chat with AI…",
   inputPlaceholder: "Type a message, Enter to send, Shift+Enter for newline",
   inputPlaceholderCtrl: "Type a message, Ctrl+Enter to send, Enter for newline",
+  inputPlaceholderBusy: "Response in progress — you can draft your next message",
   sendKey: {
     title: "Send shortcut",
     enter: "Enter to send",
@@ -32,6 +33,8 @@ export default {
     denied: "Denied",
     expired: "Expired",
   },
+  askSubmit: "Submit selection",
+  askAnswered: "Answered: {answer}",
   fromWeixin: "from WeChat",
   welcome: "Hi! I'm {name}. How can I help you?",
   stopped: "Response interrupted",

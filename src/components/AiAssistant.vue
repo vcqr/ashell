@@ -15,6 +15,7 @@ import {
   RiBrainLine,
   RiPushpinFill,
   RiPushpinLine,
+  RiQuestionLine,
   RiRefreshLine,
   RiSendPlaneLine,
   RiSettingsLine,
@@ -89,7 +90,6 @@ import {
   NButton,
   NIcon,
   NScrollbar,
-  NAvatar,
   NSpace,
   NDropdown,
   NModal,
@@ -108,6 +108,7 @@ import type {
   AiUsageStats,
   ChatMessage,
   MessageApproval,
+  MessageAskUser,
   ProcessStep,
 } from "@/types";
 import { useApiStore } from "@/stores/api";
@@ -459,6 +460,7 @@ const canSend = computed(
   () =>
     input.value.trim().length > 0 &&
     !isTyping.value &&
+    !isApprovalActive.value &&
     currentSsid.value !== "",
 );
 
@@ -544,9 +546,7 @@ type ChatSegment =
   | { kind: "activity"; id: number; msgs: ChatMessage[] }
   | { kind: "plain"; msg: ChatMessage };
 
-// 每秒 tick：驱动流式期间活动组/行耗时文案刷新
-const nowTick = ref(Date.now());
-let nowTimer: ReturnType<typeof setInterval> | null = null;
+// 每秒节拍由 store 的 nowTick 驱动（动画循环实测在跑），组件不再自建定时器
 
 const chatSegments = computed<ChatSegment[]>(() => {
   const segs: ChatSegment[] = [];
@@ -560,6 +560,8 @@ const chatSegments = computed<ChatSegment[]>(() => {
     activity = null;
   };
   for (const m of messages.value) {
+    // 审批答复（裸 y/n）：卡片状态已回写为已允许/已拒绝，不再渲染为独立气泡
+    if (m.role === "user" && isBareApprovalAnswer(m.content)) continue;
     if (m.thinking || m.isProcess) {
       if (!activity) activity = [];
       activity.push(m);
@@ -572,14 +574,32 @@ const chatSegments = computed<ChatSegment[]>(() => {
   return segs;
 });
 
-/** 活动组是否仍在流式进行：组内的 thinking 段还开着（本轮未结束）。
- *  正文气泡（TEXT_START 创建的 plain 段）会打断连续活动段，不能只看
- *  「是否位于列表末尾」 */
+/** 裸 y/n：协议约定的审批答复，不是用户真实发言 */
+function isBareApprovalAnswer(content: string): boolean {
+  const c = content.trim();
+  return c === "y" || c === "n";
+}
+
+/** 活动组是否仍在流式进行：本轮回答尚未出现的工作阶段（含工具执行）。
+ *  交错流（正文气泡已创建但思考段仍在打字）时本组仍活跃；
+ *  工具执行等工作阶段（组后无 assistant 正文）也保持活跃+计时 */
 function segLive(seg: Extract<ChatSegment, { kind: "activity" }>): boolean {
   if (!isTyping.value) return false;
   const thinkMsgId =
     aiStore.sessions[currentSsid.value]?.streamSegs.thinking?.msgId ?? null;
-  return thinkMsgId !== null && seg.msgs.some((m) => m.id === thinkMsgId);
+  if (thinkMsgId !== null && seg.msgs.some((m) => m.id === thinkMsgId)) return true;
+  const lastMsg = seg.msgs[seg.msgs.length - 1]!;
+  const idx = messages.value.findIndex((m) => m.id === lastMsg.id);
+  const after = messages.value.slice(idx + 1);
+  // 组后出现 assistant 正文且已有可见输出 → 回答阶段开始；审批卡属于工作阶段不算。
+  // 正文"开段但还没打字"的空流式泡（TEXT_START 已到、增量未到）仍属工作阶段：
+  // 思考结束到首字输出之间的空窗里组保持活跃+计时，避免看起来像卡住
+  return !after.some(
+    (m) =>
+      m.role === "assistant" &&
+      !m.approval &&
+      (!m.isStreaming || !!m.content || aiStore.liveText?.msgId === m.id),
+  );
 }
 
 // 组展开状态：用户显式点按 > 默认（live 展开 / 完成折叠）
@@ -627,7 +647,7 @@ function segEndTs(seg: Extract<ChatSegment, { kind: "activity" }>): number {
   const lastMsg = seg.msgs[seg.msgs.length - 1]!;
   const idx = messages.value.findIndex((m) => m.id === lastMsg.id);
   const next = messages.value[idx + 1];
-  if (segLive(seg)) return nowTick.value;
+  if (segLive(seg)) return aiStore.nowTick;
   return next?.ts ?? lastMsg.ts ?? 0;
 }
 
@@ -640,7 +660,7 @@ function rowDuration(
   const idx = seg.msgs.findIndex((x) => x.id === m.id);
   const nextMsg =
     seg.msgs[idx + 1] ?? messages.value[messages.value.findIndex((x) => x.id === m.id) + 1];
-  const end = nextMsg?.ts ?? (segLive(seg) ? nowTick.value : m.ts);
+  const end = nextMsg?.ts ?? (segLive(seg) ? aiStore.nowTick : m.ts);
   const sec = Math.max(1, Math.round((end - m.ts) / 1000));
   return t("ai.rowDuration", { sec });
 }
@@ -664,15 +684,28 @@ function stepLabel(step: ProcessStep): string {
   return plain ? `结果 · ${plain.slice(0, 72)}` : "结果";
 }
 
-onMounted(() => {
-  nowTimer = setInterval(() => (nowTick.value = Date.now()), 1000);
-});
-onBeforeUnmount(() => {
-  if (nowTimer) {
-    clearInterval(nowTimer);
-    nowTimer = null;
+// 已返回结果工具的 toolCallId 集合：与调用行按协议 id 配对
+const answeredToolCallIds = computed(() => {
+  const ids = new Set<string>();
+  for (const m of messages.value) {
+    if (!m.processSteps) continue;
+    for (const s of m.processSteps) {
+      if (s.type === "tool_ret" && s.toolCallId) ids.add(s.toolCallId);
+    }
   }
+  return ids;
 });
+
+/** 调用行是否仍在执行：轮次进行中且对应结果行尚未到达。
+ *  无 id 的旧帧（历史会话）不渲染运行态；轮次结束后一律视为完成 */
+function stepRunning(step: ProcessStep): boolean {
+  return (
+    step.type === "tool_call" &&
+    !!step.toolCallId &&
+    isTyping.value &&
+    !answeredToolCallIds.value.has(step.toolCallId)
+  );
+}
 
 // 贴底跟随：stick 状态机、瞬时滚动与内容增长 watcher 在 useStickToBottom
 const { stickBottom, onScroll: onChatScroll, scrollToBottom, scrollEl } =
@@ -892,24 +925,26 @@ function handleSidecarOutput(ssid: string, line: string) {
   }
 
   if (line.startsWith("[SYSTEM_API_RETRY]")) {
-    const aiMsg = line.substring("[SYSTEM_API_RETRY]".length);
-    const msg = JSON.parse(aiMsg);
-    const content = `**[error]** ${escapeHtml(msg.payload)}`;
+    const msg = parseFrame(line.substring("[SYSTEM_API_RETRY]".length));
+    if (!msg) return;
+    const content = `**[error]** ${escapeHtml(String(msg.payload ?? ""))}`;
     aiStore.finalizeProcess(ssid);
     pushAssistantMessage(ssid, content);
     return;
   }
 
   if (line.startsWith("[AI_USAGE]")) {
-    const aiMsg = line.substring("[AI_USAGE]".length);
-    const msg = JSON.parse(aiMsg);
+    const msg = parseFrame<{ type: string; payload: AiUsageStats }>(
+      line.substring("[AI_USAGE]".length),
+    );
+    if (!msg) return;
     aiStore.attachUsage(ssid, msg.payload);
     return;
   }
 
   if (line.startsWith("[AI_COMPACT]")) {
-    const aiMsg = line.substring("[AI_COMPACT]".length);
-    const msg = JSON.parse(aiMsg);
+    const msg = parseFrame(line.substring("[AI_COMPACT]".length));
+    if (!msg) return;
     const { trigger, tokensBefore, tokensAfter } = msg.payload as AiCompactInfo;
     // 压缩后旧占用值失效，清空待下轮 [AI_USAGE] 刷新
     aiStore.patch(ssid, { contextUsage: null });
@@ -956,44 +991,54 @@ function handleSidecarOutput(ssid: string, line: string) {
 
   if (line.startsWith("[AIMSG_DELTA]")) {
     // 流式增量：累积到当前 text 流式气泡（无气泡时隐式新建）
-    const msg = JSON.parse(line.substring("[AIMSG_DELTA]".length));
+    const msg = parseFrame<{ type: string; payload?: { text?: unknown } }>(
+      line.substring("[AIMSG_DELTA]".length),
+    );
+    if (!msg) return;
     aiStore.finalizeProcess(ssid);
     aiStore.appendStreamingMessage(ssid, "text", String(msg.payload?.text ?? ""), nowStr());
     return;
   }
 
   if (line.startsWith("[AI_THINKING_DELTA]")) {
-    const msg = JSON.parse(line.substring("[AI_THINKING_DELTA]".length));
+    const msg = parseFrame<{ type: string; payload?: { text?: unknown } }>(
+      line.substring("[AI_THINKING_DELTA]".length),
+    );
+    if (!msg) return;
     aiStore.finalizeProcess(ssid);
     aiStore.appendStreamingMessage(ssid, "thinking", String(msg.payload?.text ?? ""), nowStr());
     return;
   }
 
   if (line.startsWith("[AIMSG]")) {
-    const aiMsg = line.substring("[AIMSG]".length);
-    const msg = JSON.parse(aiMsg);
+    const msg = parseFrame(line.substring("[AIMSG]".length));
+    if (!msg) return;
     aiStore.finalizeProcess(ssid);
     // 分段 FINAL（块结束的权威全文）：路由到 text 段续写/修复后收尾；
     // 无对应段（block 模式）按普通消息入列
-    if (aiStore.finalizeStreamingSegment(ssid, "text", msg.payload) === "push") {
-      pushAssistantMessage(ssid, msg.payload);
+    if (aiStore.finalizeStreamingSegment(ssid, "text", String(msg.payload ?? "")) === "push") {
+      pushAssistantMessage(ssid, String(msg.payload ?? ""));
     }
     return;
   }
 
   if (line.startsWith("[AI_THINKING]")) {
-    const aiMsg = line.substring("[AI_THINKING]".length);
-    const msg = JSON.parse(aiMsg);
+    const msg = parseFrame(line.substring("[AI_THINKING]".length));
+    if (!msg) return;
     aiStore.finalizeProcess(ssid);
-    if (aiStore.finalizeStreamingSegment(ssid, "thinking", msg.payload) === "push") {
-      pushAssistantMessage(ssid, msg.payload, true);
+    if (aiStore.finalizeStreamingSegment(ssid, "thinking", String(msg.payload ?? "")) === "push") {
+      pushAssistantMessage(ssid, String(msg.payload ?? ""), true);
     }
     return;
   }
 
   if (line.startsWith("[AITOOL]")) {
-    const aiMsg = line.substring("[AITOOL]".length);
-    const aiToolMsg = JSON.parse(aiMsg);
+    const aiToolMsg = parseFrame<{
+      type: string;
+      payload: { name?: unknown; command?: unknown; description?: unknown };
+      toolCallId?: unknown;
+    }>(line.substring("[AITOOL]".length));
+    if (!aiToolMsg) return;
     const tool = aiToolMsg.payload;
     const command = tool.command !== undefined && tool.command !== null ? String(tool.command) : undefined;
     const argsJson = command ? undefined : tool.description ? String(tool.description) : undefined;
@@ -1015,6 +1060,7 @@ function handleSidecarOutput(ssid: string, line: string) {
       toolName: String(tool.name ?? ""),
       command,
       argsJson,
+      toolCallId: aiToolMsg.toolCallId != null ? String(aiToolMsg.toolCallId) : undefined,
       time: nowStr(),
     };
     aiStore.appendProcessStep(ssid, step);
@@ -1022,8 +1068,10 @@ function handleSidecarOutput(ssid: string, line: string) {
   }
 
   if (line.startsWith("[TOOL_RET]")) {
-    const aiMsg = line.substring("[TOOL_RET]".length);
-    const msg = JSON.parse(aiMsg);
+    const msg = parseFrame<{ type: string; payload: unknown; toolCallId?: unknown }>(
+      line.substring("[TOOL_RET]".length),
+    );
+    if (!msg) return;
     const payload = msg.payload;
     // 输出原文直接使用（字符串），不再 JSON.stringify 转义成单行垃圾
     let output = "";
@@ -1042,6 +1090,7 @@ function handleSidecarOutput(ssid: string, line: string) {
       type: "tool_ret",
       content,
       output: output.trimEnd(),
+      toolCallId: msg.toolCallId != null ? String(msg.toolCallId) : undefined,
       time: nowStr(),
     };
     aiStore.appendProcessStep(ssid, step);
@@ -1049,20 +1098,24 @@ function handleSidecarOutput(ssid: string, line: string) {
   }
 
   if (line.startsWith("[TOOL_CONFIRM]")) {
-    const aiMsg = line.substring("[TOOL_CONFIRM]".length);
-    const msg = JSON.parse(aiMsg);
+    const msg = parseFrame<{
+      type: string;
+      payload: { question?: unknown; options?: Record<string, unknown> };
+    }>(line.substring("[TOOL_CONFIRM]".length));
+    if (!msg) return;
     const obj = msg.payload;
+    const question = String(obj.question ?? "");
 
     // 结构化审批载荷：卡片渲染 + 回答后回写状态；content 保留原 markdown 兼容复制/导出
     const approval: MessageApproval = {
-      question: String(obj.question ?? ""),
+      question,
       status: "pending",
     };
 
     let content = "";
     if (obj.options) {
       content += `**Action:**\n\n`;
-      for (const [key, value] of Object.entries(obj.options as Record<string, unknown>)) {
+      for (const [key, value] of Object.entries(obj.options)) {
         if (key === "command") {
           approval.command = String(value);
           content += `\`\`\`\n${value}\n\`\`\`\n`;
@@ -1074,7 +1127,7 @@ function handleSidecarOutput(ssid: string, line: string) {
         }
       }
     }
-    content += `\n**${obj.question.trim()}**`;
+    content += `\n**${question.trim()}**`;
 
     aiStore.finalizeProcess(ssid);
     aiStore.patch(ssid, { isApprovalActive: true });
@@ -1083,16 +1136,35 @@ function handleSidecarOutput(ssid: string, line: string) {
   }
 
   if (line.startsWith("[AI_ASKUSERQUESTION]")) {
-    const aiMsg = line.substring("[AI_ASKUSERQUESTION]".length);
-    const msg = JSON.parse(aiMsg);
+    const msg = parseFrame<{
+      type: string;
+      payload: { title?: unknown; items?: unknown; tips?: unknown; multiSelect?: unknown };
+    }>(line.substring("[AI_ASKUSERQUESTION]".length));
+    if (!msg) return;
     const payload = msg.payload;
 
-    const items = payload.items.join("\n");
-    const content = `**${payload.title}**\n\n${items}\n\n${payload.tips}`;
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const content = `**${String(payload.title ?? "")}**\n\n${items.join("\n")}\n\n${String(payload.tips ?? "")}`;
     aiStore.finalizeProcess(ssid);
+    // 等待用户自由回答/点选：解除打字态让输入框可用
     aiStore.patch(ssid, { isTyping: false });
-    pushAssistantMessage(ssid, content);
+    pushAssistantMessage(ssid, content, false, undefined, {
+      title: String(payload.title ?? ""),
+      items: items.map(String),
+      tips: payload.tips != null ? String(payload.tips) : undefined,
+      multiSelect: payload.multiSelect === true,
+    });
     return;
+  }
+}
+
+/** 协议帧 JSON 解析：坏帧只丢弃当帧并告警，不让异常中断会话事件流 */
+function parseFrame<T = { type: string; payload: unknown }>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    console.warn("[AI] bad protocol frame:", raw.slice(0, 120));
+    return null;
   }
 }
 
@@ -1101,6 +1173,7 @@ function pushAssistantMessage(
   content: string,
   thinking = false,
   approval?: MessageApproval,
+  askUser?: MessageAskUser,
 ) {
   aiStore.pushMessage(ssid, {
     role: "assistant",
@@ -1108,7 +1181,84 @@ function pushAssistantMessage(
     time: nowStr(),
     thinking,
     approval,
+    askUser,
   });
+}
+
+/** 取 store 里的实时消息：快速连点时模板闭包里的 m 可能是上一轮渲染的快照 */
+function liveAskUser(m: ChatMessage): MessageAskUser | undefined {
+  const session = aiStore.sessions[currentSsid.value];
+  return session?.messages.find((x) => x.id === m.id)?.askUser;
+}
+
+/**
+ * 选择题卡片公共应答：标记已答、恢复打字态、答案写入 stdin。
+ * 单选为序号字符串，多选为逗号分隔序号（sidecar askUser 统一解析为 label 列表）。
+ */
+async function sendAskAnswer(m: ChatMessage, answer: string) {
+  const ssid = currentSsid.value;
+  if (!ssid) return;
+  const session = aiStore.sessions[ssid];
+  if (!session || session.sidecarPid === null) return;
+  const ask = liveAskUser(m);
+  if (isTyping.value || !ask || ask.answered != null) return;
+
+  aiStore.updateMessage(ssid, m.id, {
+    askUser: { ...ask, answered: answer, pending: undefined },
+  });
+  aiStore.patch(ssid, { isTyping: true });
+  await aiStore.writeTo(ssid, answer + "\n");
+  scrollToBottom();
+}
+
+/** 单选题：点击选项立即应答（防误触历史卡片：已答/流式中不生效） */
+async function answerAskUser(m: ChatMessage, index: number) {
+  const ask = liveAskUser(m);
+  if (isTyping.value || !ask || ask.answered != null) return;
+  if (index < 0 || index >= ask.items.length) return;
+  await sendAskAnswer(m, String(index + 1));
+}
+
+/** 多选题：勾选/取消一项（暂存到消息上，随会话状态走）。
+ *  以 store 实时状态为基准合并，快速连点不丢更新 */
+function toggleAskMulti(m: ChatMessage, index: number) {
+  const ask = liveAskUser(m);
+  if (isTyping.value || !ask || ask.answered != null) return;
+  if (index < 0 || index >= ask.items.length) return;
+  const ssid = currentSsid.value;
+  if (!ssid) return;
+  const pending = ask.pending ?? [];
+  const next = pending.includes(index + 1)
+    ? pending.filter((n) => n !== index + 1)
+    : [...pending, index + 1];
+  aiStore.updateMessage(ssid, m.id, {
+    askUser: { ...ask, pending: next },
+  });
+}
+
+/** 多选题：按序号升序逗号连接提交 */
+async function submitAskMulti(m: ChatMessage) {
+  const ask = liveAskUser(m);
+  if (isTyping.value || !ask || ask.answered != null) return;
+  const pending = ask.pending ?? [];
+  if (pending.length === 0) return;
+  await sendAskAnswer(m, [...pending].sort((a, b) => a - b).join(","));
+}
+
+/** 选项是否呈勾选态：已提交按答复回显，未提交多选看暂存勾选 */
+function isAskChosen(m: ChatMessage, index: number): boolean {
+  const a = m.askUser;
+  if (!a) return false;
+  if (a.answered != null) {
+    return a.answered.split(",").some((s) => parseInt(s.trim(), 10) === index + 1);
+  }
+  if (a.multiSelect) return (a.pending ?? []).includes(index + 1);
+  return false;
+}
+
+function onAskOptionClick(m: ChatMessage, index: number) {
+  if (m.askUser?.multiSelect) toggleAskMulti(m, index);
+  else void answerAskUser(m, index);
 }
 
 /** 兼容旧的 defineExpose 接口：向当前 ssid 推送一条 assistant 消息 */
@@ -1147,6 +1297,8 @@ async function sendMessage() {
   const content = input.value.trim();
   const ssid = currentSsid.value;
   if (!content || isTyping.value || !ssid) return;
+  // 审批等待中自由文本会污染 sidecar 的 y/n 答复流：只允许卡片按钮 / y·n 快捷键应答
+  if (isApprovalActive.value) return;
   if (configIssues.value.length > 0) {
     attentionSetup();
     return;
@@ -1196,11 +1348,13 @@ function setSendKeyMode(mode: SendKeyMode) {
   }
 }
 
-const inputPlaceholder = computed(() =>
-  sendKeyMode.value === "enter"
+const inputPlaceholder = computed(() => {
+  // 等待回复期间输入框保持可用（可预输入下一条），placeholder 提示状态
+  if (isTyping.value) return t("ai.inputPlaceholderBusy");
+  return sendKeyMode.value === "enter"
     ? t("ai.inputPlaceholder")
-    : t("ai.inputPlaceholderCtrl"),
-);
+    : t("ai.inputPlaceholderCtrl");
+});
 
 function handleKeyPress(event: KeyboardEvent) {
   // 输入法组合中的回车（选词/确认候选）不触发发送，避免字没打完就误发
@@ -1473,6 +1627,11 @@ defineExpose({
   sendText,
   /** 独立窗口标题栏的"重新开始"按钮经此触发确认框（面板头隐藏后入口在 chrome） */
   openRestartConfirm: handleNewChat,
+  /** 测试钩子（dev harness 用）：向当前 ssid 注入一行 sidecar stdout 协议输出 */
+  feedSidecarLine: (line: string) => {
+    const ssid = currentSsid.value;
+    if (ssid) handleSidecarOutput(ssid, line);
+  },
 });
 </script>
 
@@ -1690,6 +1849,8 @@ defineExpose({
                           <button class="activity-row" @click="toggleRow(`${m.id}:${i}`)">
                             <NIcon :size="14" class="activity-row-icon"><RiToolsLine /></NIcon>
                             <span class="activity-row-label">{{ stepLabel(step) }}</span>
+                            <!-- 调用行尚无配对结果行时呼吸点提示仍在执行 -->
+                            <span v-if="stepRunning(step)" class="activity-row-running" />
                             <NIcon
                               :size="11"
                               class="activity-row-chevron"
@@ -1776,6 +1937,48 @@ defineExpose({
                         </span>
                       </div>
                     </div>
+                    <!-- 选择题卡片：单选点击即答；多选勾选后显式提交（序号由 sidecar 映射回 label） -->
+                    <div v-else-if="seg.msg.askUser" class="bubble askuser">
+                      <div class="askuser-head">
+                        <NIcon :size="14" class="askuser-head-icon">
+                          <RiQuestionLine />
+                        </NIcon>
+                        <span class="askuser-title">{{ seg.msg.askUser.title }}</span>
+                      </div>
+                      <div class="askuser-options">
+                        <button
+                          v-for="(item, i) in seg.msg.askUser.items"
+                          :key="i"
+                          class="askuser-option"
+                          :class="{ chosen: isAskChosen(seg.msg, i) }"
+                          :disabled="seg.msg.askUser.answered != null || isTyping"
+                          @click="onAskOptionClick(seg.msg, i)"
+                        >
+                          <span class="askuser-option-text">{{ item }}</span>
+                          <NIcon
+                            v-if="isAskChosen(seg.msg, i)"
+                            :size="13"
+                          ><RiCheckLine /></NIcon>
+                        </button>
+                      </div>
+                      <!-- 多选：显式提交才发送（可勾选多项，空选不可提交） -->
+                      <button
+                        v-if="seg.msg.askUser.multiSelect && seg.msg.askUser.answered == null"
+                        class="askuser-submit"
+                        :disabled="isTyping || (seg.msg.askUser.pending?.length ?? 0) === 0"
+                        @click="submitAskMulti(seg.msg)"
+                      >
+                        {{ t("ai.askSubmit")
+                        }}<template v-if="(seg.msg.askUser.pending?.length ?? 0) > 0">
+                          （{{ seg.msg.askUser.pending!.length }}）</template>
+                      </button>
+                      <div v-if="seg.msg.askUser.answered != null" class="askuser-tips">
+                        {{ t("ai.askAnswered", { answer: seg.msg.askUser.answered }) }}
+                      </div>
+                      <div v-else-if="seg.msg.askUser.tips" class="askuser-tips">
+                        {{ seg.msg.askUser.tips }}
+                      </div>
+                    </div>
                     <div
                       v-else-if="seg.msg.content"
                       class="markdown-body bare-text"
@@ -1785,7 +1988,10 @@ defineExpose({
                       v-else-if="aiStore.liveText?.msgId === seg.msg.id"
                       class="bare-text streaming-raw"
                     >{{ aiStore.liveText.text }}</div>
-                    <span v-else class="dot">…</span>
+                    <!-- 空流式泡占位：正文开段到首字到达间的等待点阵 -->
+                    <div v-else class="stream-wait">
+                      <span class="dot" /><span class="dot" /><span class="dot" />
+                    </div>
                     <div class="bubble-footer bare-footer">
                       <span class="bubble-time">{{ seg.msg.time }}</span>
                       <!-- 用量统计在回答完整呈现后才显示（流式打字期间隐藏） -->
@@ -1817,10 +2023,9 @@ defineExpose({
                 v-if="isTyping && !messages.some((m) => m.isStreaming)"
                 class="msg assistant"
               >
-                <NAvatar round size="small" class="bubble-avatar assistant-avatar">
-                  <NIcon><RiSparklingLine /></NIcon>
-                </NAvatar>
-                <div class="bubble typing">
+                <!-- 等待首 token：无头像的 sparkle + 点阵，与无气泡消息区风格一致 -->
+                <div class="thinking-line">
+                  <NIcon :size="13"><RiSparklingLine /></NIcon>
                   <span class="dot" /><span class="dot" /><span class="dot" />
                 </div>
               </div>
@@ -1985,12 +2190,12 @@ defineExpose({
         </div>
 
         <div class="composer">
+          <!-- 等待/审批期间输入框保持可用：可预输入下一条消息，仅发送被拦截 -->
           <NInput
             v-model:value="input"
             type="textarea"
             :placeholder="inputPlaceholder"
             :autosize="{ minRows: 1, maxRows: 4 }"
-            :disabled="isTyping"
             @keydown="handleKeyPress"
           />
           <NButton
@@ -2392,7 +2597,8 @@ defineExpose({
 }
 
 .activity-header:hover {
-  background: rgba(255, 255, 255, 0.05);
+  /* 主题变量（深色白 alpha / 浅色黑 alpha）：固定白色 alpha 在浅色下无反馈 */
+  background: var(--ashell-hover);
   color: var(--ashell-text);
 }
 
@@ -2421,7 +2627,7 @@ defineExpose({
   gap: 2px;
   margin: 2px 0 4px 10px;
   padding-left: 8px;
-  border-left: 2px solid rgba(255, 255, 255, 0.07);
+  border-left: 2px solid var(--ashell-border);
 }
 
 .activity-row {
@@ -2441,7 +2647,7 @@ defineExpose({
 }
 
 .activity-row:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--ashell-hover);
   color: var(--ashell-text);
 }
 
@@ -2461,6 +2667,17 @@ defineExpose({
   opacity: 0.8;
 }
 
+/* 调用行"运行中"呼吸点：结果行未到达时提示该工具仍在执行 */
+.activity-row-running {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--ashell-primary);
+  animation: approval-pulse 1.4s ease-in-out infinite;
+}
+
 .activity-row-chevron {
   flex: none;
   margin-left: auto;
@@ -2477,7 +2694,7 @@ defineExpose({
   color: var(--ashell-text-subtle);
   padding: 2px 8px 6px 10px;
   margin-left: 10px;
-  border-left: 2px solid rgba(255, 255, 255, 0.07);
+  border-left: 2px solid var(--ashell-border);
   overflow: hidden;
 }
 
@@ -2489,7 +2706,8 @@ defineExpose({
 .activity-code {
   margin: 0;
   padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.35);
+  /* 终端底色变量两主题各自有值：黑 alpha 在浅色主题下会变成深底深字 */
+  background: var(--ashell-terminal-bg);
   border-radius: 6px;
   font-size: 11.5px;
   line-height: 1.5;
@@ -2518,6 +2736,30 @@ defineExpose({
   color: var(--ashell-text);
   font-size: 13.5px;
   line-height: 1.55;
+}
+
+/* 空流式泡占位：正文开段到首字到达间的等待点阵（与思考行同款动效） */
+.stream-wait {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 0 5px;
+}
+
+.stream-wait .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ashell-text-subtle);
+  animation: blink 1.2s infinite ease-in-out;
+}
+
+.stream-wait .dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.stream-wait .dot:nth-child(3) {
+  animation-delay: 0.3s;
 }
 
 .bare-footer {
@@ -2842,50 +3084,34 @@ defineExpose({
   color: rgba(255, 255, 255, 0.6);
 }
 
-.bubble-avatar {
-  flex-shrink: 0;
-}
-
-.assistant-avatar {
-  background: linear-gradient(
-    135deg,
-    #6d5ae8 0%,
-    #4a8cff 100%
-  ) !important;
-  color: #fff !important;
-}
-
-.user-avatar {
-  background: var(--ashell-panel-bg-soft) !important;
-  color: var(--ashell-text-muted) !important;
-}
-
 .dot {
   color: var(--ashell-text-subtle);
   letter-spacing: 2px;
 }
 
-/* ── Typing indicator ── */
+/* ── 等待首 token 的 sparkle + 点阵（无头像，与无气泡消息区风格一致） ── */
 
-.bubble.typing {
+.thinking-line {
   display: flex;
-  gap: 4px;
-  padding: 14px 12px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  color: var(--ashell-text-subtle);
 }
 
-.bubble.typing .dot {
-  width: 6px;
-  height: 6px;
+.thinking-line .dot {
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--ashell-text-subtle);
   animation: blink 1.2s infinite ease-in-out;
 }
 
-.bubble.typing .dot:nth-child(2) {
+.thinking-line .dot:nth-child(3) {
   animation-delay: 0.15s;
 }
 
-.bubble.typing .dot:nth-child(3) {
+.thinking-line .dot:nth-child(4) {
   animation-delay: 0.3s;
 }
 
@@ -2900,6 +3126,108 @@ defineExpose({
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* ── 选择题卡片（bubble.askuser 承担卡片外观） ── */
+
+.bubble.askuser {
+  border: 1px solid color-mix(in srgb, var(--ashell-primary) 40%, transparent);
+  border-left: 3px solid var(--ashell-primary);
+  background: color-mix(in srgb, var(--ashell-primary) 6%, var(--ashell-panel-bg-soft));
+  padding: 10px 12px;
+}
+
+.askuser-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.askuser-head-icon {
+  color: var(--ashell-primary);
+}
+
+.askuser-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ashell-text-strong);
+}
+
+.askuser-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.askuser-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--ashell-border);
+  border-radius: 6px;
+  background: var(--ashell-panel-bg);
+  cursor: pointer;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ashell-text);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.askuser-option:hover:not(:disabled) {
+  border-color: var(--ashell-primary);
+  background: color-mix(in srgb, var(--ashell-primary) 10%, transparent);
+}
+
+.askuser-option:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.askuser-option.chosen {
+  border-color: var(--ashell-primary);
+  color: var(--ashell-primary);
+  font-weight: 600;
+  opacity: 1;
+}
+
+.askuser-option-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.askuser-tips {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ashell-text-subtle);
+}
+
+/* 多选题提交按钮 */
+.askuser-submit {
+  margin-top: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--ashell-primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+.askuser-submit:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.askuser-submit:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* ── 审批卡片（bubble.approval 承担卡片外观） ── */

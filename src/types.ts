@@ -283,6 +283,11 @@ export interface ProcessStep {
   argsJson?: string
   /** 工具输出原文（tool_ret）：活动行展开体直接渲染代码块 */
   output?: string
+  /**
+   * 工具关联 id（[AITOOL]/[TOOL_RET] 帧可选携带）：调用行与结果行配对。
+   * 调用行尚无对应结果行且轮次仍在进行时，渲染"运行中"状态。
+   */
+  toolCallId?: string
   time: string
 }
 
@@ -322,6 +327,20 @@ export interface MessageApproval {
   status: 'pending' | 'allowed' | 'denied'
 }
 
+/** 选择题的结构化载荷：[AI_ASKUSERQUESTION] 生成，渲染为可点选的选项卡片 */
+export interface MessageAskUser {
+  title: string
+  /** 选项文案（sidecar askUser 约定 "N. label - desc" 格式） */
+  items: string[]
+  tips?: string
+  /** 多选题：可勾选多项后显式提交（答复为逗号分隔序号，sidecar 解析为 label 列表） */
+  multiSelect?: boolean
+  /** 多选题当前勾选的序号（1 起始，与答复协议一致）：提交前暂存 */
+  pending?: number[]
+  /** 已选择的序号（1 起始，多选逗号分隔）：防重复应答 */
+  answered?: string
+}
+
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'
@@ -337,6 +356,8 @@ export interface ChatMessage {
   thinking?: boolean
   /** 审批请求：渲染为卡片（命令 + 风险 + 允许/拒绝），非普通 markdown */
   approval?: MessageApproval
+  /** 选择题请求：渲染为可点选的选项卡片，点击序号直接应答 */
+  askUser?: MessageAskUser
   /** 本轮 token 用量统计（仅 assistant 消息，轮末 [AI_USAGE] 帧附着） */
   usage?: AiUsageStats
   /** 消息来源标记（"weixin" = 微信远程答复注入，[AI_USER_MSG] 帧携带） */

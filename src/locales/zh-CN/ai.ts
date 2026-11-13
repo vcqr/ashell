@@ -19,6 +19,7 @@ export default {
   placeholder: "和 AI 聊点什么吧～",
   inputPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
   inputPlaceholderCtrl: "输入消息，Ctrl+Enter 发送，Enter 换行",
+  inputPlaceholderBusy: "回复生成中，可先输入下一条消息",
   sendKey: {
     title: "发送快捷键",
     enter: "Enter 发送",
@@ -32,6 +33,8 @@ export default {
     denied: "已拒绝",
     expired: "已失效",
   },
+  askSubmit: "确认选择",
+  askAnswered: "已选择 {answer}",
   fromWeixin: "来自微信",
   welcome: "嗨！我是{name}，有什么需要我帮助的吗？",
   stopped: "已中断本次回复",

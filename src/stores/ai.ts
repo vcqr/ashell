@@ -93,6 +93,8 @@ export const useAiStore = defineStore('ai', () => {
   const sessions = ref<Record<string, AiSession>>({})
   /** 流式显示层：当前打字中的段文本（每拍更新只重渲染该文本节点） */
   const liveText = ref<LiveStreamText | null>(null)
+  /** 每秒节拍（由动画循环每拍刷新）：驱动活动组/行耗时的周期性重渲染 */
+  const nowTick = ref(Date.now())
 
   function ensure(ssid: string): AiSession {
     if (!sessions.value[ssid]) {
@@ -189,6 +191,9 @@ export const useAiStore = defineStore('ai', () => {
   function ensureStreamAnimator() {
     if (streamTimer !== null) return;
     streamTimer = setInterval(() => {
+      // 节拍刷新：活动组/行耗时依赖 nowTick（该循环实测持续在跑，比组件侧
+      // 自建定时器可靠）
+      nowTick.value = Date.now();
       for (const s of Object.values(sessions.value)) {
         // 顺序化打字：thinking 段存在期间（含 FINAL 后的收尾排空阶段），正文一律
         // 不打——有的模型交替发送 thinking/text delta，「FINAL 才放行」仍会在
@@ -539,7 +544,8 @@ export const useAiStore = defineStore('ai', () => {
       patch(ssid, {
         sidecarPid: pid,
         isSessionActive: true,
-        isTyping: false,
+        // 不重置 isTyping：sendMessage 先置 true 再触发 spawn，这里清掉会让
+        // 首条消息的整个轮次运行在 isTyping=false 下（活动组折叠/计时冻结）
         unlistenStdout,
         unlistenStderr,
       })
@@ -649,7 +655,8 @@ export const useAiStore = defineStore('ai', () => {
       patch(ssid, {
         sidecarPid: pid ?? null,
         isSessionActive: true,
-        isTyping: false,
+        // 不重置 isTyping：面板重开附着时若恰有轮次进行中，清掉会让该轮次
+        // 运行在 isTyping=false 下（segLive 失效 → 活动组折叠/计时冻结）
         unlistenStdout,
         unlistenStderr,
       })
@@ -707,6 +714,7 @@ export const useAiStore = defineStore('ai', () => {
   return {
     sessions,
     liveText,
+    nowTick,
     ensure,
     get,
     patch,

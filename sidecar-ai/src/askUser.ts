@@ -27,7 +27,12 @@ export async function askUserQuestion(
     ? "(Enter numbers separated by commas, or type your own answer)"
     : "(Enter a number, or type your own answer)";
 
-  emitAskUserQuestion(sid, { title: `${q.header}: ${q.question}`, items, tips });
+  emitAskUserQuestion(sid, {
+    title: `${q.header}: ${q.question}`,
+    items,
+    tips,
+    multiSelect: q.multiSelect,
+  });
 
   const response = (await io.readLineOrStop()).trim();
   if (response === STOP_SENTINEL) return null;

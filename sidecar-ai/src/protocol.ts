@@ -19,6 +19,12 @@
 export interface AIMsg {
   type: string;
   payload?: unknown;
+  /**
+   * 工具关联 id（仅 [AITOOL]/[TOOL_RET] 帧可选携带）：把"调用行"与"结果行"
+   * 配对，前端据此给尚未返回结果的调用行渲染"运行中"状态。
+   * 可选字段：旧前端忽略未知字段，向后兼容。
+   */
+  toolCallId?: string;
 }
 
 export interface AITool {
@@ -31,6 +37,8 @@ export interface AskUserQuestionPayload {
   title: string;
   items?: string[];
   tips?: string;
+  /** 多选题：可逗号分隔多选序号；前端渲染为可勾选+确认提交 */
+  multiSelect?: boolean;
 }
 
 /** 单轮对话的 token 用量统计（[AI_USAGE] 帧负载） */
@@ -237,14 +245,14 @@ export function emitThinking(sid: string, payload: string): void {
   emit(sid, "[AI_THINKING]", { type: "thinking", payload });
 }
 
-/** 工具调用展示（command 缺省时前端只渲染工具名） */
-export function emitToolCall(sid: string, tool: AITool): void {
-  emit(sid, "[AITOOL]", { type: "assistant", payload: tool });
+/** 工具调用展示（command 缺省时前端只渲染工具名）；toolCallId 供前端与结果行配对 */
+export function emitToolCall(sid: string, tool: AITool, toolCallId?: string): void {
+  emit(sid, "[AITOOL]", { type: "assistant", payload: tool, ...(toolCallId && { toolCallId }) });
 }
 
-/** 工具返回内容，payload 为 [{ type, content }] 数组 */
-export function emitToolRet(sid: string, payload: unknown): void {
-  emit(sid, "[TOOL_RET]", { type: "user", payload });
+/** 工具返回内容，payload 为 [{ type, content }] 数组；toolCallId 对应 [AITOOL] 帧 */
+export function emitToolRet(sid: string, payload: unknown, toolCallId?: string): void {
+  emit(sid, "[TOOL_RET]", { type: "user", payload, ...(toolCallId && { toolCallId }) });
 }
 
 /** 请求用户审批（y/n），options 按 KV 渲染，key 为 command 时走代码块 */

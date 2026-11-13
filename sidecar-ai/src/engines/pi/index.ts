@@ -207,6 +207,8 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
   let stopped = false;
   // 本轮（一次 prompt 内所有 LLM 调用）的用量累加，prompt 结束时上报
   let turnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  // 本 turn 已经实时上报过结果工具的 toolCallId（turn_end 兜底时去重）
+  let emittedToolCallIds = new Set<string>();
 
   function handleSessionEvent(event: AgentSessionEvent) {
     switch (event.type) {
@@ -246,11 +248,15 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
               // TodoWrite 的进度由 todoWriteTool 的 onUpdate 推送，跳过工具调用展示
               if (block.name === "TodoWrite") continue;
               const args = block.arguments ?? {};
-              emitToolCall(ctx.ssid, {
-                name: block.name,
-                command: args.cmd || args.command || undefined,
-                description: JSON.stringify(args, null, 2),
-              });
+              emitToolCall(
+                ctx.ssid,
+                {
+                  name: block.name,
+                  command: args.cmd || args.command || undefined,
+                  description: JSON.stringify(args, null, 2),
+                },
+                block.id,
+              );
             }
           }
 
@@ -286,18 +292,38 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
         break;
       }
 
+      case "tool_execution_end": {
+        // 逐工具实时上报结果：SDK 按完成顺序逐个发 end 事件（并行执行时即完成序），
+        // 不再等 turn_end 批量——与 claude 引擎的逐工具上报时序对齐。
+        // parentToolCallId 非空是嵌套调用、TodoWrite 的进度另有通道，均与
+        // message_end 的工具调用展示口径一致，跳过。
+        if (event.parentToolCallId || event.toolName === "TodoWrite") break;
+        emittedToolCallIds.add(event.toolCallId);
+        emitToolRet(
+          ctx.ssid,
+          ((event.result?.content ?? []) as Array<{ type: string; text?: string }>).map(
+            (c) => ({ type: c.type, content: c.type === "text" ? (c.text ?? "") : "" }),
+          ),
+          event.toolCallId,
+        );
+        break;
+      }
+
       case "turn_end": {
-        // turn_end 携带本轮工具执行结果，实时输出
+        // turn_end 携带本轮全部工具结果：实时上报过的按 toolCallId 去重跳过，
+        // 只兜底补发缺 end 事件的（中断/异常路径可能没有执行事件）
         const toolResults = (event as any).toolResults as any[] | undefined;
         if (toolResults) {
           for (const tr of toolResults) {
+            if (tr.toolCallId && emittedToolCallIds.has(tr.toolCallId)) continue;
             const payload = (tr.content || []).map((c: any) => ({
               type: c.type,
               content: c.type === "text" ? c.text : "",
             }));
-            emitToolRet(ctx.ssid, payload);
+            emitToolRet(ctx.ssid, payload, tr.toolCallId);
           }
         }
+        emittedToolCallIds.clear();
         break;
       }
 
@@ -315,6 +341,8 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
     console.log(`[HANDLE] Handling user message: "${userPrompt}"`);
     stopped = false;
     turnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+    // 上一轮被中断时 turn_end 不会到达，集合残留 id；每轮 prompt 重置兜底
+    emittedToolCallIds = new Set();
 
     if (!session) {
       session = await createAgentSession({

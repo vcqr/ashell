@@ -68,6 +68,26 @@ describe("protocol emitters", () => {
     ]);
   });
 
+  test("emitToolCall/emitToolRet 可选 toolCallId 透传到帧（缺省时不出现在 JSON）", () => {
+    const lines = captureLines(() => {
+      emitToolCall("s1", { name: "Bash", command: "ls" }, "call-1");
+      emitToolRet("s1", [{ type: "text", content: "ok" }], "call-1");
+      // 未携带 id 的旧调用形态：帧结构与历史版本完全一致
+      emitToolCall("s2", { name: "Read" });
+      emitToolRet("s2", [{ type: "text", content: "r" }]);
+    });
+    expect(lines[0]).toBe(
+      '[AITOOL]{"type":"assistant","payload":{"name":"Bash","command":"ls"},"toolCallId":"call-1"}',
+    );
+    expect(lines[1]).toBe(
+      '[TOOL_RET]{"type":"user","payload":[{"type":"text","content":"ok"}],"toolCallId":"call-1"}',
+    );
+    expect(lines[2]).toBe('[AITOOL]{"type":"assistant","payload":{"name":"Read"}}');
+    expect(lines[3]).toBe(
+      '[TOOL_RET]{"type":"user","payload":[{"type":"text","content":"r"}]}',
+    );
+  });
+
   test("emitToolConfirm 携带 question 与 options", () => {
     const lines = captureLines(() =>
       emitToolConfirm("s1", "Allow this action? (y/n): ", { command: "rm -rf /" }),
@@ -92,6 +112,21 @@ describe("protocol emitters", () => {
     expect(envelope.payload.title).toBe("Mode: pick one");
     expect(envelope.payload.items).toEqual(["1. Alpha - first", "2. Beta"]);
     expect(envelope.payload.tips).toContain("Enter a number");
+    // 单选缺省不携带 multiSelect（帧结构与历史版本一致）
+    expect(envelope.payload.multiSelect).toBeUndefined();
+  });
+
+  test("emitAskUserQuestion 多选题透传 multiSelect", () => {
+    const lines = captureLines(() =>
+      emitAskUserQuestion("s1", {
+        title: "Env: pick test targets",
+        items: ["1. dev", "2. staging", "3. prod"],
+        tips: "(Enter numbers separated by commas, or type your own answer)",
+        multiSelect: true,
+      }),
+    );
+    const envelope = JSON.parse(lines[0]!.slice("[AI_ASKUSERQUESTION]".length));
+    expect(envelope.payload.multiSelect).toBe(true);
   });
 
   test("emitSystemError 输出 [SYSTEM_API_RETRY]", () => {

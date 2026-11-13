@@ -238,7 +238,18 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
           message.message?.content &&
           message.tool_use_result
         ) {
-          emitToolRet(ctx.ssid, message.message.content);
+          // tool_result 块的 tool_use_id 与 assistant 消息里的 tool_use id 配对，
+          // 前端据此把调用行从"运行中"切到完成态
+          const blocks = message.message.content;
+          const toolUseId = Array.isArray(blocks)
+            ? (
+                blocks.find(
+                  (b: { type?: string; tool_use_id?: string }) =>
+                    b?.type === "tool_result" && b.tool_use_id,
+                ) as { tool_use_id?: string } | undefined
+              )?.tool_use_id
+            : undefined;
+          emitToolRet(ctx.ssid, blocks, toolUseId);
         }
 
         // 每轮结束时 result 携带本轮 token 用量与累计成本
@@ -304,11 +315,16 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
                 todos = Array.isArray(input.todos) ? input.todos : [];
                 displayTodoProgress(ctx.ssid, todos);
               } else {
-                emitToolCall(ctx.ssid, {
-                  name: block.name,
-                  command: input.command,
-                  description: input.description,
-                });
+                // tool_use 块的 id 供前端把结果行与调用行配对
+                emitToolCall(
+                  ctx.ssid,
+                  {
+                    name: block.name,
+                    command: input.command,
+                    description: input.description,
+                  },
+                  (block as { id?: string }).id,
+                );
               }
             }
           }
