@@ -681,7 +681,8 @@ function stepLabel(step: ProcessStep): string {
     .replace(/\\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return plain ? `结果 · ${plain.slice(0, 72)}` : "结果";
+  const head = step.isError ? t("ai.retFailed") : t("ai.retOk");
+  return plain ? `${head} · ${plain.slice(0, 72)}` : head;
 }
 
 // 已返回结果工具的 toolCallId 集合：与调用行按协议 id 配对
@@ -1068,29 +1069,27 @@ function handleSidecarOutput(ssid: string, line: string) {
   }
 
   if (line.startsWith("[TOOL_RET]")) {
-    const msg = parseFrame<{ type: string; payload: unknown; toolCallId?: unknown }>(
-      line.substring("[TOOL_RET]".length),
-    );
+    const msg = parseFrame<{
+      type: string;
+      payload: unknown;
+      toolCallId?: unknown;
+      isError?: unknown;
+    }>(line.substring("[TOOL_RET]".length));
     if (!msg) return;
     const payload = msg.payload;
     // 输出原文直接使用（字符串），不再 JSON.stringify 转义成单行垃圾
     let output = "";
     let content = "";
-    for (const item of payload as Array<{ type: string; content: unknown; text?: unknown }>) {
-      const raw =
-        typeof item.content === "string"
-          ? item.content
-          : typeof item.text === "string"
-            ? item.text
-            : JSON.stringify(item.content ?? null, null, 2);
-      output += raw + "\n";
-      content += `**[${item.type}]**\n\`\`\`\n${raw}\n\`\`\`\n\n`;
+    for (const item of normalizeToolRetItems(payload)) {
+      output += item.text + "\n";
+      content += `**[${item.type}]**\n\`\`\`\n${item.text}\n\`\`\`\n\n`;
     }
     const step: ProcessStep = {
       type: "tool_ret",
       content,
       output: output.trimEnd(),
       toolCallId: msg.toolCallId != null ? String(msg.toolCallId) : undefined,
+      isError: msg.isError === true,
       time: nowStr(),
     };
     aiStore.appendProcessStep(ssid, step);
@@ -1166,6 +1165,40 @@ function parseFrame<T = { type: string; payload: unknown }>(raw: string): T | nu
     console.warn("[AI] bad protocol frame:", raw.slice(0, 120));
     return null;
   }
+}
+
+/** [TOOL_RET] 负载归一化为 [{type, text}]：
+ *  - pi / 新 claude 二进制：[{type, content: string}]（content 即文本）
+ *  - 旧 claude 二进制：原始 SDK tool_result 块 {type:"tool_result", content:[{type,text}]}
+ *    （嵌套形态，直接渲染会走 JSON.stringify 兜底显示成 JSON） */
+function normalizeToolRetItems(payload: unknown): Array<{ type: string; text: string }> {
+  const out: Array<{ type: string; text: string }> = [];
+  for (const item of (Array.isArray(payload) ? payload : []) as Array<Record<string, unknown>>) {
+    if (item?.type === "tool_result" && Array.isArray(item.content)) {
+      for (const c of item.content as Array<Record<string, unknown>>) {
+        out.push({
+          type: String(c?.type ?? "text"),
+          text:
+            typeof c?.text === "string"
+              ? c.text
+              : typeof c?.content === "string"
+                ? c.content
+                : "",
+        });
+      }
+      continue;
+    }
+    out.push({
+      type: String(item?.type ?? "text"),
+      text:
+        typeof item?.content === "string"
+          ? item.content
+          : typeof item?.text === "string"
+            ? item.text
+            : "",
+    });
+  }
+  return out;
 }
 
 function pushAssistantMessage(
@@ -1846,8 +1879,15 @@ defineExpose({
                       </template>
                       <template v-else-if="m.isProcess && m.processSteps">
                         <template v-for="(step, i) in m.processSteps" :key="`${m.id}:${i}`">
-                          <button class="activity-row" @click="toggleRow(`${m.id}:${i}`)">
-                            <NIcon :size="14" class="activity-row-icon"><RiToolsLine /></NIcon>
+                          <button
+                            class="activity-row"
+                            :class="{ 'activity-row-failed': step.type === 'tool_ret' && step.isError }"
+                            @click="toggleRow(`${m.id}:${i}`)"
+                          >
+                            <NIcon :size="14" class="activity-row-icon">
+                              <RiErrorWarningLine v-if="step.type === 'tool_ret' && step.isError" />
+                              <RiToolsLine v-else />
+                            </NIcon>
                             <span class="activity-row-label">{{ stepLabel(step) }}</span>
                             <!-- 调用行尚无配对结果行时呼吸点提示仍在执行 -->
                             <span v-if="stepRunning(step)" class="activity-row-running" />
@@ -1861,18 +1901,18 @@ defineExpose({
                             v-if="rowOpen(`${m.id}:${i}`)"
                             class="activity-row-body activity-detail"
                           >
-                            <pre
-                              v-if="step.command"
-                              class="activity-code"
-                            ><code>{{ step.command }}</code></pre>
-                            <pre
-                              v-else-if="step.argsJson"
-                              class="activity-code"
-                            ><code>{{ step.argsJson }}</code></pre>
-                            <pre
-                              v-else-if="step.output"
-                              class="activity-code"
-                            ><code>{{ step.output }}</code></pre>
+                            <!-- 命令/参数/输出三选一：统一走悬浮复制按钮（委托同 .code-block 结构） -->
+                            <div
+                              v-if="step.command || step.argsJson || step.output"
+                              class="code-block activity-code-block"
+                            >
+                              <span
+                                class="code-copy-btn"
+                                data-copy-code
+                                :title="t('common.copy')"
+                              >⧉</span>
+                              <pre class="activity-code"><code>{{ step.command ?? step.argsJson ?? step.output }}</code></pre>
+                            </div>
                             <div v-else class="markdown-body" v-html="parseMarkdown(step.content)" />
                           </div>
                         </template>
@@ -2651,6 +2691,12 @@ defineExpose({
   color: var(--ashell-text);
 }
 
+/* 失败结果行：警示色图标+标签，hover 保持警示色 */
+.activity-row-failed,
+.activity-row-failed:hover {
+  color: #e5695f;
+}
+
 .activity-row-icon {
   flex: none;
   opacity: 0.85;
@@ -2696,6 +2742,39 @@ defineExpose({
   margin-left: 10px;
   border-left: 2px solid var(--ashell-border);
   overflow: hidden;
+}
+
+/* 活动行展开体代码块的悬浮复制按钮：与 markdown 代码块同款交互，
+   点击经 .chat-list 的 data-copy-code 事件委托复制（按钮在 .code-block 内即可命中） */
+.activity-code-block {
+  position: relative;
+  padding-top: 18px;
+}
+
+.activity-detail .code-copy-btn {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  padding: 1px 6px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 4px;
+  color: var(--ashell-text-subtle);
+  background: var(--ashell-bg-elevated, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--ashell-border-soft, rgba(128, 128, 128, 0.25));
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  user-select: none;
+}
+
+.activity-code-block:hover .code-copy-btn {
+  opacity: 1;
+}
+
+.activity-detail .code-copy-btn:hover {
+  color: var(--ashell-text-strong);
+  border-color: var(--ashell-border);
 }
 
 /* 活动行展开体里的命令/输出/参数代码块 */
@@ -2834,7 +2913,9 @@ defineExpose({
 }
 
 .msg.user .bubble:hover .fav-btn,
-.msg.assistant .bubble:hover .fav-btn {
+.msg.assistant .bubble:hover .fav-btn,
+/* 无气泡正文（.bare-msg）同样悬浮显示；.bubble 选择器覆盖审批卡 */
+.msg.assistant .bare-msg:hover .fav-btn {
   opacity: 1;
 }
 

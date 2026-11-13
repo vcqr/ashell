@@ -35,6 +35,8 @@ export default {
   },
   askSubmit: "确认选择",
   askAnswered: "已选择 {answer}",
+  retOk: "结果",
+  retFailed: "结果（失败）",
   fromWeixin: "来自微信",
   welcome: "嗨！我是{name}，有什么需要我帮助的吗？",
   stopped: "已中断本次回复",

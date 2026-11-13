@@ -25,6 +25,8 @@ export interface AIMsg {
    * 可选字段：旧前端忽略未知字段，向后兼容。
    */
   toolCallId?: string;
+  /** 工具失败标记（仅 [TOOL_RET] 帧可选携带）：前端渲染失败样式的结果行 */
+  isError?: boolean;
 }
 
 export interface AITool {
@@ -250,9 +252,14 @@ export function emitToolCall(sid: string, tool: AITool, toolCallId?: string): vo
   emit(sid, "[AITOOL]", { type: "assistant", payload: tool, ...(toolCallId && { toolCallId }) });
 }
 
-/** 工具返回内容，payload 为 [{ type, content }] 数组；toolCallId 对应 [AITOOL] 帧 */
-export function emitToolRet(sid: string, payload: unknown, toolCallId?: string): void {
-  emit(sid, "[TOOL_RET]", { type: "user", payload, ...(toolCallId && { toolCallId }) });
+/** 工具返回内容，payload 为 [{ type, content }] 数组；toolCallId 对应 [AITOOL] 帧，isError 标记失败结果 */
+export function emitToolRet(sid: string, payload: unknown, toolCallId?: string, isError?: boolean): void {
+  emit(sid, "[TOOL_RET]", {
+    type: "user",
+    payload,
+    ...(toolCallId && { toolCallId }),
+    ...(isError && { isError: true }),
+  });
 }
 
 /** 请求用户审批（y/n），options 按 KV 渲染，key 为 command 时走代码块 */

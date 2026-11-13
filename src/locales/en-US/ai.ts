@@ -35,6 +35,8 @@ export default {
   },
   askSubmit: "Submit selection",
   askAnswered: "Answered: {answer}",
+  retOk: "Result",
+  retFailed: "Result (failed)",
   fromWeixin: "from WeChat",
   welcome: "Hi! I'm {name}. How can I help you?",
   stopped: "Response interrupted",

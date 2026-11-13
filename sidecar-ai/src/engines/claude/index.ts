@@ -48,13 +48,28 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
 
   const cmdExecServer = createCmdExecMcpServer(ctx);
 
+  // Claude Code 2.1.x：TodoWrite 已移除，换成默认关闭的 Task* 工具族（statsig
+  // gate）。打开 gate 让 CLI 注入 TaskCreate/TaskUpdate/TaskGet/TaskList，恢复
+  // todolist 进度；query 未传 env 选项，子进程继承本进程 env（对旧版 CLI 是
+  // 未知 env，无害）。
+  process.env.CLAUDE_CODE_ENABLE_TODO_TOOLS = "1";
+
   // 凭证（addr/ssid/token）经 cmd_exec MCP 工具的 ctx 闭包注入，绝不写入提示词
   // （appendPrompt 会进 CLI 会话历史并随 resume 落盘）；此处只约束工具使用方式
   // 与破坏性操作审批
-  const appendPrompt = `Use the mcp__cmd_exec tool to execute commands on the remote SSH session the user is connected to; its connection credentials are already configured internally and must not be requested or guessed. For operations the user should confirm first (destructive commands, or risky actions static detection cannot see such as restarting production services), set needs_approval=true on the tool call; destructive commands are additionally detected automatically and always require user confirmation before execution.`;
+  const appendPrompt = `Use the mcp__cmd_exec tool to execute commands on the remote SSH session the user is connected to; its connection credentials are already configured internally and must not be requested or guessed. For operations the user should confirm first (destructive commands, or risky actions static detection cannot see such as restarting production services), set needs_approval=true on the tool call; destructive commands are additionally detected automatically and always require user confirmation before execution. Use the todo/task tracking tools (TodoWrite, or TaskCreate/TaskUpdate on newer versions) to track progress on complex multi-step tasks so the user can follow along.`;
 
   let sessionId: string | undefined;
   let todos: TodoItem[] = [];
+  // 2.1.x 的 Task* 工具族按 id 增量维护（TodoWrite 整表更新已移除）：
+  // 调用侧追加/更新条目，工具结果侧回填 CLI 分配的 taskId
+  interface TaskEntry {
+    id?: string;
+    item: TodoItem;
+  }
+  let taskEntries: TaskEntry[] = [];
+  /** 本轮 tool_use_id → 工具名（结果侧路由用，prompt 开始时清空） */
+  let toolUseNames = new Map<string, string>();
   let currentQuery: ReturnType<typeof query> | null = null;
   let stopped = false;
   // total_cost_usd 是跨 resume 的累计值，本轮成本需差分（新会话从 0 起算）
@@ -132,7 +147,12 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
           allowedTools: [
             "Skill",
             "Write",
+            // TodoWrite 是 <2.1 CLI 的整表 todo 工具；2.1+ 用 Task* 族（见上方 gate）
             "TodoWrite",
+            "TaskCreate",
+            "TaskUpdate",
+            "TaskList",
+            "TaskGet",
             "Read",
             "WebFetch",
             "mcp__cmd_exec",
@@ -147,6 +167,10 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
             "Skill",
             "Write",
             "TodoWrite",
+            "TaskCreate",
+            "TaskUpdate",
+            "TaskList",
+            "TaskGet",
             "WebFetch",
           ],
           pathToClaudeCodeExecutable: cliPath,
@@ -238,8 +262,6 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
           message.message?.content &&
           message.tool_use_result
         ) {
-          // tool_result 块的 tool_use_id 与 assistant 消息里的 tool_use id 配对，
-          // 前端据此把调用行从"运行中"切到完成态
           const blocks = message.message.content;
           const toolUseId = Array.isArray(blocks)
             ? (
@@ -249,7 +271,64 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
                 ) as { tool_use_id?: string } | undefined
               )?.tool_use_id
             : undefined;
-          emitToolRet(ctx.ssid, blocks, toolUseId);
+          const resultToolName =
+            toolUseId != null ? toolUseNames.get(String(toolUseId)) : undefined;
+          if (resultToolName === "TaskCreate") {
+            // 回填 CLI 分配的 taskId：按 subject 匹配（并行创建时结果序可能与调用序错位）
+            const out = message.tool_use_result as {
+              task?: { id?: unknown; subject?: unknown };
+            };
+            const subject = out.task?.subject != null ? String(out.task.subject) : undefined;
+            const entry =
+              (subject != null &&
+                taskEntries.find((t) => t.id == null && t.item.content === subject)) ||
+              taskEntries.find((t) => t.id == null);
+            if (entry && out.task?.id != null) entry.id = String(out.task.id);
+          } else if (
+            resultToolName === "TodoWrite" ||
+            resultToolName === "TaskUpdate" ||
+            resultToolName === "TaskList" ||
+            resultToolName === "TaskGet"
+          ) {
+            // 任务簿记结果不进对话流：进度由调用侧 displayTodoProgress 呈现
+          } else {
+            // SDK 的 tool_result 块是嵌套形态 {type:"tool_result",content:[{type:"text",text}]}，
+            // 拍平为协议形状 [{type,content:string}]（与 pi 引擎一致），否则前端会
+            // 对内层数组走 JSON.stringify 兜底，结果行显示成原始 JSON
+            const payload = (Array.isArray(blocks) ? blocks : []).flatMap(
+              (b: {
+                type?: string;
+                text?: unknown;
+                content?: unknown;
+              }) => {
+                if (b?.type === "tool_result" && Array.isArray(b.content)) {
+                  return (b.content as Array<{ type?: string; text?: unknown }>).map(
+                    (c) => ({
+                      type: String(c?.type ?? "text"),
+                      content: typeof c?.text === "string" ? c.text : "",
+                    }),
+                  );
+                }
+                return [
+                  {
+                    type: String(b?.type ?? "text"),
+                    content:
+                      typeof b?.text === "string"
+                        ? b.text
+                        : typeof b?.content === "string"
+                          ? b.content
+                          : "",
+                  },
+                ];
+              },
+            );
+            // tool_result 的 is_error 透传（拒绝执行/命令失败等），前端渲染失败样式
+            const isError = (Array.isArray(blocks) ? blocks : []).some(
+              (b: { type?: string; is_error?: boolean }) =>
+                b?.type === "tool_result" && b.is_error === true,
+            );
+            emitToolRet(ctx.ssid, payload, toolUseId, isError);
+          }
         }
 
         // 每轮结束时 result 携带本轮 token 用量与累计成本
@@ -311,19 +390,59 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
               }
             } else if ("name" in block) {
               const input = (block.input ?? {}) as Record<string, any>;
+              const blockId = (block as { id?: string }).id;
+              if (blockId) toolUseNames.set(String(blockId), block.name);
               if (block.name === "TodoWrite") {
+                // <2.1 CLI：整表更新
                 todos = Array.isArray(input.todos) ? input.todos : [];
                 displayTodoProgress(ctx.ssid, todos);
+              } else if (block.name === "TaskCreate") {
+                // 2.1.x：TodoWrite 已移除，Task* 族按调用增量维护；taskId 由结果侧回填
+                taskEntries.push({
+                  item: {
+                    content: String(input.subject ?? ""),
+                    activeForm:
+                      input.activeForm != null ? String(input.activeForm) : undefined,
+                    status: "pending",
+                  },
+                });
+                displayTodoProgress(ctx.ssid, taskEntries.map((t) => t.item));
+              } else if (block.name === "TaskUpdate") {
+                const entry = taskEntries.find(
+                  (t) => t.id != null && t.id === String(input.taskId ?? ""),
+                );
+                if (entry) {
+                  if (input.status === "deleted") {
+                    taskEntries = taskEntries.filter((t) => t !== entry);
+                  } else {
+                    if (input.status != null) entry.item.status = input.status;
+                    if (input.subject != null) entry.item.content = String(input.subject);
+                    if (input.activeForm != null) {
+                      entry.item.activeForm = String(input.activeForm);
+                    }
+                  }
+                  displayTodoProgress(ctx.ssid, taskEntries.map((t) => t.item));
+                }
+              } else if (block.name === "TaskList" || block.name === "TaskGet") {
+                // 任务簿记查询：进度已由上方增量推送呈现，不渲染调用/结果行
               } else {
-                // tool_use 块的 id 供前端把结果行与调用行配对
+                // cmd_exec MCP 工具的入参字段是 cmd（Bash 等内置工具是 command）；
+                // 两者都没有时把完整参数透传为 description（前端渲染为 argsJson 折叠体）
+                const rawCommand = input.cmd || input.command;
+                const command =
+                  typeof rawCommand === "string" && rawCommand ? rawCommand : undefined;
                 emitToolCall(
                   ctx.ssid,
                   {
                     name: block.name,
-                    command: input.command,
-                    description: input.description,
+                    command,
+                    description: command
+                      ? undefined
+                      : input.description != null
+                        ? String(input.description)
+                        : JSON.stringify(input, null, 2),
                   },
-                  (block as { id?: string }).id,
+                  blockId,
                 );
               }
             }
@@ -345,6 +464,8 @@ export function createClaudeEngine(ctx: EngineContext): EngineAdapter {
 
   async function handle(userPrompt: string): Promise<void> {
     stopped = false;
+    // tool_use_id 每轮 query 唯一，轮首清空防跨轮累积
+    toolUseNames = new Map();
     // 轮数控制：达到上限后先静默跑一轮 /compact 把早期对话收敛为摘要，再处理真实提问
     if (maxRounds && sessionId && roundCount >= maxRounds) {
       console.log(`[CLAUDE] ${roundCount} rounds >= max ${maxRounds}, auto-compacting`);

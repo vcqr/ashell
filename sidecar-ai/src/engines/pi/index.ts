@@ -305,6 +305,7 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
             (c) => ({ type: c.type, content: c.type === "text" ? (c.text ?? "") : "" }),
           ),
           event.toolCallId,
+          event.isError,
         );
         break;
       }
@@ -316,11 +317,12 @@ export async function createPiEngine(ctx: EngineContext): Promise<EngineAdapter>
         if (toolResults) {
           for (const tr of toolResults) {
             if (tr.toolCallId && emittedToolCallIds.has(tr.toolCallId)) continue;
+            if (tr.toolName === "TodoWrite") continue;
             const payload = (tr.content || []).map((c: any) => ({
               type: c.type,
               content: c.type === "text" ? c.text : "",
             }));
-            emitToolRet(ctx.ssid, payload, tr.toolCallId);
+            emitToolRet(ctx.ssid, payload, tr.toolCallId, tr.isError);
           }
         }
         emittedToolCallIds.clear();

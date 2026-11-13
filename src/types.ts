@@ -288,6 +288,8 @@ export interface ProcessStep {
    * 调用行尚无对应结果行且轮次仍在进行时，渲染"运行中"状态。
    */
   toolCallId?: string
+  /** 仅 tool_ret 有：工具失败结果（拒绝执行/命令失败等），渲染失败样式 */
+  isError?: boolean
   time: string
 }
 
