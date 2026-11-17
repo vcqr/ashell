@@ -191,8 +191,13 @@ function snippetSegments(text: string) {
 // 模板，逐组件加高亮不现实；Highlight 用 Range 标记文本、不改 DOM，不会与
 // Vue 补丁冲突。不支持的浏览器（非 Chromium）自动跳过，nav 片段行仍可指示 ----
 const PANEL_HIGHLIGHT = "settings-search-hit";
-const contentRef = ref<HTMLElement | null>(null);
 let panelObserver: MutationObserver | null = null;
+
+/** 右栏内容根节点。不用模板 ref：NModal 会克隆 slot vnode 重渲染，
+ *  克隆链上 ref 丢失（同下方非 scoped 样式注释的坑），DOM 却真实存在 */
+function contentEl(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".settings-content");
+}
 
 interface HighlightSupport {
   highlights: Map<string, unknown>;
@@ -200,21 +205,30 @@ interface HighlightSupport {
 }
 
 function highlightSupport(): HighlightSupport | null {
-  const css = CSS as unknown as {
-    highlight?: unknown;
-    highlights?: Map<string, unknown>;
-  };
+  const highlights = (
+    CSS as unknown as { highlights?: { set?: unknown; delete?: unknown } }
+  ).highlights;
   const ctor = (window as unknown as { Highlight?: HighlightSupport["Highlight"] })
     .Highlight;
-  if (!css.highlight || !(css.highlights instanceof Map) || !ctor) return null;
-  return { highlights: css.highlights, Highlight: ctor };
+  // 注意两点：① 该 API 的调用面只有 CSS.highlights.set/delete + new Highlight()，
+  // 不存在 CSS.highlight() 方法；② CSS.highlights 是 WebIDL maplike，
+  // 不是 JS Map 实例（Chromium 上 instanceof Map 为 false）。
+  // 都按方法/构造器存在性探测
+  if (
+    typeof highlights?.set !== "function" ||
+    typeof highlights?.delete !== "function" ||
+    typeof ctor !== "function"
+  ) {
+    return null;
+  }
+  return { highlights: highlights as unknown as Map<string, unknown>, Highlight: ctor };
 }
 
 function rebuildPanelHighlight(scrollToFirst: boolean) {
   const support = highlightSupport();
   if (!support) return;
   support.highlights.delete(PANEL_HIGHLIGHT);
-  const root = contentRef.value;
+  const root = contentEl();
   const q = searchQuery.value.trim().toLowerCase();
   if (!root || !q) return;
 
@@ -262,9 +276,10 @@ watch(isSearching, (searching) => {
     return;
   }
   schedulePanelHighlight(false);
-  if (!contentRef.value) return;
+  const el = contentEl();
+  if (!el) return;
   panelObserver = new MutationObserver(() => schedulePanelHighlight(false));
-  panelObserver.observe(contentRef.value, { childList: true, subtree: true });
+  panelObserver.observe(el, { childList: true, subtree: true });
 });
 
 onBeforeUnmount(() => {
@@ -389,7 +404,7 @@ watch(
           </template>
         </nav>
 
-        <div ref="contentRef" class="settings-content">
+        <div class="settings-content">
           <div class="settings-content-inner">
             <GeneralSection v-if="activeTab === 'general'" />
             <ThemeSection
