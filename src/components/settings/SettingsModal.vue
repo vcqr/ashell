@@ -588,7 +588,9 @@ watch(
    同样必须留在非 scoped 块。文字色必须显式覆盖——命中处常是 muted 灰字，
    原字色叠蓝底对比不足（浅色主题尤其看不清） */
 ::highlight(settings-search-hit) {
-  background-color: color-mix(in srgb, var(--ashell-accent) 30%, transparent);
+  /* 45%：底色要够亮才能在深色面板上形成明显的"命中块"信号，
+     白字对混合后的中蓝仍 >5:1 过 AA */
+  background-color: color-mix(in srgb, var(--ashell-accent) 45%, transparent);
   color: var(--ashell-text-strong);
 }
 
