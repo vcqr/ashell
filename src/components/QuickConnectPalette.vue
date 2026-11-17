@@ -51,7 +51,10 @@ async function ensureLoaded() {
 watch(
   () => props.open,
   (v) => {
-    if (!v) return
+    if (!v) {
+      pressPos = null
+      return
+    }
     query.value = ""
     selectedIndex.value = 0
     void ensureLoaded()
@@ -183,9 +186,43 @@ function connect(host: HostWithGroup, forceNew: boolean) {
   close()
 }
 
-function onRowMousedown(host: HostWithGroup, e: MouseEvent) {
+// ---------------------------------------------------------------------------
+// 指针交互：按下→抬起位移小于阈值才算点击（坐标差判定）。之前 mousedown 瞬间
+// 即连接，按下后想拖动/滚动的手势必然误连；滚动时行在静止光标下移动不产生
+// mousemove，悬停高亮会与实际行脱节，scroll 里用 elementFromPoint 同步回来
+// ---------------------------------------------------------------------------
+
+const CLICK_SLOP = 6
+let pressPos: { x: number; y: number } | null = null
+
+function onRowPointerdown(e: PointerEvent) {
   if (e.button !== 0) return
+  pressPos = { x: e.clientX, y: e.clientY }
+}
+
+function onRowPointerup(host: HostWithGroup, e: PointerEvent) {
+  const start = pressPos
+  pressPos = null
+  if (!start || e.button !== 0) return
+  if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > CLICK_SLOP) return
   connect(host, false)
+}
+
+function onRowPointercancel() {
+  pressPos = null
+}
+
+function onListScroll(e: Event) {
+  const idx = rowIndexUnder(e as MouseEvent)
+  if (idx !== null) selectedIndex.value = idx
+}
+
+function rowIndexUnder(pos: { clientX: number; clientY: number }): number | null {
+  const row = document
+    .elementFromPoint(pos.clientX, pos.clientY)
+    ?.closest<HTMLElement>(".qc-row")
+  const idx = Number(row?.dataset.idx)
+  return row && Number.isFinite(idx) ? idx : null
 }
 
 function close() {
@@ -208,7 +245,7 @@ function close() {
             @keydown="onInputKeydown"
           />
         </div>
-        <div ref="listRef" class="qc-list">
+        <div ref="listRef" class="qc-list" @scroll.passive="onListScroll">
           <div v-if="loadError" class="qc-empty">
             {{ t(`hosts.message.${loadError.key}`, { error: loadError.error }) }}
           </div>
@@ -230,7 +267,9 @@ function close() {
                 :class="{ selected: row.idx === selectedIndex }"
                 :data-idx="row.idx"
                 @mousemove="selectedIndex = row.idx"
-                @mousedown.prevent="onRowMousedown(row.host, $event)"
+                @pointerdown.prevent="onRowPointerdown($event)"
+                @pointerup="onRowPointerup(row.host, $event)"
+                @pointercancel="onRowPointercancel"
               >
                 <span
                   class="qc-dot"
