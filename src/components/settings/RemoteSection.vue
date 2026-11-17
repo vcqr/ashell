@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   NAlert,
   NButton,
@@ -45,22 +45,41 @@ const testing = ref(false);
 const savingNotify = ref(false);
 
 const loggedIn = computed(() => Boolean(status.value?.logged_in));
+// 登录后尚未在微信里发消息完成配对：测试按钮置灰，等配对成功自动解锁
+const unpaired = computed(() => loggedIn.value && !status.value?.peers?.length);
+let pairPollTimer: ReturnType<typeof setInterval> | null = null;
 
 function formatTime(ms: number): string {
   if (!ms) return "-";
   return new Date(ms).toLocaleString();
 }
 
-async function loadStatus() {
-  loading.value = true;
+async function loadStatus(silent = false) {
+  if (!silent) loading.value = true;
   try {
     status.value = await getWeixinStatus();
   } catch (e) {
-    message.error(t("settings.remote.loadFailed", { error: String(e) }));
+    if (!silent) message.error(t("settings.remote.loadFailed", { error: String(e) }));
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
   }
 }
+
+// 未配对期间每 5s 静默刷新状态：用户在微信里发出首条消息后按钮自动解锁
+watch(
+  unpaired,
+  (v) => {
+    if (v && !pairPollTimer) {
+      pairPollTimer = setInterval(() => {
+        void loadStatus(true);
+      }, 5000);
+    } else if (!v && pairPollTimer) {
+      clearInterval(pairPollTimer);
+      pairPollTimer = null;
+    }
+  },
+  { immediate: true },
+);
 
 async function renderQr(url: string) {
   try {
@@ -190,6 +209,10 @@ async function handleTest() {
 onMounted(loadStatus);
 onBeforeUnmount(() => {
   stopLoginPoll();
+  if (pairPollTimer) {
+    clearInterval(pairPollTimer);
+    pairPollTimer = null;
+  }
   if (loggingIn.value) {
     void cancelWeixinLogin().catch(() => {});
   }
@@ -323,7 +346,13 @@ onBeforeUnmount(() => {
           <div class="setting-row">
             <div class="setting-row-main">
               <div class="form-actions">
-                <NButton size="small" type="primary" :loading="testing" @click="handleTest">
+                <NButton
+                  size="small"
+                  type="primary"
+                  :loading="testing"
+                  :disabled="unpaired"
+                  @click="handleTest"
+                >
                   {{ t("settings.remote.testPush") }}
                 </NButton>
                 <NButton size="small" quaternary type="error" @click="handleLogout">

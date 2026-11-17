@@ -73,6 +73,6 @@ pub async fn test_push(State(_s): State<AppState>) -> AppResult<Json<ApiResponse
     let text = "【ashell】微信远程测试\n\n连接成功：AI 审批与提问将推送到这里";
     weixin::send_text(None, text)
         .await
-        .map_err(crate::errors::AppError::Internal)?;
+        .map_err(crate::errors::AppError::User)?;
     Ok(ok_msg("sent"))
 }

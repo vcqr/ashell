@@ -86,6 +86,10 @@ pub enum AppError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// 用户可自行操作解决的业务错误：提示语直达前端，不加英文前缀
+    #[error("{0}")]
+    User(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -95,6 +99,7 @@ impl AppError {
         match self {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::User(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::AuthFailed { .. } => StatusCode::UNAUTHORIZED,
             AppError::KeyPassphraseRequired { .. } => StatusCode::UNAUTHORIZED,

@@ -34,6 +34,8 @@ const BOT_AGENT: &str = "ashell-weixin";
 const BOT_TYPE: &str = "3";
 /// 服务端判定 token 失效的错误码，按官方插件策略冷却 1 小时
 const STALE_TOKEN_ERRCODE: i64 = -14;
+/// 服务端判定消息缺少有效会话上下文的错误码（未配对或配对已过期）
+const NO_CONTEXT_ERRCODE: i64 = -2;
 const STALE_PAUSE_MS: u64 = 60 * 60 * 1000;
 /// 登录轮询/长轮询客户端超时
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(35);
@@ -1156,6 +1158,11 @@ pub async fn send_text(to: Option<&str>, text: &str) -> Result<usize, String> {
         .ok_or("没有可用的推送目标：请先在微信里给机器人发一条消息完成配对")?;
 
     let context_token = cfg.peers.get(&target).map(|p| p.context_token.clone());
+    // 未配对（从未在微信里给机器人发过消息）时服务端必然报 -2 prepare failed，
+    // 提前拦截并给出可操作指引，不发起注定失败的请求
+    if context_token.is_none() {
+        return Err("尚未完成配对：请先在手机微信里给机器人发送任意一条消息，然后重试".into());
+    }
     let client = api_client()?;
     let url = format!(
         "{}/ilink/bot/sendmessage",
@@ -1200,6 +1207,12 @@ pub async fn send_text(to: Option<&str>, text: &str) -> Result<usize, String> {
                 }
                 return Err(
                     "微信 token 已失效（errcode -14）：请到 设置 → 远程 重新扫码登录".into(),
+                );
+            }
+            if code == NO_CONTEXT_ERRCODE {
+                return Err(
+                    "会话上下文无效（errcode -2）：配对可能已过期，请在手机微信里给机器人发一条消息后重试"
+                        .into(),
                 );
             }
             return Err(format!("sendMessage errcode={code} errmsg={msg}"));

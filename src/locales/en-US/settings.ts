@@ -581,10 +581,10 @@ export default {
     pausedHint:
       "The credentials were rejected by WeChat; cooling down for about {minutes} minutes. Scan again to recover immediately (push and polling are suspended).",
     pairHint:
-      "Tip: send the bot a message from WeChat to complete pairing for better deliverability.",
+      "After signing in, send the bot a message from WeChat to complete pairing — test messages and pushes only work once paired.",
     notifyEnabled: "Push AI approvals / questions to WeChat",
     notifyHint:
-      "When enabled, AI approval and question events are pushed to WeChat as plain text (independent of the group-robot settings in the Notifications section).",
+      "When enabled, AI approval and question events are pushed to WeChat as plain text (independent of the group-robot settings in the Notifications section; pairing is required first).",
     saveSuccess: "Remote settings saved",
     saveFailed: "Save failed: {error}",
     testPush: "Send Test Message",
