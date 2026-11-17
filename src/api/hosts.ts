@@ -55,6 +55,27 @@ export function batchDeleteHosts(ids: number[]): Promise<BatchDeleteResult> {
   })
 }
 
+/** 批量恢复被跳过的成员（前端据此组 i18n 文案） */
+export interface BatchRestoreSkipped {
+  id: number
+  name: string
+  /** "orphan" = 所属目录已删除；"jump_target_missing" = 跳板机目标仍处于删除态 */
+  reason: string
+}
+
+export interface BatchRestoreResult {
+  restored: number
+  skipped: BatchRestoreSkipped[]
+}
+
+/** 批量恢复软删主机（删除撤销窗口）；凭证随行原样保留 */
+export function batchRestoreHosts(ids: number[]): Promise<BatchRestoreResult> {
+  return request<BatchRestoreResult>('/api/hosts/batch-restore', {
+    method: 'POST',
+    json: { ids },
+  })
+}
+
 export function batchMoveHosts(ids: number[], gid: number): Promise<{ moved: number }> {
   return request<{ moved: number }>('/api/hosts/batch-move', {
     method: 'POST',

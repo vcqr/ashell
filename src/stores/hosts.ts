@@ -10,10 +10,12 @@ import {
   createHost,
   batchDeleteHosts,
   batchMoveHosts,
+  batchRestoreHosts,
   deleteHost,
   listHostsWithGroup,
   updateHost,
   type BatchDeleteResult,
+  type BatchRestoreResult,
 } from '@/api/hosts'
 import type {
   Group,
@@ -256,6 +258,13 @@ export const useHostStore = defineStore('hosts', () => {
     return r
   }
 
+  /** 批量恢复软删主机（删除撤销窗口）；返回恢复数与被跳过成员（孤儿/跳板缺失） */
+  async function restoreHosts(ids: number[]): Promise<BatchRestoreResult> {
+    const r = await batchRestoreHosts(ids)
+    await refresh()
+    return r
+  }
+
   /** 批量移动到目标目录（gid=0 为根），返回实际移动台数 */
   async function moveHosts(ids: number[], gid: number): Promise<number> {
     const r = await batchMoveHosts(ids, gid)
@@ -279,6 +288,7 @@ export const useHostStore = defineStore('hosts', () => {
     editHost,
     removeHost,
     removeHosts,
+    restoreHosts,
     moveHosts,
     isHostPinned,
     togglePinHost,

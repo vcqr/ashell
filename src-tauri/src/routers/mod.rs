@@ -85,6 +85,11 @@ pub fn build_router(state: AppState) -> Router {
             "/api/hosts/batch-delete",
             post(handlers::host::batch_delete),
         )
+        // 批量恢复软删主机（删除撤销窗口）
+        .route(
+            "/api/hosts/batch-restore",
+            post(handlers::host::batch_restore),
+        )
         .route("/api/hosts/batch-move", post(handlers::host::batch_move))
         // 查看主机加密凭证（需操作密码验证）
         .route("/api/hosts/{id}/reveal", post(handlers::host::reveal))

@@ -515,3 +515,260 @@ pub async fn move_many(pool: &DbPool, ids: &[i64], gid: i64) -> AppResult<u64> {
     let res = qb.build().execute(pool).await?;
     Ok(res.rows_affected())
 }
+
+/// 恢复被跳过的成员及原因（前端据此组 i18n 文案）：
+/// - "orphan"：所属目录已删除，恢复无处挂载
+/// - "jump_target_missing"：跳板机目标仍处于删除态（与删除时的引用校验对称，
+///   避免恢复出连不上的主机）
+#[derive(Debug, serde::Serialize)]
+pub struct RestoreSkipped {
+    pub id: i64,
+    pub name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BatchRestoreResult {
+    pub restored: u64,
+    pub skipped: Vec<RestoreSkipped>,
+}
+
+/// 批量恢复软删主机（删除撤销窗口用）。软删只翻转 is_del、凭证列原样未动，
+/// 恢复即原样带回（密钥同一安装内稳定，密文始终可解）。
+/// 跳过两类：①孤儿——所属目录（gid≠0）已删除；②跳板机目标仍为删除态。
+/// 不在软删集合里的 id（不存在/本来就没删）静默忽略。
+pub async fn restore_many(pool: &DbPool, ids: &[i64]) -> AppResult<BatchRestoreResult> {
+    // 去重保序：同一 id 传两遍只恢复一次
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<i64> = ids
+        .iter()
+        .copied()
+        .filter(|id| seen.insert(*id))
+        .collect();
+    if unique.is_empty() {
+        return Ok(BatchRestoreResult {
+            restored: 0,
+            skipped: Vec::new(),
+        });
+    }
+
+    // 候选：仅软删态主机（现有读函数全过滤 is_del=0，这里必须自写查询）
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT id, name, gid, jump_host_id FROM hosts WHERE is_del = 1 AND id IN (",
+    );
+    let mut sep = qb.separated(", ");
+    for id in &unique {
+        sep.push_bind(id);
+    }
+    qb.push(")");
+    let rows = qb.build().fetch_all(pool).await?;
+    use sqlx::Row;
+
+    let mut skipped = Vec::new();
+    let mut restore_ids = Vec::new();
+    for row in rows {
+        let id: i64 = row.try_get("id")?;
+        let name: String = row.try_get("name")?;
+        let gid: i64 = row.try_get("gid")?;
+        let jump_host_id: Option<i64> = row.try_get("jump_host_id")?;
+
+        // ①孤儿：父目录已删（gid=0 是根目录，合法且必存在）
+        if gid != 0 {
+            let alive: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM groups WHERE id = ? AND is_del = 0",
+            )
+            .bind(gid)
+            .fetch_one(pool)
+            .await?;
+            if alive == 0 {
+                skipped.push(RestoreSkipped {
+                    id,
+                    name,
+                    reason: "orphan".to_string(),
+                });
+                continue;
+            }
+        }
+
+        // ②跳板机目标仍处于删除态
+        if let Some(jid) = jump_host_id {
+            let alive: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM hosts WHERE id = ? AND is_del = 0",
+            )
+            .bind(jid)
+            .fetch_one(pool)
+            .await?;
+            if alive == 0 {
+                skipped.push(RestoreSkipped {
+                    id,
+                    name,
+                    reason: "jump_target_missing".to_string(),
+                });
+                continue;
+            }
+        }
+
+        restore_ids.push(id);
+    }
+
+    let mut restored = 0u64;
+    if !restore_ids.is_empty() {
+        let mut qb = sqlx::QueryBuilder::new(
+            "UPDATE hosts SET is_del = 0, updated_at = datetime('now') WHERE is_del = 1 AND id IN (",
+        );
+        let mut sep = qb.separated(", ");
+        for id in &restore_ids {
+            sep.push_bind(id);
+        }
+        qb.push(")");
+        restored = qb.build().execute(pool).await?.rows_affected();
+    }
+
+    Ok(BatchRestoreResult {
+        restored,
+        skipped,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Row;
+
+    async fn test_pool() -> (tempfile::TempDir, std::path::PathBuf, DbPool) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = crate::models::db::init_pool(&db_path).await.unwrap();
+        (dir, db_path, pool)
+    }
+
+    /// 最小化插入：仅必填列，其余走表默认值
+    async fn insert_host(pool: &DbPool, gid: i64, name: &str, jump: Option<i64>) -> i64 {
+        let res = sqlx::query(
+            "INSERT INTO hosts (gid, name, addr, port, username, jump_host_id) \
+             VALUES (?, ?, '10.0.0.1', '22', 'root', ?)",
+        )
+        .bind(gid)
+        .bind(name)
+        .bind(jump)
+        .execute(pool)
+        .await
+        .unwrap();
+        res.last_insert_rowid()
+    }
+
+    async fn insert_group(pool: &DbPool, name: &str) -> i64 {
+        let res = sqlx::query("INSERT INTO groups (name) VALUES (?)")
+            .bind(name)
+            .execute(pool)
+            .await
+            .unwrap();
+        res.last_insert_rowid()
+    }
+
+    async fn host_is_del(pool: &DbPool, id: i64) -> bool {
+        let v: i64 = sqlx::query_scalar("SELECT is_del FROM hosts WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        v == 1
+    }
+
+    #[tokio::test]
+    async fn restore_flips_is_del_and_keeps_credentials() {
+        let (_dir, _path, pool) = test_pool().await;
+        let gid = insert_group(&pool, "prod").await;
+        let id = insert_host(&pool, gid, "web-1", None).await;
+        sqlx::query("UPDATE hosts SET password = 'ciphertext' WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        service_delete(&pool, id).await;
+        assert!(host_is_del(&pool, id).await);
+
+        let r = restore_many(&pool, &[id]).await.unwrap();
+        assert_eq!(r.restored, 1);
+        assert!(r.skipped.is_empty());
+        assert!(!host_is_del(&pool, id).await);
+        // 凭证列原样保留
+        let pwd: Option<String> =
+            sqlx::query_scalar("SELECT password FROM hosts WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(pwd.as_deref(), Some("ciphertext"));
+    }
+
+    #[tokio::test]
+    async fn orphan_host_is_skipped() {
+        let (_dir, _path, pool) = test_pool().await;
+        let gid = insert_group(&pool, "gone").await;
+        let id = insert_host(&pool, gid, "orphan-1", None).await;
+        service_delete(&pool, id).await;
+        // 父目录随后也被删
+        sqlx::query("UPDATE groups SET is_del = 1 WHERE id = ?")
+            .bind(gid)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let r = restore_many(&pool, &[id]).await.unwrap();
+        assert_eq!(r.restored, 0);
+        assert_eq!(r.skipped.len(), 1);
+        assert_eq!(r.skipped[0].reason, "orphan");
+        assert!(host_is_del(&pool, id).await);
+    }
+
+    #[tokio::test]
+    async fn root_host_without_group_restores() {
+        let (_dir, _path, pool) = test_pool().await;
+        let id = insert_host(&pool, 0, "root-host", None).await;
+        service_delete(&pool, id).await;
+        let r = restore_many(&pool, &[id]).await.unwrap();
+        assert_eq!(r.restored, 1);
+        assert!(!host_is_del(&pool, id).await);
+    }
+
+    #[tokio::test]
+    async fn jump_target_still_deleted_is_skipped() {
+        let (_dir, _path, pool) = test_pool().await;
+        let target = insert_host(&pool, 0, "jump-a", None).await;
+        let user = insert_host(&pool, 0, "via-a", Some(target)).await;
+        // 先删 A（引用方 C 在场会拦，先删引用方再删目标）
+        service_delete(&pool, user).await;
+        service_delete(&pool, target).await;
+
+        // 只恢复引用方：跳板目标仍为删除态 → 跳过
+        let r = restore_many(&pool, &[user]).await.unwrap();
+        assert_eq!(r.restored, 0);
+        assert_eq!(r.skipped.len(), 1);
+        assert_eq!(r.skipped[0].reason, "jump_target_missing");
+
+        // 两者一起恢复：引用方跳过、目标正常恢复
+        let r = restore_many(&pool, &[user, target]).await.unwrap();
+        assert_eq!(r.restored, 1);
+        assert_eq!(r.skipped.len(), 1);
+        assert_eq!(r.skipped[0].id, user);
+        assert!(!host_is_del(&pool, target).await);
+    }
+
+    #[tokio::test]
+    async fn unknown_and_duplicate_ids_are_ignored() {
+        let (_dir, _path, pool) = test_pool().await;
+        let id = insert_host(&pool, 0, "dup-1", None).await;
+        service_delete(&pool, id).await;
+
+        let r = restore_many(&pool, &[9999, id, id]).await.unwrap();
+        assert_eq!(r.restored, 1);
+        assert!(r.skipped.is_empty());
+    }
+
+    /// 包装一层避免与模块内 delete 同名混淆（service::host::delete）
+    async fn service_delete(pool: &DbPool, id: i64) {
+        super::delete(pool, id).await.unwrap();
+    }
+}

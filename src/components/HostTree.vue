@@ -54,6 +54,7 @@ import { useI18n } from "vue-i18n"
 import { useHostStore } from "@/stores/hosts"
 import { useIconStore } from "@/stores/icons"
 import { useHostsPin } from "@/composables/useHostsPin"
+import { useHostDeleteUndo } from "@/composables/useHostDeleteUndo"
 import { HOST_SESSION_STATUS_KEY, type HostSessionStatus } from "@/composables/useTabs"
 import { copyText } from "@/utils/clipboard"
 import { compareAddr } from "@/stores/hosts"
@@ -74,6 +75,8 @@ const store = useHostStore()
 const iconStore = useIconStore()
 const message = useMessage()
 const dialog = useDialog()
+// 删除撤销窗口：单删/批删后 6 秒内可一键恢复（软删，凭证保留）
+const { notifyDeleted } = useHostDeleteUndo()
 
 /** 主机会话状态(App 层 provide):树形图标与卡片状态点共用 */
 const hostSessionStatus = inject(HOST_SESSION_STATUS_KEY, null)
@@ -1068,9 +1071,15 @@ function confirmDelete(node: HostNode) {
     negativeText: t("common.cancel"),
     onPositiveClick: async () => {
       try {
-        if (node.type === "folder") await store.removeGroup(node.id)
-        else await store.removeHost(node.id)
-        message.success(t("hosts.message.deleted"))
+        if (node.type === "folder") {
+          // 目录删除为级联软删且本期不可撤销（组恢复涉 path 冲突处理），维持轻提示
+          await store.removeGroup(node.id)
+          message.success(t("hosts.message.deleted"))
+        } else {
+          await store.removeHost(node.id)
+          // 单删撤销窗口：替代原"已删除"轻提示
+          notifyDeleted([node.id], node.label)
+        }
       } catch (e) {
         message.error(t("hosts.message.deleteFailed", { error: String(e) }))
       }
@@ -1190,9 +1199,10 @@ function confirmBatchDelete() {
     onPositiveClick: async () => {
       try {
         const r = await store.removeHosts(ids)
-        if (r.skipped.length === 0) {
-          message.success(t("hosts.message.batchDeleted", { count: r.deleted }))
-        } else {
+        // 被跳过的成员（跳板机引用冲突）未删除，不在撤销窗口内
+        const skippedIds = new Set(r.skipped.map((s) => s.id))
+        const deletedIds = ids.filter((id) => !skippedIds.has(id))
+        if (r.skipped.length > 0) {
           const names = r.skipped.map((s) => `${s.name} ← ${s.referrer}`).join(", ")
           message.warning(
             t("hosts.message.batchDeletePartial", {
@@ -1200,6 +1210,10 @@ function confirmBatchDelete() {
               skipped: names,
             }),
           )
+        }
+        const firstDeletedId = deletedIds[0]
+        if (firstDeletedId !== undefined) {
+          notifyDeleted(deletedIds, store.findHost(firstDeletedId)?.name ?? "")
         }
         clearChecked()
       } catch (e) {

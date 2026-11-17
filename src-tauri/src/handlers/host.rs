@@ -86,6 +86,19 @@ pub async fn batch_delete(
     })))
 }
 
+/// `POST /api/hosts/batch-restore`：批量恢复软删主机（删除撤销窗口）。
+/// 父目录已删（孤儿）或跳板机目标仍为删除态的成员跳过并在 skipped 中报告。
+pub async fn batch_restore(
+    State(s): State<AppState>,
+    Json(req): Json<BatchIdsRequest>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let r = service::host::restore_many(&s.db, &req.ids).await?;
+    Ok(ApiResponse::ok(serde_json::json!({
+        "restored": r.restored,
+        "skipped": r.skipped,
+    })))
+}
+
 /// `POST /api/hosts/batch-move`：批量移动到目标目录（gid=0 为根）。
 pub async fn batch_move(
     State(s): State<AppState>,
