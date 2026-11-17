@@ -327,6 +327,9 @@ onBeforeUnmount(() => {
           <NAlert v-else-if="!status?.peers?.length" type="info" :show-icon="false" class="hint-block">
             {{ t("settings.remote.pairHint") }}
           </NAlert>
+          <NAlert v-else-if="!status?.notify_enabled" type="info" :show-icon="false" class="hint-block">
+            {{ t("settings.remote.pushOffHint") }}
+          </NAlert>
         </div>
 
         <div class="settings-block">

@@ -582,6 +582,8 @@ export default {
       "The credentials were rejected by WeChat; cooling down for about {minutes} minutes. Scan again to recover immediately (push and polling are suspended).",
     pairHint:
       "After signing in, send the bot a message from WeChat to complete pairing — test messages and pushes only work once paired.",
+    pushOffHint:
+      "Push is disabled: AI approval / question events will not be sent to WeChat. Enable the toggle below to turn it on.",
     notifyEnabled: "Push AI approvals / questions to WeChat",
     notifyHint:
       "When enabled, AI approval and question events are pushed to WeChat as plain text (independent of the group-robot settings in the Notifications section; pairing is required first).",
