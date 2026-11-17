@@ -17,7 +17,7 @@ import {
   RiTerminalBoxLine,
   RiWindowLine,
 } from "@remixicon/vue";
-import { computed, ref, watch, type Component } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch, type Component } from "vue";
 import {
   NModal,
   NCard,
@@ -187,6 +187,92 @@ function snippetSegments(text: string) {
   return splitHighlightSegments(text, searchQuery.value);
 }
 
+// ---- 面板内命中高亮：CSS Custom Highlight API。分区是 v-if 单挂载 + 手写
+// 模板，逐组件加高亮不现实；Highlight 用 Range 标记文本、不改 DOM，不会与
+// Vue 补丁冲突。不支持的浏览器（非 Chromium）自动跳过，nav 片段行仍可指示 ----
+const PANEL_HIGHLIGHT = "settings-search-hit";
+const contentRef = ref<HTMLElement | null>(null);
+let panelObserver: MutationObserver | null = null;
+
+interface HighlightSupport {
+  highlights: Map<string, unknown>;
+  Highlight: new (...ranges: Range[]) => unknown;
+}
+
+function highlightSupport(): HighlightSupport | null {
+  const css = CSS as unknown as {
+    highlight?: unknown;
+    highlights?: Map<string, unknown>;
+  };
+  const ctor = (window as unknown as { Highlight?: HighlightSupport["Highlight"] })
+    .Highlight;
+  if (!css.highlight || !(css.highlights instanceof Map) || !ctor) return null;
+  return { highlights: css.highlights, Highlight: ctor };
+}
+
+function rebuildPanelHighlight(scrollToFirst: boolean) {
+  const support = highlightSupport();
+  if (!support) return;
+  support.highlights.delete(PANEL_HIGHLIGHT);
+  const root = contentRef.value;
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!root || !q) return;
+
+  const ranges: Range[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.nodeValue ?? "";
+    if (!text.trim()) continue;
+    const lower = text.toLowerCase();
+    let idx = lower.indexOf(q);
+    while (idx !== -1) {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + q.length);
+      ranges.push(range);
+      idx = lower.indexOf(q, idx + q.length);
+    }
+  }
+  if (ranges.length === 0) return;
+  support.highlights.set(PANEL_HIGHLIGHT, new support.Highlight(...ranges));
+  const firstRange = ranges[0];
+  if (scrollToFirst && firstRange) {
+    firstRange.startContainer.parentElement?.scrollIntoView({ block: "center" });
+  }
+}
+
+function schedulePanelHighlight(scrollToFirst: boolean) {
+  void nextTick(() => rebuildPanelHighlight(scrollToFirst));
+}
+
+watch(searchQuery, () => schedulePanelHighlight(false));
+
+// 切分区后右栏重挂载，nextTick 后重建并跳到第一处命中
+watch(activeTab, () => {
+  if (isSearching.value) schedulePanelHighlight(true);
+});
+
+// 搜索期间分区自身状态变化（条件行出现/消失）会重渲染文本节点，
+// MutationObserver 兜底重建；Highlight 不改 DOM，回调不会自我触发
+watch(isSearching, (searching) => {
+  if (!searching) {
+    panelObserver?.disconnect();
+    panelObserver = null;
+    highlightSupport()?.highlights.delete(PANEL_HIGHLIGHT);
+    return;
+  }
+  schedulePanelHighlight(false);
+  if (!contentRef.value) return;
+  panelObserver = new MutationObserver(() => schedulePanelHighlight(false));
+  panelObserver.observe(contentRef.value, { childList: true, subtree: true });
+});
+
+onBeforeUnmount(() => {
+  panelObserver?.disconnect();
+  panelObserver = null;
+  highlightSupport()?.highlights.delete(PANEL_HIGHLIGHT);
+});
+
 // 关闭弹窗时清空搜索，下次打开回到常规分组视图
 watch(
   () => props.open,
@@ -303,7 +389,7 @@ watch(
           </template>
         </nav>
 
-        <div class="settings-content">
+        <div ref="contentRef" class="settings-content">
           <div class="settings-content-inner">
             <GeneralSection v-if="activeTab === 'general'" />
             <ThemeSection
@@ -480,5 +566,12 @@ watch(
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* 设置面板命中高亮：CSS Custom Highlight API 的命名高亮是文档级的，
+   与 Range 配套使用（见 script 内 rebuildPanelHighlight），不改 DOM。
+   同样必须留在非 scoped 块 */
+::highlight(settings-search-hit) {
+  background: color-mix(in srgb, var(--ashell-accent) 30%, transparent);
 }
 </style>
