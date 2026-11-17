@@ -50,20 +50,21 @@ export function useSettingsSearch() {
 
   const isSearching = computed(() => searchQuery.value.trim().length > 0);
 
-  /** tab → 全量检索文本（小写）。结构变化/语言切换时随 computed 重算 */
-  const keywordIndex = computed<Record<string, string>>(() => {
+  /** tab → 全量检索文本列表（小写，nav 标签在前）。语言切换时随 computed 重算 */
+  const keywordIndex = computed<Record<string, string[]>>(() => {
     const messages = i18n.global.getLocaleMessage(locale.value) as Record<
       string,
       unknown
     >;
     const settings = (messages?.settings ?? {}) as Record<string, unknown>;
-    const index: Record<string, string> = {};
+    const index: Record<string, string[]> = {};
     for (const [tab, namespaces] of Object.entries(TAB_NAMESPACES)) {
       const parts: string[] = [t(`settings.tabs.${tab}`)];
       for (const ns of namespaces) {
         flattenValues(settings[ns], parts);
       }
-      index[tab] = parts.join("\n").toLowerCase();
+      // 保序去重（ai-providers 与 ai 共享命名空间会重复收录）
+      index[tab] = [...new Set(parts)].map((s) => s.toLowerCase());
     }
     return index;
   });
@@ -76,12 +77,32 @@ export function useSettingsSearch() {
     const q = searchQuery.value.trim().toLowerCase();
     if (!q) return null;
     const index = keywordIndex.value;
-    return availableTabs.filter((tab) => (index[tab] ?? "").includes(q));
+    return availableTabs.filter((tab) =>
+      (index[tab] ?? []).some((text) => text.includes(q)),
+    );
   }
+
+  /** 分区 → 命中的具体文案列表（供 nav 命中项下方展示"匹配到哪里"） */
+  const matchedSnippetsByTab = computed<Record<string, string[]>>(() => {
+    const q = searchQuery.value.trim().toLowerCase();
+    if (!q) return {};
+    const out: Record<string, string[]> = {};
+    for (const [tab, texts] of Object.entries(keywordIndex.value)) {
+      const hits = texts.filter((text) => text.includes(q));
+      if (hits.length > 0) out[tab] = hits;
+    }
+    return out;
+  });
 
   function clear() {
     searchQuery.value = "";
   }
 
-  return { searchQuery, isSearching, filterMatchedTabs, clear };
+  return {
+    searchQuery,
+    isSearching,
+    filterMatchedTabs,
+    matchedSnippetsByTab,
+    clear,
+  };
 }

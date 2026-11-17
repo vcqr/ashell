@@ -142,9 +142,17 @@ function close() {
 }
 
 // ---- 设置内搜索：对 i18n 文案建分区级索引（含行 label/desc），命中即列出
-// 分区扁平列表，点击跳转；清空恢复分组视图（分区组件零侵入） ----
-const { searchQuery, isSearching, filterMatchedTabs, clear: clearSearch } =
-  useSettingsSearch();
+// 分区扁平列表并展示命中的具体文案片段，点击跳转；清空恢复分组视图 ----
+const {
+  searchQuery,
+  isSearching,
+  filterMatchedTabs,
+  matchedSnippetsByTab,
+  clear: clearSearch,
+} = useSettingsSearch();
+
+/** 每个命中分区最多展示的匹配文案条数，超出折叠为 +N */
+const SNIPPET_LIMIT = 3;
 
 /** tab → 图标映射：搜索态扁平列表按 key 取图标（与 navGroups 单一来源） */
 const tabIcons = computed<Record<string, Component>>(() => {
@@ -162,6 +170,21 @@ const searchMatchedTabs = computed<SettingsTab[]>(() =>
 
 function navLabelSegments(key: string) {
   return splitHighlightSegments(t(`settings.tabs.${key}`), searchQuery.value);
+}
+
+/** 该分区命中的具体文案（截取前 SNIPPET_LIMIT 条） */
+function snippetsFor(key: string): string[] {
+  return (matchedSnippetsByTab.value[key] ?? []).slice(0, SNIPPET_LIMIT);
+}
+
+/** 未展示的剩余匹配条数 */
+function extraSnippets(key: string): number {
+  const total = matchedSnippetsByTab.value[key]?.length ?? 0;
+  return Math.max(0, total - SNIPPET_LIMIT);
+}
+
+function snippetSegments(text: string) {
+  return splitHighlightSegments(text, searchQuery.value);
 }
 
 // 关闭弹窗时清空搜索，下次打开回到常规分组视图
@@ -227,12 +250,34 @@ watch(
               <NIcon :size="16" class="settings-tab-icon">
                 <component :is="tabIcons[key] ?? RiEqualizerLine" />
               </NIcon>
-              <span class="settings-tab-label">
+              <span class="settings-tab-main">
+                <span class="settings-tab-label">
+                  <span
+                    v-for="(seg, si) in navLabelSegments(key)"
+                    :key="si"
+                    :class="{ hit: seg.hit }"
+                  >{{ seg.text }}</span>
+                </span>
+                <!-- 命中的具体文案片段：告诉用户"匹配到了这一分区里的什么" -->
                 <span
-                  v-for="(seg, si) in navLabelSegments(key)"
-                  :key="si"
-                  :class="{ hit: seg.hit }"
-                >{{ seg.text }}</span>
+                  v-if="snippetsFor(key).length"
+                  class="settings-tab-snippets"
+                >
+                  <template v-for="(sn, i) in snippetsFor(key)" :key="i">
+                    <span v-if="i > 0" class="settings-tab-snippet-sep">·</span>
+                    <span class="settings-tab-snippet">
+                      <span
+                        v-for="(seg, j) in snippetSegments(sn)"
+                        :key="j"
+                        :class="{ hit: seg.hit }"
+                      >{{ seg.text }}</span>
+                    </span>
+                  </template>
+                  <span
+                    v-if="extraSnippets(key) > 0"
+                    class="settings-tab-snippet-more"
+                  >+{{ extraSnippets(key) }}</span>
+                </span>
               </span>
             </button>
           </template>
@@ -355,6 +400,33 @@ watch(
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 命中分区条目：主行（图标+标签）+ 片段行（命中的行文案） */
+.settings-tab-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-tab-snippets {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ashell-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-tab-snippet-sep {
+  margin: 0 4px;
+  color: var(--ashell-text-subtle);
+}
+
+.settings-tab-snippet-more {
+  margin-left: 4px;
+  color: var(--ashell-text-subtle);
 }
 
 .settings-tab .hit {
