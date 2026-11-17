@@ -434,7 +434,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 15;
+    const LATEST_VERSION: i64 = 16;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")
