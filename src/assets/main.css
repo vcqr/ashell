@@ -50,8 +50,10 @@ body.window-rounded::after {
   --ashell-border-soft: rgba(255, 255, 255, 0.06);
   --ashell-text: rgba(255, 255, 255, 0.92);
   --ashell-text-strong: #fff;
-  --ashell-text-muted: rgba(255, 255, 255, 0.55);
-  --ashell-text-subtle: rgba(255, 255, 255, 0.4);
+  /* 灰字档按 WCAG AA 提档（对最差的 panel-soft 背景）：muted 0.6→6.6:1，
+     subtle 0.5→5.0:1，低档灰字不再发虚 */
+  --ashell-text-muted: rgba(255, 255, 255, 0.6);
+  --ashell-text-subtle: rgba(255, 255, 255, 0.5);
   --ashell-hover: rgba(255, 255, 255, 0.06);
   --ashell-active: rgba(255, 255, 255, 0.08);
   --ashell-shadow: rgba(0, 0, 0, 0.35);
@@ -64,6 +66,13 @@ body.window-rounded::after {
   --ashell-bg-elevated: #222329;
   --ashell-accent: #80b5ff;
   --ashell-accent-soft: rgba(128, 181, 255, 0.18);
+  /* 语义色四档（成功/警告/危险/信息），两主题取值各自按 WCAG AA 文字档
+     （对最差面板背景 ≥4.5:1）核验；info 与 accent 同源，不另起一套蓝。
+     注意 naive-ui 语义色保持官方默认（其白字实心按钮依赖自家色阶），两套并存 */
+  --ashell-success: #4ade80;
+  --ashell-warning: #f59e0b;
+  --ashell-danger: #ef4444;
+  --ashell-info: var(--ashell-accent);
   --ashell-text-secondary: var(--ashell-text-muted);
   color-scheme: dark;
 }
@@ -77,8 +86,9 @@ body.window-rounded::after {
   --ashell-border-soft: rgba(20, 24, 33, 0.08);
   --ashell-text: rgba(20, 24, 33, 0.86);
   --ashell-text-strong: #141821;
-  --ashell-text-muted: rgba(20, 24, 33, 0.6);
-  --ashell-text-subtle: rgba(20, 24, 33, 0.45);
+  /* 同暗色 AA 提档：muted 0.7→6.6:1、subtle 0.6→4.5:1（对最差的白卡背景） */
+  --ashell-text-muted: rgba(20, 24, 33, 0.7);
+  --ashell-text-subtle: rgba(20, 24, 33, 0.6);
   --ashell-hover: rgba(20, 24, 33, 0.08);
   --ashell-active: rgba(95, 79, 217, 0.1);
   --ashell-shadow: rgba(20, 24, 33, 0.14);
@@ -91,6 +101,11 @@ body.window-rounded::after {
   --ashell-bg-elevated: #ffffff;
   --ashell-accent: #3b82f6;
   --ashell-accent-soft: rgba(59, 130, 246, 0.12);
+  /* 同暗色的语义色四档；亮底下半透明亮色值全部换深档（参照 --ashell-prompt 先例） */
+  --ashell-success: #15803d;
+  --ashell-warning: #b45309;
+  --ashell-danger: #dc2626;
+  --ashell-info: var(--ashell-accent);
   --ashell-text-secondary: var(--ashell-text-muted);
   color-scheme: light;
 }

@@ -71,6 +71,9 @@ export function useTheme() {
       cardColor: `rgba(24, 24, 29, ${terminalStore.windowOpacity})`,
       modalColor: `rgba(24, 24, 29, ${terminalStore.windowOpacity})`,
       popoverColor: `rgba(33, 33, 40, ${terminalStore.windowOpacity})`,
+      // 暗色 textColor3（alpha .52，5.7:1）本身达 AA 不覆写；placeholder 档
+      // （alpha .38，3.6:1）偏虚，提到应用 subtle 档
+      placeholderColor: "rgba(255, 255, 255, 0.5)",
     },
     Layout: {
       color: `rgba(19, 19, 22, ${terminalStore.windowOpacity})`,
@@ -95,6 +98,10 @@ export function useTheme() {
       cardColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
       modalColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
       popoverColor: `rgba(255, 255, 255, ${terminalStore.windowOpacity})`,
+      // 亮色 textColor3 默认实色 #767C82 只有 4.22:1、placeholder 更虚，
+      // 都提到 ink 62%（~4.9:1）过 AA
+      textColor3: "rgba(20, 24, 33, 0.62)",
+      placeholderColor: "rgba(20, 24, 33, 0.62)",
     },
     Layout: {
       color: `rgba(245, 245, 248, ${terminalStore.windowOpacity})`,

@@ -373,15 +373,15 @@ function tabIcon(kind: string) {
   flex-shrink: 0;
 }
 .bp-status-dot.status-connected {
-  background: #4ade80;
+  background: var(--ashell-success);
 }
 .bp-status-dot.status-connecting {
-  background: #f59e0b;
+  background: var(--ashell-warning);
   animation: bp-status-pulse 1.4s ease-in-out infinite;
 }
 .bp-status-dot.status-error {
-  background: #ef4444;
-  box-shadow: 0 0 5px rgba(239, 68, 68, 0.45);
+  background: var(--ashell-danger);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--ashell-danger) 45%, transparent);
 }
 .bp-status-dot.status-closed {
   background: var(--ashell-text-subtle, rgba(255, 255, 255, 0.3));

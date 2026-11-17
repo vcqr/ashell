@@ -130,7 +130,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--ashell-bg, #14150f);
+  /* 全屏遮罩用实色背景；旧橄榄色 fallback 已清理，统一走主题 token */
+  background: var(--ashell-bg-solid);
 }
 
 .login-checking {
@@ -138,14 +139,14 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  color: var(--ashell-text-muted, #8a8b7a);
+  color: var(--ashell-text-muted);
 }
 
 .spinner {
   width: 28px;
   height: 28px;
-  border: 3px solid var(--ashell-border, #3a3b32);
-  border-top-color: var(--ashell-accent, #a3be5f);
+  border: 3px solid var(--ashell-border);
+  border-top-color: var(--ashell-primary);
   border-radius: 50%;
   animation: login-spin 0.8s linear infinite;
 }
@@ -182,13 +183,13 @@ onMounted(() => {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
-  color: var(--ashell-text-strong, #e8e9df);
+  color: var(--ashell-text-strong);
 }
 
 .login-sub {
   margin: 6px 0 0;
   font-size: 12px;
-  color: var(--ashell-text-muted, #8a8b7a);
+  color: var(--ashell-text-muted);
 }
 
 .login-form {
@@ -198,19 +199,19 @@ onMounted(() => {
 }
 
 .login-lock {
-  color: var(--ashell-text-muted, #8a8b7a);
+  color: var(--ashell-text-muted);
 }
 
 .login-error {
   font-size: 12px;
-  color: #e05f65;
+  color: var(--ashell-danger);
 }
 
 .login-hint {
   margin: 14px 0 0;
   font-size: 11px;
   line-height: 1.6;
-  color: var(--ashell-text-muted, #8a8b7a);
+  color: var(--ashell-text-muted);
   text-align: center;
 }
 </style>

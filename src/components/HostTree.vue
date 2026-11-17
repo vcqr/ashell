@@ -1758,19 +1758,20 @@ async function onRefresh() {
 :deep(.n-tree-node-content:hover .node-suffix) {
   grid-template-columns: 1fr;
   margin-left: 8px;
-  opacity: 0.55;
+  /* 元信息是可读文字，叠加后须过 AA（0.55 叠亮色正文仅 ~3.4:1） */
+  opacity: 0.7;
 }
 /* 选中/键盘待选行常驻展开（悬停、选中、方向键待选任一命中即显示；方向键移动时
    naive 会把虚拟滚动滚到待选行，展开正好可见；焦点离开树时 pending 自动清空） */
 :deep(.n-tree-node--selected .node-suffix) {
   grid-template-columns: 1fr;
   margin-left: 8px;
-  opacity: 0.55;
+  opacity: 0.7;
 }
 :deep(.n-tree-node--pending .node-suffix) {
   grid-template-columns: 1fr;
   margin-left: 8px;
-  opacity: 0.55;
+  opacity: 0.7;
 }
 :deep(.node-suffix-text) {
   grid-column: 1;
@@ -1853,16 +1854,16 @@ async function onRefresh() {
 }
 
 .node-status-dot.status-connected {
-  background: #4ade80;
+  background: var(--ashell-success);
 }
 
 .node-status-dot.status-connecting {
-  background: #f59e0b;
+  background: var(--ashell-warning);
   animation: node-status-pulse 1.4s ease-in-out infinite;
 }
 
 .node-status-dot.status-error {
-  background: #ef4444;
+  background: var(--ashell-danger);
 }
 
 .node-status-dot.status-closed {

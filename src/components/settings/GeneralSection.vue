@@ -226,6 +226,6 @@ function saveProxyNoProxy() {
 
 .proxy-error,
 .context-menu-error {
-  color: var(--ashell-danger, #e5484d);
+  color: var(--ashell-danger);
 }
 </style>

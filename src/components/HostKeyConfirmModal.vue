@@ -215,9 +215,9 @@ function trust() {
 .hostkey-warning {
   font-size: 13px;
   line-height: 1.6;
-  color: #d03050;
-  background: rgba(208, 48, 80, 0.08);
-  border: 1px solid rgba(208, 48, 80, 0.3);
+  color: var(--ashell-danger);
+  background: color-mix(in srgb, var(--ashell-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ashell-danger) 30%, transparent);
   border-radius: 6px;
   padding: 8px 12px;
   margin-bottom: 12px;
@@ -302,19 +302,19 @@ function trust() {
 }
 
 .hostkey-fp-groups.danger .fp-group {
-  color: #d03050;
-  background: rgba(208, 48, 80, 0.08);
+  color: var(--ashell-danger);
+  background: color-mix(in srgb, var(--ashell-danger) 8%, transparent);
 }
 
 /* 新旧不一致的组：强高亮，视线直接落在变化段 */
 .fp-group.diff {
-  outline: 1px solid rgba(208, 48, 80, 0.55);
+  outline: 1px solid color-mix(in srgb, var(--ashell-danger) 55%, transparent);
   font-weight: 700;
 }
 
 .hostkey-fp-groups.old .fp-group.diff {
-  background: rgba(208, 48, 80, 0.14);
-  color: #d03050;
+  background: color-mix(in srgb, var(--ashell-danger) 14%, transparent);
+  color: var(--ashell-danger);
 }
 
 .hostkey-copy {

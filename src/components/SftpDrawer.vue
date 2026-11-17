@@ -4297,8 +4297,8 @@ function openInStandaloneWindow() {
   gap: 8px;
   padding: 6px 10px;
   margin-bottom: 6px;
-  border: 1px solid rgba(208, 48, 80, 0.35);
-  background: rgba(208, 48, 80, 0.08);
+  border: 1px solid color-mix(in srgb, var(--ashell-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--ashell-danger) 8%, transparent);
   border-radius: 6px;
   flex-shrink: 0;
 }
@@ -4307,7 +4307,7 @@ function openInStandaloneWindow() {
   flex: 1;
   min-width: 0;
   font-size: 12px;
-  color: var(--ashell-danger, #d03050);
+  color: var(--ashell-danger);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4345,9 +4345,9 @@ function openInStandaloneWindow() {
   background-color: var(--ashell-row-selected, rgba(99, 153, 255, 0.16));
 }
 
-/* 剪切（待粘贴移动）的行：半透明提示“待移动” */
+/* 剪切（待粘贴移动）的行：半透明提示“待移动”，仍须保持可读（过 AA） */
 .file-table :deep(.n-data-table-tr.row-cut .n-data-table-td) {
-  opacity: 0.45;
+  opacity: 0.65;
 }
 
 :deep(.name-cell) {

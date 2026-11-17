@@ -269,7 +269,8 @@ async function doImport() {
 }
 
 .host-row.is-dup {
-  opacity: 0.5;
+  /* 重复行弱化但仍是可读文字，0.65 起过 AA（0.5 时仅 ~3.2:1） */
+  opacity: 0.65;
 }
 
 .host-name {

@@ -220,7 +220,7 @@ function statusLabel(s: TransferStatus): string {
 
 .err {
   margin-top: 0;
-  color: #e88080;
+  color: var(--ashell-danger);
   font-size: 12px;
   word-break: break-all;
   flex: 1 1 auto;

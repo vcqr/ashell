@@ -1694,7 +1694,7 @@ onMounted(() => {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--ashell-danger, #d03050);
+  color: var(--ashell-danger);
 }
 
 .load-error-detail {

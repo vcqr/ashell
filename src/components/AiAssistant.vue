@@ -97,11 +97,11 @@ import {
   NPopover,
   NSelect,
   useMessage,
-  useThemeVars,
 } from "naive-ui";
 
 
 import { copyText as copyToClipboard } from "@/utils/clipboard";
+import { useSemanticColors } from "@/composables/useSemanticColors";
 import { useI18n } from "vue-i18n";
 import type {
   AiCompactInfo,
@@ -145,8 +145,8 @@ const aiConfig = useAiConfigStore();
 const phraseStore = usePhraseStore();
 const message = useMessage();
 const { t } = useI18n();
-// naive-ui 主题变量：上下文状态位随占用率取 warning/error 色（自动适配明暗主题）
-const themeVars = useThemeVars();
+// 上下文状态位随占用率取语义色（跟随主题 token，明暗各自过 AA）
+const semantic = useSemanticColors();
 
 /** 复制文本：Tauri 插件优先（免 WKWebView 授权提示），失败降级浏览器 API */
 async function copyText(text: string) {
@@ -2132,7 +2132,7 @@ defineExpose({
                 :class="{ danger: ctxPercent >= 90 }"
                 :style="
                   ctxPercent >= 70
-                    ? { color: ctxPercent >= 90 ? themeVars.errorColor : themeVars.warningColor }
+                    ? { color: ctxPercent >= 90 ? semantic.danger : semantic.warning }
                     : undefined
                 "
               >
@@ -2694,7 +2694,7 @@ defineExpose({
 /* 失败结果行：警示色图标+标签，hover 保持警示色 */
 .activity-row-failed,
 .activity-row-failed:hover {
-  color: #e5695f;
+  color: var(--ashell-danger);
 }
 
 .activity-row-icon {
@@ -2906,7 +2906,7 @@ defineExpose({
   border-radius: 4px;
   background: transparent;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--ashell-text-muted);
   opacity: 0;
   transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
   padding: 0;
@@ -3314,9 +3314,9 @@ defineExpose({
 /* ── 审批卡片（bubble.approval 承担卡片外观） ── */
 
 .bubble.approval {
-  border: 1px solid color-mix(in srgb, #f0a020 40%, transparent);
-  border-left: 3px solid #f0a020;
-  background: color-mix(in srgb, #f0a020 5%, var(--ashell-panel-bg-soft));
+  border: 1px solid color-mix(in srgb, var(--ashell-warning) 40%, transparent);
+  border-left: 3px solid var(--ashell-warning);
+  background: color-mix(in srgb, var(--ashell-warning) 5%, var(--ashell-panel-bg-soft));
   padding: 10px 12px;
 }
 
@@ -3328,7 +3328,7 @@ defineExpose({
 }
 
 .approval-head-icon {
-  color: #f0a020;
+  color: var(--ashell-warning);
 }
 
 .approval-title {
@@ -3343,7 +3343,7 @@ defineExpose({
   height: 6px;
   border-radius: 50%;
   margin-left: auto;
-  background: #f0a020;
+  background: var(--ashell-warning);
   animation: approval-pulse 1.4s ease-in-out infinite;
 }
 
@@ -3377,7 +3377,7 @@ defineExpose({
   margin-bottom: 10px;
   font-size: 12px;
   line-height: 1.45;
-  color: #f0a020;
+  color: var(--ashell-warning);
 }
 
 .approval-risk-icon {
@@ -3405,11 +3405,11 @@ defineExpose({
 }
 
 .approval-status.ok {
-  color: #4fbf8b;
+  color: var(--ashell-success);
 }
 
 .approval-status.no {
-  color: #e5695f;
+  color: var(--ashell-danger);
 }
 
 .approval-status.expired {
@@ -3686,12 +3686,12 @@ defineExpose({
 }
 
 .phrases-clear-btn:hover {
-  color: #ef4444;
-  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: var(--ashell-danger);
+  background: color-mix(in srgb, var(--ashell-danger) 12%, transparent);
 }
 
 .phrases-clear-btn.confirming {
-  color: #ef4444;
+  color: var(--ashell-danger);
   font-weight: 600;
 }
 
@@ -3754,7 +3754,7 @@ defineExpose({
 }
 
 .phrase-del:hover {
-  background: color-mix(in srgb, #ef4444 20%, transparent);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--ashell-danger) 20%, transparent);
+  color: var(--ashell-danger);
 }
 </style>

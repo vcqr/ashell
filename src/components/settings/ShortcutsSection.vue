@@ -269,8 +269,8 @@ onBeforeUnmount(() => {
 
 .shortcut-unset {
   font-size: 12px;
-  color: var(--ashell-text-muted, #98a2b3);
-  opacity: 0.5;
+  /* 之前 muted 上再叠 opacity 0.5，有效对比仅 ~2.3:1；直接用 subtle 档过 AA */
+  color: var(--ashell-text-subtle, #98a2b3);
 }
 
 @keyframes pulse {

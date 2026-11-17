@@ -2600,7 +2600,7 @@ onBeforeUnmount(() => {
 
 .auth-prompt-retry {
   font-size: 12px;
-  color: #e88080;
+  color: var(--ashell-danger);
   margin-bottom: 8px;
 }
 
@@ -2685,10 +2685,10 @@ onBeforeUnmount(() => {
   background: var(--ashell-accent, #80b5ff);
 }
 .terminal-progress.state-2 .terminal-progress-fill {
-  background: #ef4444;
+  background: var(--ashell-danger);
 }
 .terminal-progress.state-4 .terminal-progress-fill {
-  background: #f59e0b;
+  background: var(--ashell-warning);
 }
 
 /* Indeterminate：固定宽度 + 横向往返动画（参照 Material indeterminate） */
@@ -2950,8 +2950,8 @@ onBeforeUnmount(() => {
 }
 
 .cmd-suggest-block:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--ashell-danger) 15%, transparent);
+  color: var(--ashell-danger);
 }
 
 .cmd-suggest-footer {

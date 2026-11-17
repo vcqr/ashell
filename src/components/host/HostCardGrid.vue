@@ -296,16 +296,16 @@ function onMousedown(e: MouseEvent) {
 }
 
 .host-status-dot.status-connected {
-  background: #4ade80;
+  background: var(--ashell-success);
 }
 
 .host-status-dot.status-connecting {
-  background: #f59e0b;
+  background: var(--ashell-warning);
   animation: host-status-pulse 1.4s ease-in-out infinite;
 }
 
 .host-status-dot.status-error {
-  background: #ef4444;
+  background: var(--ashell-danger);
 }
 
 .host-status-dot.status-closed {

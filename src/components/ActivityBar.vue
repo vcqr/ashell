@@ -19,10 +19,14 @@ import {
 
 import { useI18n } from "vue-i18n"
 import { useBroadcastStore } from "@/stores/broadcast"
+import { useSemanticColors } from "@/composables/useSemanticColors"
 import BroadcastPopover from "@/components/BroadcastPopover.vue"
 import type { TerminalTab } from "@/types"
 
 const { t } = useI18n()
+// 广播目标徽标色走语义 token：NBadge 的 color prop 只吃字符串，
+// 经 useSemanticColors 在主题切换时同步（不要解构，会丢响应性）
+const semantic = useSemanticColors()
 defineProps<{
   tabs: TerminalTab[]
   activeKey: string
@@ -95,7 +99,7 @@ function renderIcon(comp: unknown) {
                   broadcastStore.targetKeys.size > 0
                 "
                 :max="9"
-                color="#f59e0b"
+                :color="semantic.warning"
                 processing
               >
                 <component :is="renderIcon(RiMegaphoneLine)" />

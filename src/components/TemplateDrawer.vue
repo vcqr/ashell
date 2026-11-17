@@ -462,8 +462,8 @@ async function onDelete(id: number) {
 }
 
 .tpl-action-btn.danger:hover {
-  background: color-mix(in srgb, #ef4444 20%, transparent);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--ashell-danger) 20%, transparent);
+  color: var(--ashell-danger);
 }
 
 /* ── History picker (inside form modal) ── */

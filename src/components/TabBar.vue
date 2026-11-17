@@ -1073,22 +1073,23 @@ onBeforeUnmount(() => {
     box-shadow 0.2s ease;
 }
 
+/* 状态灯三色走语义色 token：亮色主题下自动切深档，不再套用暗色值 */
 .tab-status-dot.status-connected {
-  background: #4ade80;
+  background: var(--ashell-success);
   opacity: 0.55;
 }
 
 .tab-status-dot.status-connecting {
-  background: #f59e0b;
+  background: var(--ashell-warning);
   opacity: 1;
   animation: tab-status-pulse 1.4s ease-in-out infinite;
 }
 
 .tab-status-dot.status-error {
-  background: #ef4444;
+  background: var(--ashell-danger);
   opacity: 1;
   box-shadow: 0 0 0 1.5px var(--tab-bg, transparent),
-    0 0 5px rgba(239, 68, 68, 0.45);
+    0 0 5px color-mix(in srgb, var(--ashell-danger) 45%, transparent);
 }
 
 .tab-status-dot.status-closed {
@@ -1137,17 +1138,17 @@ onBeforeUnmount(() => {
 /* ===== 广播状态指示 ===== */
 .tab-item.bc-target {
   /* 目标 tab：橙色虚线轮廓提示"正在接收外部输入" */
-  outline: 1px dashed #f59e0b;
+  outline: 1px dashed var(--ashell-warning);
   outline-offset: -2px;
 }
 .tab-item.bc-source {
   /* 源 tab：橙色实线，更明显，提醒用户当前键盘输入会被复制出去 */
-  outline: 1px solid #f59e0b;
+  outline: 1px solid var(--ashell-warning);
   outline-offset: -2px;
 }
 .tab-broadcast-icon {
   margin-left: 4px;
-  color: #f59e0b;
+  color: var(--ashell-warning);
   flex-shrink: 0;
   opacity: 0.85;
 }

@@ -31,6 +31,7 @@ import { humanSize } from "@/utils/humanSize"
 import { humanRate } from "@/utils/humanRate"
 import { humanUptime } from "@/utils/humanUptime"
 import { useDrawerWidth } from "@/composables/useDrawerWidth"
+import { useSemanticColors } from "@/composables/useSemanticColors"
 import { usePanelSwitchClosed } from "@/composables/usePanels"
 import { useIconStore } from "@/stores/icons"
 import NetSparkline from "@/components/host/NetSparkline.vue"
@@ -58,6 +59,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+// NProgress :color 等只吃字符串，语义色经 useSemanticColors 跟随主题切换
+const semantic = useSemanticColors()
 const iconStore = useIconStore()
 onMounted(() => {
   void iconStore.ensureLoaded()
@@ -187,8 +190,8 @@ function formatWatts(w: number): string {
 
 /** 占用条阈值配色：≥80% 红、≥60% 琥珀、其余基础色（风扇等非告警指标不用） */
 function gaugeColor(v: number, base: string): string {
-  if (v >= 80) return "#ef4444"
-  if (v >= 60) return "#f59e0b"
+  if (v >= 80) return semantic.danger
+  if (v >= 60) return semantic.warning
   return base
 }
 
@@ -658,7 +661,7 @@ const panelStyle = computed(() => {
                     :show-indicator="false"
                     :height="8"
                     :border-radius="4"
-                    :color="gaugeColor(memPercent, '#4ade80')"
+                    :color="gaugeColor(memPercent, semantic.success)"
                     rail-color="var(--ashell-hover)"
                   />
                 </div>
@@ -685,7 +688,7 @@ const panelStyle = computed(() => {
                     :show-indicator="false"
                     :height="8"
                     :border-radius="4"
-                    :color="gaugeColor(swapPercent, '#f59e0b')"
+                    :color="gaugeColor(swapPercent, semantic.warning)"
                     rail-color="var(--ashell-hover)"
                   />
                 </div>
@@ -812,7 +815,7 @@ const panelStyle = computed(() => {
                       :color="
                         gaugeColor(
                           (g.mem_used_mb / g.mem_total_mb) * 100,
-                          '#4ade80',
+                          semantic.success,
                         )
                       "
                       rail-color="var(--ashell-hover)"
@@ -837,7 +840,7 @@ const panelStyle = computed(() => {
                       :color="
                         gaugeColor(
                           (g.power_watts / g.power_limit_watts) * 100,
-                          '#f59e0b',
+                          semantic.warning,
                         )
                       "
                       rail-color="var(--ashell-hover)"
@@ -1232,22 +1235,22 @@ const panelStyle = computed(() => {
 }
 
 .temp-chip.temp-warm {
-  border-color: rgba(245, 158, 11, 0.45);
-  color: #f59e0b;
+  border-color: color-mix(in srgb, var(--ashell-warning) 45%, transparent);
+  color: var(--ashell-warning);
 }
 
 .temp-chip.temp-warm b {
-  color: #f59e0b;
+  color: var(--ashell-warning);
 }
 
 .temp-chip.temp-hot {
-  border-color: rgba(239, 68, 68, 0.55);
-  background: rgba(239, 68, 68, 0.12);
-  color: #ef4444;
+  border-color: color-mix(in srgb, var(--ashell-danger) 55%, transparent);
+  background: color-mix(in srgb, var(--ashell-danger) 12%, transparent);
+  color: var(--ashell-danger);
 }
 
 .temp-chip.temp-hot b {
-  color: #ef4444;
+  color: var(--ashell-danger);
 }
 
 /* 显卡卡片 */
@@ -1307,12 +1310,12 @@ const panelStyle = computed(() => {
 }
 
 .gpu-temp.temp-warm {
-  color: #f59e0b;
+  color: var(--ashell-warning);
 }
 
 .gpu-temp.temp-hot {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.12);
+  color: var(--ashell-danger);
+  background: color-mix(in srgb, var(--ashell-danger) 12%, transparent);
 }
 
 .gpu-head-tags {
@@ -1331,13 +1334,13 @@ const panelStyle = computed(() => {
 }
 
 .gpu-health.health-warn {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.12);
+  color: var(--ashell-warning);
+  background: color-mix(in srgb, var(--ashell-warning) 12%, transparent);
 }
 
 .gpu-health.health-error {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.12);
+  color: var(--ashell-danger);
+  background: color-mix(in srgb, var(--ashell-danger) 12%, transparent);
 }
 
 /* 头部属性徽章：性能状态 / PCIe 链路等非计量文本 */
