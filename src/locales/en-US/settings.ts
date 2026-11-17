@@ -2,6 +2,8 @@ export default {
   title: "Settings",
   close: "Close",
   sections: "Settings sections",
+  searchPlaceholder: "Search settings…",
+  searchNoMatch: "No matching settings",
   groups: {
     general: "General",
     system: "System",

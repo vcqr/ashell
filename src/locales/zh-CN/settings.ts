@@ -2,6 +2,8 @@ export default {
   title: "设置",
   close: "关闭",
   sections: "设置分区",
+  searchPlaceholder: "搜索设置…",
+  searchNoMatch: "无匹配的设置项",
   groups: {
     general: "通用",
     system: "系统",

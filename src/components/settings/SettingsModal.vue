@@ -23,10 +23,13 @@ import {
   NCard,
   NButton,
   NIcon,
+  NInput,
 } from "naive-ui";
 
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/platform";
+import { splitHighlightSegments } from "@/utils/hosts-view";
+import { useSettingsSearch } from "@/composables/useSettingsSearch";
 import GeneralSection from "./GeneralSection.vue";
 import ThemeSection from "./ThemeSection.vue";
 import TerminalSection from "./TerminalSection.vue";
@@ -137,6 +140,37 @@ const navGroups = computed<
 function close() {
   emit("update:open", false);
 }
+
+// ---- 设置内搜索：对 i18n 文案建分区级索引（含行 label/desc），命中即列出
+// 分区扁平列表，点击跳转；清空恢复分组视图（分区组件零侵入） ----
+const { searchQuery, isSearching, filterMatchedTabs, clear: clearSearch } =
+  useSettingsSearch();
+
+/** tab → 图标映射：搜索态扁平列表按 key 取图标（与 navGroups 单一来源） */
+const tabIcons = computed<Record<string, Component>>(() => {
+  const map: Record<string, Component> = {};
+  for (const group of navGroups.value) {
+    for (const item of group.items) map[item.key] = item.icon;
+  }
+  return map;
+});
+
+/** 搜索态命中分区（保持 nav 顺序）；非搜索态为空数组（模板走分组分支） */
+const searchMatchedTabs = computed<SettingsTab[]>(() =>
+  filterMatchedTabs(Object.keys(tabIcons.value) as SettingsTab[]) ?? [],
+);
+
+function navLabelSegments(key: string) {
+  return splitHighlightSegments(t(`settings.tabs.${key}`), searchQuery.value);
+}
+
+// 关闭弹窗时清空搜索，下次打开回到常规分组视图
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) clearSearch();
+  },
+)
 </script>
 
 <template>
@@ -166,23 +200,61 @@ function close() {
 
       <div class="settings-layout">
         <nav class="settings-tabs" :aria-label="t('settings.sections')">
-          <template v-for="group in navGroups" :key="group.label || 'tail'">
-            <div v-if="group.label" class="settings-group-label">
-              {{ group.label }}
+          <NInput
+            v-model:value="searchQuery"
+            size="small"
+            clearable
+            :placeholder="t('settings.searchPlaceholder')"
+            class="settings-search"
+            @keydown.escape.prevent="clearSearch"
+          />
+          <!-- 搜索态：扁平命中列表（隐藏分组标题，保持 nav 顺序） -->
+          <template v-if="isSearching">
+            <div
+              v-if="searchMatchedTabs.length === 0"
+              class="settings-search-empty"
+            >
+              {{ t("settings.searchNoMatch") }}
             </div>
             <button
-              v-for="item in group.items"
-              :key="item.key"
+              v-for="key in searchMatchedTabs"
+              :key="key"
               class="settings-tab"
-              :class="{ active: activeTab === item.key }"
+              :class="{ active: activeTab === key }"
               type="button"
-              @click="activeTab = item.key"
+              @click="activeTab = key"
             >
               <NIcon :size="16" class="settings-tab-icon">
-                <component :is="item.icon" />
+                <component :is="tabIcons[key] ?? RiEqualizerLine" />
               </NIcon>
-              {{ t(`settings.tabs.${item.key}`) }}
+              <span class="settings-tab-label">
+                <span
+                  v-for="(seg, si) in navLabelSegments(key)"
+                  :key="si"
+                  :class="{ hit: seg.hit }"
+                >{{ seg.text }}</span>
+              </span>
             </button>
+          </template>
+          <template v-else>
+            <template v-for="group in navGroups" :key="group.label || 'tail'">
+              <div v-if="group.label" class="settings-group-label">
+                {{ group.label }}
+              </div>
+              <button
+                v-for="item in group.items"
+                :key="item.key"
+                class="settings-tab"
+                :class="{ active: activeTab === item.key }"
+                type="button"
+                @click="activeTab = item.key"
+              >
+                <NIcon :size="16" class="settings-tab-icon">
+                  <component :is="item.icon" />
+                </NIcon>
+                {{ t(`settings.tabs.${item.key}`) }}
+              </button>
+            </template>
           </template>
         </nav>
 
@@ -265,6 +337,29 @@ function close() {
   transition:
     background 0.15s ease,
     color 0.15s ease;
+}
+
+/* 搜索框与搜索态 */
+.settings-search {
+  margin: 0 0 8px;
+}
+
+.settings-search-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--ashell-text-muted);
+  text-align: center;
+}
+
+.settings-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-tab .hit {
+  color: var(--ashell-accent);
+  font-weight: 600;
 }
 
 .settings-tab-icon {
