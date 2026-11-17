@@ -187,6 +187,15 @@ const CONNECT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// 按会话结束处理，避免 select 永远挂在 channel.wait() 上
 const SESSION_EOF_GRACE: Duration = Duration::from_secs(5);
 
+/// AI sidecar 存活期间自动启用的 PTY 空闲保活间隔（秒）：AI 思考/执行间隙
+/// PTY 零流量，服务器 shell 层的 TMOUT 类空闲超时会杀会话——传输层 keepalive
+/// 报文到不了 shell，只有真实输入能重置它，定时发 NUL 即为此兜底。
+/// 主机显式配置的 idle_send_interval 优先于此值。
+const AI_AUTO_IDLE_SECS: u64 = 120;
+
+/// 未启用保活时 idle 定时器的低频自醒间隔（秒）：轮询 AI sidecar 是否被拉起
+const IDLE_POLL_SECS: u64 = 30;
+
 /// 将建连失败的底层错误归类为面向用户的错误码（前端据此做 i18n 全局提示）。
 /// 命中常见网络错误时返回分类码；其余（罕见 IO 错误等）返回 None，前端展示原文。
 fn classify_connect_failure(err: &crate::errors::AppError) -> Option<&'static str> {
@@ -1741,15 +1750,21 @@ async fn run_terminal(
     // 终端 WS 路径仍走原始字节，不受影响
     let mut utf8_tail: Vec<u8> = Vec::new();
 
-    // idle 定时发送空字符保活：配置了 idle_send_interval > 0 时启用，
-    // 每隔该秒数向 PTY 发送 \x00（对终端无害，可防止 NAT/防火墙超时断连）。
-    // 注意：禁用时不能给超大 Duration 充当"永不触发"，tokio sleep / reset
+    // idle 定时发送空字符保活：每隔该秒数向 PTY 发送 \x00（对终端无害，可防止
+    // NAT/防火墙超时断连，且属 shell 输入可重置 TMOUT 类空闲超时）。生效间隔在
+    // select 分支内逐次判定：主机显式配置 idle_send_interval > 0 优先；未配置但
+    // 该会话有 AI sidecar 在跑时按 AI_AUTO_IDLE_SECS 自动启用（AI 思考/执行间隙
+    // PTY 静默，shell 层空闲超时会杀会话）；其余禁用、低频自醒轮询 sidecar 拉起。
+    // 注意：任何状态下都不能给超大 Duration 充当"永不触发"，tokio sleep / reset
     // 内部会算 Instant + duration，超出 Instant 表示范围会直接 panic
     // （overflow when adding duration to instant），表现为会话建立后瞬间
-    // WebSocket 1006 断开。select 分支有 `if idle_secs > 0` 守卫，禁用时
-    // 该 timer 永不触发，给任意安全占位时长即可。
-    let idle_secs = host.idle_send_interval.unwrap_or(0);
-    let idle_dur = Duration::from_secs(if idle_secs > 0 { idle_secs as u64 } else { 1 });
+    // WebSocket 1006 断开。timer 本身永远挂着安全占位时长，启用与否只由分支体判定。
+    let host_idle_secs = host.idle_send_interval.unwrap_or(0);
+    let idle_dur = Duration::from_secs(if host_idle_secs > 0 {
+        host_idle_secs as u64
+    } else {
+        IDLE_POLL_SECS
+    });
     let idle_timer = tokio::time::sleep(idle_dur);
     tokio::pin!(idle_timer);
     // EOF 宽限定时器：收到 EOF 才启用（select 分支有 eof_seen 守卫），
@@ -2018,12 +2033,28 @@ async fn run_terminal(
                     _ => {}
                 }
             }
-            _ = &mut idle_timer, if idle_secs > 0 => {
-                if let Err(e) = channel.data(&[0u8][..]).await {
-                    session_end_code = Some(classify_session_end_err(&e));
-                    break;
+            _ = &mut idle_timer => {
+                // 生效间隔逐次判定：显式配置 > AI sidecar 自动 > 禁用（轮询自醒，
+                // 顺带覆盖 sidecar 中途退出回到禁用态）
+                let eff_secs = if host_idle_secs > 0 {
+                    host_idle_secs as u64
+                } else if crate::sidecar::has_sidecar(sid.to_string()) {
+                    AI_AUTO_IDLE_SECS
+                } else {
+                    0
+                };
+                if eff_secs > 0 {
+                    // sudo 密码提示等待期不发：NUL 会混入密码输入导致认证失败
+                    if sudo_prompt_pending_at.is_none() {
+                        if let Err(e) = channel.data(&[0u8][..]).await {
+                            session_end_code = Some(classify_session_end_err(&e));
+                            break;
+                        }
+                    }
+                    reset_idle(&mut idle_timer, Duration::from_secs(eff_secs));
+                } else {
+                    reset_idle(&mut idle_timer, idle_dur);
                 }
-                reset_idle(&mut idle_timer, idle_dur);
             }
             _ = &mut eof_grace, if eof_seen => {
                 session_end_code = Some("session_exited");

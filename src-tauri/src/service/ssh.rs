@@ -606,6 +606,10 @@ impl Session {
     }
 
     fn build_config(host: &Host) -> Arc<client::Config> {
+        // keepalive 显式禁用（0/负数）时，inactivity 默认值一并禁用：
+        // 没有保活回包喂 inactivity 定时器（服务器静默即无入站数据），
+        // 120s 兜底会把空闲会话误杀成 InactivityTimeout 自断
+        let keepalive_disabled = matches!(host.keepalive_interval, Some(v) if v <= 0);
         Arc::new(client::Config {
             // 语义：null = 未配置（用默认）；0/负数 = 禁用；> 0 = 自定义
             keepalive_interval: match host.keepalive_interval {
@@ -616,6 +620,7 @@ impl Session {
             inactivity_timeout: match host.inactivity_timeout {
                 Some(v) if v > 0 => Some(Duration::from_secs(v as u64)),
                 Some(_) => None,
+                None if keepalive_disabled => None,
                 None => Some(Duration::from_secs(120)),
             },
             ..Default::default()
