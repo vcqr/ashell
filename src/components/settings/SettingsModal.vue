@@ -585,18 +585,10 @@ watch(
 
 /* 设置面板命中高亮：CSS Custom Highlight API 的命名高亮是文档级的，
    与 Range 配套使用（见 script 内 rebuildPanelHighlight），不改 DOM。
-   同样必须留在非 scoped 块。文字色必须显式覆盖——命中处常是 muted 灰字，
-   原字色叠蓝底对比不足（浅色主题尤其看不清） */
+   同样必须留在非 scoped 块。直接用品牌紫实底 + 白字：双主题对白字都过 AA
+   （暗 #6d5ae8 ≈4.9:1 / 亮 #5f4fd9 ≈5.5:1），命中块醒目且免调参 */
 ::highlight(settings-search-hit) {
-  /* 45%：底色要够亮才能在深色面板上形成明显的"命中块"信号，
-     白字对混合后的中蓝仍 >5:1 过 AA */
-  background-color: color-mix(in srgb, var(--ashell-accent) 45%, transparent);
-  color: var(--ashell-text-strong);
-}
-
-/* 浅色：淡蓝底（22% accent 混白）+ 近黑字，深字浅底对比拉满 */
-:root[data-ashell-theme='light'] ::highlight(settings-search-hit) {
-  background-color: color-mix(in srgb, var(--ashell-accent) 22%, white);
-  color: var(--ashell-text-strong);
+  background-color: var(--ashell-primary);
+  color: #fff;
 }
 </style>
