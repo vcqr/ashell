@@ -167,6 +167,21 @@ body.ashell-dragging * {
   background: rgba(20, 24, 33, 0.32);
 }
 
+/* ---------- 可访问性：键盘焦点环 ----------
+ * :focus-visible 只在键盘导航（Tab/方向键）时出现，鼠标点击不触发；
+ * 给 Tab 可达的自绘元素（按钮、标签、菜单项、设置行控件…）统一焦点指示。
+ * input/textarea 除外：naive 输入类组件自带边框聚焦态，全局环会叠成双环，
+ * xterm 的隐藏 textarea 也依赖这条豁免避免描边外泄 */
+:focus-visible {
+  outline: 2px solid var(--ashell-accent);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
 /* ---------- 设置页共享样式 ----------
  * 原先在各 settings section 的 scoped 样式里各复制一份，抽到这里统一维护。
  * .settings-block 是分组卡片：一组设置项聚合成一块圆角卡片，组内行用细分隔线
