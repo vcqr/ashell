@@ -285,8 +285,10 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
     // 单实例插件必须最先注册：资源管理器右键「在 Ashell 中打开」等二次拉起时，
-    // 把命令行目录参数转发给已运行实例（关闭=隐藏到托盘，应用常驻后台）
-    #[cfg(windows)]
+    // 把命令行目录参数转发给已运行实例（关闭=隐藏到托盘，应用常驻后台）。
+    // dev 构建不注册（tauri-build 的 dev cfg = debug 构建）：开发时要同时跑
+    // 多个实例对照调试，单实例锁会把第二个 dev 实例直接顶掉
+    #[cfg(all(windows, not(dev)))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         launch::handle_second_instance(app, &args);
     }));

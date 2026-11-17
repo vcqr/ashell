@@ -40,8 +40,10 @@ pub fn launch_take_dir() -> Option<String> {
     PENDING_DIR.lock().ok()?.take()
 }
 
-/// single-instance 回调（仅 Windows）：二次拉起时唤起主窗口（关闭即隐藏到
-/// 托盘的常驻形态），带目录参数时再推事件让前端开一个本地标签
+/// single-instance 回调（仅 Windows、非 dev 构建）：二次拉起时唤起主窗口
+/// （关闭即隐藏到托盘的常驻形态），带目录参数时再推事件让前端开一个本地标签。
+/// dev 构建不注册单实例插件，此函数无调用点，需豁免 dead_code
+#[cfg_attr(dev, allow(dead_code))]
 pub fn handle_second_instance(app: &tauri::AppHandle, args: &[String]) {
     crate::tray::show_main_window(app);
     if let Some(dir) = parse_launch_dir(args) {
