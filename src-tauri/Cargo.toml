@@ -5,7 +5,7 @@ description = "A modern cross-platform terminal / SSH client built with Tauri 2 
 authors = ["vcqr"]
 license = "MIT"
 repository = "https://github.com/vcqr/ashell"
-homepage = "https://github.com/vcqr/ashell"
+homepage = "https://vcqr.github.io/ashell"
 edition = "2021"
 # 双 bin（ashell / ashell-server）下指明 tauri dev / cargo run 的默认二进制
 default-run = "ashell"
