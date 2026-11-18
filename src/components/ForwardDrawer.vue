@@ -479,6 +479,8 @@ function onClose() {
 
 .forward-panel.open {
   box-shadow: -8px 0 24px var(--ashell-shadow);
+  /* 浮层抽屉永远盖在固定（停靠）面板之上（固定面板豁免互斥会并存） */
+  z-index: 1010;
 }
 
 .forward-panel.resizing {

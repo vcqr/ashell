@@ -337,6 +337,12 @@ onBeforeUnmount(() => {
   box-shadow: -8px 0 24px var(--ashell-shadow);
 }
 
+/* 浮动态（未固定）盖在固定（停靠）面板之上：固定面板豁免互斥会与本浮层并存，
+   刚打开的抽屉必须完整可见，不能被渲染序靠后的固定 AI 面板压住 */
+.local-files-panel.open:not(.pinned) {
+  z-index: 1010;
+}
+
 /* 固定（停靠）态：与主内容并排，不再悬浮 */
 .local-files-panel.pinned.open {
   box-shadow: none;

@@ -310,11 +310,14 @@ const panelStyle = computed(() => {
       resizing.value || aiPinned.value || switchClosed.value
         ? "none"
         : "transform 0.25s ease, box-shadow 0.15s ease",
-    // 关闭态平移要叠加活动栏宽度 + 本地文件停靠宽度：面板锚定
-    // right: calc(活动栏 + 本地文件停靠宽)，只平移自身宽度会有残留
+    // 关闭态平移与锚点同参：固定态锚定 right = 活动栏 + 本地文件停靠宽，
+    // 浮动态锚定 right = 活动栏（见 .ai-panel / .ai-panel.pinned），
+    // 平移需叠加对应偏移才能完全移出屏外
     transform: props.open
       ? "translateX(0)"
-      : "translateX(calc(100% + var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px)))",
+      : aiPinned.value
+        ? "translateX(calc(100% + var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px)))"
+        : "translateX(calc(100% + var(--ashell-activity-w, 0px)))",
   }
 });
 
@@ -2309,10 +2312,7 @@ defineExpose({
 .ai-panel {
   position: fixed;
   top: var(--ashell-header-h);
-  /* 锚点叠加本地文件停靠宽度：两者同时停靠时 AI 排在本地文件左侧 */
-  right: calc(
-    var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px)
-  );
+  right: var(--ashell-activity-w, 0px);
   bottom: 0;
   background: var(--ashell-panel-bg);
   border-left: 1px solid var(--ashell-border);
@@ -2320,6 +2320,20 @@ defineExpose({
   flex-direction: column;
   z-index: 1000;
   user-select: text;
+}
+
+/* 浮动态（未固定）盖在固定（停靠）面板之上：固定面板豁免互斥会与本浮层并存，
+   刚打开的面板必须完整可见，不能被渲染序更靠后的固定面板压住 */
+.ai-panel.open:not(.pinned) {
+  z-index: 1010;
+}
+
+/* 固定（停靠）态让出本地文件停靠宽度：两个都固定时并排（本地文件在右、AI 在左），
+   避免 z-index 同层叠放互相遮挡；仅浮动态（见上条规则）才覆盖固定面板 */
+.ai-panel.pinned {
+  right: calc(
+    var(--ashell-activity-w, 0px) + var(--ashell-local-files-w, 0px)
+  );
 }
 
 .ai-panel.open {

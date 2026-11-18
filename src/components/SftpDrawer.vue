@@ -3836,6 +3836,9 @@ function openInStandaloneWindow() {
 
 .sftp-panel.open {
   box-shadow: -8px 0 24px var(--ashell-shadow);
+  /* 浮层抽屉永远盖在固定（停靠）面板之上：固定面板豁免互斥会与本浮层并存，
+     刚打开的抽屉必须完整可见，不能被渲染序靠后的固定 AI 面板压住 */
+  z-index: 1010;
 }
 
 /* 独立窗口模式：面板铺满窗口（顶部让位给窗口标题栏），无侧边阴影 */
