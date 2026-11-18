@@ -474,6 +474,8 @@ pub fn run() {
             commands::dialog::pick_image_file,
             commands::dialog::pick_private_key_file,
             commands::dialog::open_text_file,
+            commands::dialog::pick_transfer_files,
+            commands::dialog::pick_transfer_dir,
             commands::wallpaper::set_wallpaper,
             commands::wallpaper::get_wallpaper,
             commands::wallpaper::clear_wallpaper,

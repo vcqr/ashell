@@ -35,8 +35,10 @@ import { useSudoFill } from "@/composables/useSudoFill"
 import { useAiSelection } from "@/composables/useAiSelection"
 import { useTerminalSearch } from "@/composables/useTerminalSearch"
 import { useTerminalProgress } from "@/composables/useTerminalProgress"
+import { useTerminalZmodem } from "@/composables/useTerminalZmodem"
 import { useCommandSuggest } from "@/composables/useCommandSuggest"
 import { useTerminalTimestamps } from "@/composables/useTerminalTimestamps"
+import ZmodemTransferPanel from "@/components/ZmodemTransferPanel.vue"
 import HostKeyConfirmModal, { type HostKeyInfo } from "@/components/HostKeyConfirmModal.vue"
 import type { Locale } from "@/data/commandDict"
 import { buildTerminalWsUrl } from "@/api/sftp"
@@ -208,6 +210,37 @@ function sendInputToWs(data: string): boolean {
 function sendCommand(cmd: string) {
   sendJson({ kind: "cmd", data: cmd + "\r" })
 }
+
+/** 发送 ws 二进制帧（ZMODEM 协议字节载体；后端直通写入 PTY/SSH channel）。 */
+function sendBinaryToWs(data: Uint8Array<ArrayBuffer>): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false
+  try {
+    ws.send(data)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ===== ZMODEM（sz/rz）传输子系统 =====
+// 在 writeToTerm 之前嗅探 ZMODEM 起始帧；会话期间接管输入/输出，
+// 结束后自动恢复普通终端路径。仅 SSH 后端需要 zmodem_state 守卫帧。
+const zmodem = useTerminalZmodem({
+  writeToTerm,
+  sendBinary: sendBinaryToWs,
+  sendControl: (msg) => {
+    sendJson(msg)
+  },
+  isSsh: () => props.tab.kind === "ssh",
+  notify: (kind, content) => {
+    message[kind](content)
+  },
+  t,
+})
+
+// 模板用顶层 ref(自动解包);zmodem 对象本身持有全部方法
+const zmodemItems = zmodem.items
+const zmodemBusy = zmodem.busy
 
 // ===== 离线恢复状态浮层按钮 =====
 const showReconnectBtn = ref(false)
@@ -1477,7 +1510,8 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     if (!term) return
     const data = event.data
     if (data instanceof ArrayBuffer) {
-      writeToTerm(new Uint8Array(data))
+      // ZMODEM 嗅探入口:命中起始帧后由协议引擎接管,否则原样上屏
+      zmodem.feedOutput(new Uint8Array(data))
       return
     }
     if (typeof data === "string") {
@@ -1643,7 +1677,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
       void data
         .arrayBuffer()
         .then((buf) => {
-          if (term) writeToTerm(new Uint8Array(buf))
+          if (term) zmodem.feedOutput(new Uint8Array(buf))
         })
         .catch(() => {
           // ignore
@@ -1663,6 +1697,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
     clearHeartbeat()
     resetTextProgress()
     disarmSudo()
+    zmodem.reset()
     // 服务端断开时若认证弹窗还开着（如等待超时 fatal），一并收掉
     authPromptVisible.value = false
     authSubmitting.value = false
@@ -1782,6 +1817,9 @@ onMounted(() => {
   term.attachCustomKeyEventHandler(onTermCustomKey)
 
   term.onData((data: string) => {
+    // ZMODEM 会话期间丢弃键入（协议传输不接受用户输入，与 XShell/SecureCRT
+    // 一致）；用户取消后的冷却期里任意键入解除冷却
+    if (zmodem.handleUserInput()) return
     // 断开态的输入无处可去：按 Enter 走上面的 keydown 拦截触发重连，
     // 其余输入（含粘贴）不静默吞掉，给一次暗色提示告知如何重连
     if (showReconnectBtn.value && currentStatus.value !== "connecting") {
@@ -1905,6 +1943,7 @@ function cancelConnect() {
   clearHeartbeat()
   resetTextProgress()
   disarmSudo()
+  zmodem.reset()
   setStatus("closed", { cause: "user" })
   showReconnectBtn.value = true
   reconnectAttempts = 0
@@ -1916,6 +1955,7 @@ function disconnect() {
   clearHeartbeat()
   resetTextProgress()
   disarmSudo()
+  zmodem.reset()
   teardownWs()
   setStatus("closed", { cause: "user" })
   reconnectAttempts = 0
@@ -2344,6 +2384,14 @@ onBeforeUnmount(() => {
         {{ t('terminal.tabBar.reconnect') }}
       </button>
     </Transition>
+
+    <!-- ZMODEM(sz/rz)传输进度面板:会话期间/结束后展示逐文件进度 -->
+    <ZmodemTransferPanel
+      :items="zmodemItems"
+      :busy="zmodemBusy"
+      @cancel="zmodem.cancelSession()"
+      @clear="zmodem.clearFinished()"
+    />
 
     <Transition name="connecting-fade">
       <div v-if="showConnectingOverlay" class="connecting-overlay">

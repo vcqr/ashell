@@ -1,5 +1,5 @@
 import type { GenericAbortSignal } from "axios"
-import { buildWsUrl, request } from "./client"
+import { buildWsUrl, request, requestRaw } from "./client"
 import type { SftpListResp } from "@/types"
 
 /** 本地 PTY 终端 WebSocket URL */
@@ -192,6 +192,16 @@ export function transferProgress(
     method: "POST",
     json: { task_ids: taskIds },
   })
+}
+
+/** 流式读取本地文件（ZMODEM rz 上传：把本地文件喂给前端协议引擎）。
+ *  大文件不进 Tauri IPC，走本地 HTTP 流式响应；只接受绝对路径。 */
+export async function readLocalFileStream(path: string): Promise<Blob> {
+  const resp = await requestRaw<Blob>("/api/local/fs/read_stream", {
+    params: { path },
+    timeout: 0,
+  })
+  return resp.data
 }
 
 /** 把 OS 拖入的文件保存到本地目录（双栏：拖放落在本地栏）。

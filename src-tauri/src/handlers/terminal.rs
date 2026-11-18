@@ -92,6 +92,11 @@ enum ClientMsg {
     /// 用户取消重新认证
     #[serde(rename = "auth_cancel")]
     AuthCancel,
+    /// 前端 ZMODEM 会话状态切换（检测到 rz/sz 接管 / 会话结束退出）。
+    /// 激活期间回显剥离与 sudo 提示检测全部旁路，避免把 ZMODEM 二进制
+    /// 流当普通输出处理（token 误吞/误触发密码弹窗），空闲保活也暂停。
+    #[serde(rename = "zmodem_state")]
+    ZmodemState { active: bool },
 }
 
 /// 服务端首条消息：把生成的 sid 通知客户端
@@ -1749,6 +1754,11 @@ async fn run_terminal(
     // 广播（AI 收集副本）的 UTF-8 尾缓冲：多字节字符跨块时扣留待续，
     // 终端 WS 路径仍走原始字节，不受影响
     let mut utf8_tail: Vec<u8> = Vec::new();
+    // ZMODEM 会话激活标志：前端检测到 rz/sz 起始帧并发 zmodem_state 置位，
+    // 会话结束再撤销。激活期间输出旁路回显剥离与 sudo 提示检测（ZMODEM
+    // 二进制流被误吞会损坏传输，被误匹配会弹密码框），空闲保活 NUL 也暂停
+    //（混入 rz 的输入流会破坏帧定界）
+    let mut zmodem_active = false;
 
     // idle 定时发送空字符保活：每隔该秒数向 PTY 发送 \x00（对终端无害，可防止
     // NAT/防火墙超时断连，且属 shell 输入可重置 TMOUT 类空闲超时）。生效间隔在
@@ -1858,6 +1868,17 @@ async fn run_terminal(
                                         .to_string();
                                         let _ = ws_tx.send(Message::Text(result.into())).await;
                                     }
+                                    ClientMsg::ZmodemState { active } => {
+                                        if zmodem_active != active {
+                                            zmodem_active = active;
+                                            if active {
+                                                // 进入传输：清掉 sudo 待填充态与提示
+                                                // 缓冲，防历史残留误弹窗
+                                                sudo_prompt_pending_at.take();
+                                                sudo_buf.clear();
+                                            }
+                                        }
+                                    }
                                     // 会话已建立后迟到的认证/主机密钥帧：忽略
                                     ClientMsg::AuthResponse { .. } | ClientMsg::AuthCancel => {}
                                     ClientMsg::KbdAuthResponse { .. } => {}
@@ -1895,23 +1916,37 @@ async fn run_terminal(
                 match ssh_msg {
                     Some(ChannelMsg::Data { ref data }) => {
                         log::debug!("[{sid}] ssh→ws {}B", data.len());
-                        // cwd 注入行回显剥离：未武装时原样透传
-                        let bytes = match cwd_echo_strip.as_mut() {
-                            Some(s) => s.feed(data),
-                            None => data.to_vec(),
+                        // ZMODEM 会话期间整体旁路两级回显剥离：二进制帧被误吞
+                        // 会直接损坏传输（CRC 重传扛不住持续丢字节）
+                        let bytes = if zmodem_active {
+                            data.to_vec()
+                        } else {
+                            // cwd 注入行回显剥离：未武装时原样透传
+                            match cwd_echo_strip.as_mut() {
+                                Some(s) => s.feed(data),
+                                None => data.to_vec(),
+                            }
                         };
                         // 宽松兜底过滤器接管主剥离器漏掉的回显（迟到/预算
                         // 耗尽/流被改写）
-                        let bytes = match loose_echo_filter.as_mut() {
-                            Some(f) => f.feed(&bytes),
-                            None => bytes,
+                        let bytes = if zmodem_active {
+                            bytes
+                        } else {
+                            match loose_echo_filter.as_mut() {
+                                Some(f) => f.feed(&bytes),
+                                None => bytes,
+                            }
                         };
                         // 先完成对 bytes 的全部借用（sudo 检测缓冲 + 有订阅者时的
                         // 广播副本），再把它整体移入 WS 帧——每 chunk 省一次全量
                         // clone（与 serial/telnet 中继同款写法）。广播仅在确有
                         // 订阅者（POST /api/ssh/send 的输出收集）时才做 lossy
                         // 转换，零订阅者的常态下不白白分配 String。
-                        push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
+                        // sudo 检测缓冲在 ZMODEM 会话期间不积累：二进制流会污染
+                        // 缓冲，退出传输后被 detect 误匹配
+                        if !zmodem_active {
+                            push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
+                        }
                         if output_tx.receiver_count() > 0 {
                             let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
                         }
@@ -1924,33 +1959,37 @@ async fn run_terminal(
                             break;
                         }
 
-                        // 待填充状态失效检查先行：命中后紧随的任何输出都说明
-                        // 不是真实提示（真实提示等待期间终端静默），立即作废
-                        // 并让前端撤掉提示条，防止之后回车把密码注入明文回显
-                        if sudo_prompt_pending_at.take().is_some() {
-                            let _ = ws_tx.send(Message::Text(
-                                "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
-                            ))
-                            .await;
-                        }
-                        let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
-                            .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
-                        if let Some(strong) = prompt_tier {
-                            sudo_buf.clear();
-                            // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
-                            // 最近输入里，本次提权完成后命令输出中普通的冒号
-                            // 结尾行（apt 的 "The following ... installed:" 等）会被
-                            // 反复误判成新的密码提示，前端跟着反复弹出。
-                            terminal_input_buf.clear();
-                            sudo_prompt_pending_at = Some(std::time::Instant::now());
-                            let frame = if strong {
-                                "{\"kind\":\"sudo_prompt\",\"tier\":\"strong\"}"
-                            } else {
-                                "{\"kind\":\"sudo_prompt\",\"tier\":\"weak\"}"
-                            };
-                            let _ = ws_tx
-                                .send(Message::Text(frame.to_string().into()))
+                        // ZMODEM 会话期间不做 sudo 提示扫描：二进制流可能被
+                        // 误匹配成 "password:" 类提示，在传输中途弹出密码框
+                        if !zmodem_active {
+                            // 待填充状态失效检查先行：命中后紧随的任何输出都说明
+                            // 不是真实提示（真实提示等待期间终端静默），立即作废
+                            // 并让前端撤掉提示条，防止之后回车把密码注入明文回显
+                            if sudo_prompt_pending_at.take().is_some() {
+                                let _ = ws_tx.send(Message::Text(
+                                    "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
+                                ))
                                 .await;
+                            }
+                            let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
+                                .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
+                            if let Some(strong) = prompt_tier {
+                                sudo_buf.clear();
+                                // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
+                                // 最近输入里，本次提权完成后命令输出中普通的冒号
+                                // 结尾行（apt 的 "The following ... installed:" 等）会被
+                                // 反复误判成新的密码提示，前端跟着反复弹出。
+                                terminal_input_buf.clear();
+                                sudo_prompt_pending_at = Some(std::time::Instant::now());
+                                let frame = if strong {
+                                    "{\"kind\":\"sudo_prompt\",\"tier\":\"strong\"}"
+                                } else {
+                                    "{\"kind\":\"sudo_prompt\",\"tier\":\"weak\"}"
+                                };
+                                let _ = ws_tx
+                                    .send(Message::Text(frame.to_string().into()))
+                                    .await;
+                            }
                         }
                         reset_idle(&mut idle_timer, idle_dur);
                     }
@@ -1958,40 +1997,42 @@ async fn run_terminal(
                         let bytes = data.to_vec();
                         // 同 Data 分支：先借用（sudo 缓冲 + 有订阅者时的广播副本）
                         // 后移入 WS 帧，省一次 clone；广播零订阅者时跳过 lossy 转换
-                        push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
+                        if !zmodem_active {
+                            push_limited(&mut sudo_buf, &bytes, PROMPT_BUF_LIMIT);
+                        }
                         if output_tx.receiver_count() > 0 {
                             let _ = output_tx.send(util::utf8_safe(&mut utf8_tail, &bytes));
                         }
                         if ws_tx.send(Message::Binary(bytes.into())).await.is_err() { break; }
 
-                        // 部分服务端/程序会把密码提示写到 stderr；这里同样参与识别。
-                        // 待填充状态失效检查先行：命中后紧随的任何输出都说明
-                        // 不是真实提示（真实提示等待期间终端静默），立即作废
-                        // 并让前端撤掉提示条，防止之后回车把密码注入明文回显
-                        if sudo_prompt_pending_at.take().is_some() {
-                            let _ = ws_tx.send(Message::Text(
-                                "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
-                            ))
-                            .await;
-                        }
-                        let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
-                            .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
-                        if let Some(strong) = prompt_tier {
-                            sudo_buf.clear();
-                            // 命中后必须同时清空输入缓冲：否则旧 sudo 命令一直留在
-                            // 最近输入里，本次提权完成后命令输出中普通的冒号
-                            // 结尾行（apt 的 "The following ... installed:" 等）会被
-                            // 反复误判成新的密码提示，前端跟着反复弹出。
-                            terminal_input_buf.clear();
-                            sudo_prompt_pending_at = Some(std::time::Instant::now());
-                            let frame = if strong {
-                                "{\"kind\":\"sudo_prompt\",\"tier\":\"strong\"}"
-                            } else {
-                                "{\"kind\":\"sudo_prompt\",\"tier\":\"weak\"}"
-                            };
-                            let _ = ws_tx
-                                .send(Message::Text(frame.to_string().into()))
+                        // ZMODEM 会话期间不做 sudo 提示扫描（同 Data 分支）；
+                        // stderr 文本（lrzsz 报错等）仍然转发上屏
+                        if !zmodem_active {
+                            // 部分服务端/程序会把密码提示写到 stderr；这里同样参与识别。
+                            // 待填充状态失效检查先行：命中后紧随的任何输出都说明
+                            // 不是真实提示（真实提示等待期间终端静默），立即作废
+                            // 并让前端撤掉提示条，防止之后回车把密码注入明文回显
+                            if sudo_prompt_pending_at.take().is_some() {
+                                let _ = ws_tx.send(Message::Text(
+                                    "{\"kind\":\"sudo_prompt_gone\"}".to_string().into(),
+                                ))
                                 .await;
+                            }
+                            let prompt_tier = detect_sudo_prompt_tier(&sudo_buf, &terminal_input_buf)
+                                .filter(|_| sudo_password.as_deref().is_some_and(|p| !p.is_empty()));
+                            if let Some(strong) = prompt_tier {
+                                sudo_buf.clear();
+                                terminal_input_buf.clear();
+                                sudo_prompt_pending_at = Some(std::time::Instant::now());
+                                let frame = if strong {
+                                    "{\"kind\":\"sudo_prompt\",\"tier\":\"strong\"}"
+                                } else {
+                                    "{\"kind\":\"sudo_prompt\",\"tier\":\"weak\"}"
+                                };
+                                let _ = ws_tx
+                                    .send(Message::Text(frame.to_string().into()))
+                                    .await;
+                            }
                         }
                         reset_idle(&mut idle_timer, idle_dur);
                     }
@@ -2044,8 +2085,9 @@ async fn run_terminal(
                     0
                 };
                 if eff_secs > 0 {
-                    // sudo 密码提示等待期不发：NUL 会混入密码输入导致认证失败
-                    if sudo_prompt_pending_at.is_none() {
+                    // sudo 密码提示等待期不发：NUL 会混入密码输入导致认证失败；
+                    // ZMODEM 会话期间也不发：NUL 混入 rz 输入流会破坏帧定界
+                    if sudo_prompt_pending_at.is_none() && !zmodem_active {
                         if let Err(e) = channel.data(&[0u8][..]).await {
                             session_end_code = Some(classify_session_end_err(&e));
                             break;

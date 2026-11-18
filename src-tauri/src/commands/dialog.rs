@@ -99,3 +99,47 @@ pub async fn open_text_file(app: tauri::AppHandle) -> Result<Option<String>, Str
         .map_err(|e| format!("read {}: {e}", path.display()))?;
     Ok(Some(content))
 }
+
+/// 弹出系统"打开文件"对话框多选任意文件（ZMODEM rz 上传），返回路径列表。
+/// 用户取消返回 None。
+#[tauri::command]
+pub async fn pick_transfer_files(app: tauri::AppHandle) -> Result<Option<Vec<String>>, String> {
+    use std::sync::mpsc;
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = mpsc::channel::<Option<Vec<std::path::PathBuf>>>();
+    app.dialog().file().pick_files(move |paths| {
+        let list = paths.map(|ps| {
+            ps.into_iter()
+                .filter_map(|p| p.into_path().ok())
+                .collect::<Vec<_>>()
+        });
+        let _ = tx.send(list);
+    });
+    let chosen = rx
+        .recv()
+        .map_err(|e| format!("dialog channel closed: {e}"))?;
+    Ok(chosen.map(|list| {
+        list.iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
+    }))
+}
+
+/// 弹出系统"选择目录"对话框（ZMODEM sz 下载保存目录），返回绝对路径。
+/// 用户取消返回 None。
+#[tauri::command]
+pub async fn pick_transfer_dir(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use std::sync::mpsc;
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = mpsc::channel::<Option<std::path::PathBuf>>();
+    app.dialog().file().pick_folder(move |path| {
+        let pb = path.and_then(|p| p.into_path().ok());
+        let _ = tx.send(pb);
+    });
+    let chosen = rx
+        .recv()
+        .map_err(|e| format!("dialog channel closed: {e}"))?;
+    Ok(chosen.map(|p| p.to_string_lossy().into_owned()))
+}

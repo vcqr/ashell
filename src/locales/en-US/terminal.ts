@@ -179,4 +179,16 @@ export default {
     learned: 'Learned',
     block: 'Stop suggesting this command',
   },
+  zmodem: {
+    panelTitle: 'ZMODEM File Transfer',
+    uploading: 'Uploading',
+    downloading: 'Downloading',
+    cancelAll: 'Cancel transfer',
+    cancelAllTip: 'Abort this ZMODEM session; the remote rz/sz will exit with an error',
+    close: 'Close',
+    finished: 'ZMODEM transfer finished: {ok} succeeded',
+    finishedWithErrors: 'ZMODEM transfer finished: {ok} succeeded, {fail} failed',
+    cancelled: 'ZMODEM transfer cancelled',
+    failed: 'ZMODEM transfer failed: {error}',
+  },
 } as const

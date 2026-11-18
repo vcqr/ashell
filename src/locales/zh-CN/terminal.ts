@@ -167,4 +167,16 @@ export default {
     learned: "已学习",
     block: "不再提示此命令",
   },
+  zmodem: {
+    panelTitle: "ZMODEM 文件传输",
+    uploading: "上传中",
+    downloading: "下载中",
+    cancelAll: "取消传输",
+    cancelAllTip: "中断本次 ZMODEM 会话，远端 rz/sz 将报错退出",
+    close: "关闭",
+    finished: "ZMODEM 传输完成：成功 {ok} 个",
+    finishedWithErrors: "ZMODEM 传输完成：成功 {ok} 个，失败 {fail} 个",
+    cancelled: "ZMODEM 传输已取消",
+    failed: "ZMODEM 传输失败：{error}",
+  },
 } as const

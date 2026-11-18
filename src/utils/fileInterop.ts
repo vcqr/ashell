@@ -91,3 +91,36 @@ export async function uploadPrivateKey(): Promise<string | null> {
   })
   return res?.path ?? null
 }
+
+// ── ZMODEM(sz/rz)传输的文件对话框 ──
+
+/** ZMODEM rz 上传选文件(仅桌面):原生多选对话框,返回本地绝对路径列表;取消返回 null */
+export async function pickTransferFilePaths(): Promise<string[] | null> {
+  if (!isTauri) return null
+  const { invoke } = await import("@tauri-apps/api/core")
+  return invoke<string[] | null>("pick_transfer_files")
+}
+
+/** ZMODEM rz 上传选文件(仅 Web):input[type=file] multiple,返回 File 列表;取消返回 null */
+export function pickTransferFileObjects(): Promise<File[] | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input")
+    input.type = "file"
+    input.multiple = true
+    const done = () => resolve(input.files?.length ? Array.from(input.files) : null)
+    input.onchange = done
+    // 取消对话框时无 change 事件，用 focus 恢复探测兜底
+    window.addEventListener("focus", () => setTimeout(done, 300), { once: true })
+    input.click()
+  })
+}
+
+/**
+ * ZMODEM sz 下载选保存目录(整会话一次)。桌面返回绝对路径,取消返回 null;
+ * Web 端无目录概念,返回空串(逐文件走浏览器下载)。
+ */
+export async function pickTransferDir(): Promise<string | null> {
+  if (!isTauri) return ""
+  const { invoke } = await import("@tauri-apps/api/core")
+  return invoke<string | null>("pick_transfer_dir")
+}

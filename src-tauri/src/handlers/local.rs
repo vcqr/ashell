@@ -9,6 +9,8 @@
 //! - `POST /api/local/fs/upload_to_remote`         本地文件直传远端（"上传 ->"）
 //! - `POST /api/local/fs/save_file`                OS 拖放文件落盘本地目录
 //!   （双栏下拖进本地栏；multipart 字节流，同名覆盖）
+//! - `GET  /api/local/fs/read_stream?path=`        流式读取本地文件
+//!   （ZMODEM rz 上传把本地文件喂给前端协议引擎；只接受绝对路径）
 //! - `POST /api/local/fs/trash`                     批量移入系统回收站
 //!   （可从 Finder/资源管理器恢复；目录整体入站）
 //! - `POST /api/local/fs/remove`                    批量删除本地文件/目录
@@ -24,12 +26,15 @@
 //! - `POST /api/local/fs/progress`                 轮询直传任务进度
 //!   （Rust 进程内直传不经过 webview，进度按 task_id 记账）
 
+use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Query, Json};
+use axum::http::header;
 use axum::response::IntoResponse;
 use axum_extra::extract::Multipart;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
@@ -388,4 +393,41 @@ pub async fn fs_save_file(
         message: "ok".into(),
         data: Some(serde_json::json!({ "bytes": written })),
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadStreamQuery {
+    /// 本地文件绝对路径
+    pub path: String,
+}
+
+/// 流式读取本地文件（ZMODEM rz 上传：把本地文件喂给前端协议引擎）。
+/// 只接受绝对路径；与 save_file/trash 等端点同一 token 鉴权信任模型。
+pub async fn fs_read_stream(
+    Query(q): Query<ReadStreamQuery>,
+) -> Result<axum::response::Response, AppError> {
+    let path = local_fs::validate_absolute(&q.path)?;
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("open {}: {e}", path.to_string_lossy())))?;
+    let meta = file
+        .metadata()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("stat {}: {e}", path.to_string_lossy())))?;
+    if meta.is_dir() {
+        return Err(AppError::BadRequest(format!(
+            "path is a directory: {}",
+            path.to_string_lossy()
+        )));
+    }
+    let len = meta.len().to_string();
+    let stream = ReaderStream::new(file);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CONTENT_LENGTH, len.as_str()),
+        ],
+        Body::from_stream(stream),
+    )
+        .into_response())
 }

@@ -131,6 +131,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::local::fs_save_file),
         )
         .route(
+            "/api/local/fs/read_stream",
+            get(handlers::local::fs_read_stream),
+        )
+        .route(
             "/api/local/fs/trash",
             post(handlers::local::fs_trash),
         )

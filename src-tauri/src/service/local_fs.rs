@@ -47,7 +47,7 @@ pub fn progress_remove(id: &str) {
 
 /// 只接受绝对路径。本地浏览端点等于给 webview 开了列本机目录的能力，
 /// 虽然有本机 token 鉴权，仍拒绝相对路径以避免 cwd 相关的歧义。
-fn validate_absolute(p: &str) -> AppResult<PathBuf> {
+pub fn validate_absolute(p: &str) -> AppResult<PathBuf> {
     let path = PathBuf::from(p);
     if !path.is_absolute() {
         return Err(AppError::BadRequest(format!("path must be absolute: {p}")));

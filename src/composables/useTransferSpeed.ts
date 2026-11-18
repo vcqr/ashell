@@ -1,13 +1,17 @@
 import { onBeforeUnmount, onMounted, ref, type Ref } from "vue"
-import type { TransferTask } from "@/types"
 
 /**
  * 传输速度采样：每秒对 running 任务做 loaded 差分，指数平滑抑制跳动。
  *
  * 只在挂载期间采样（任务列表弹窗打开时），弹窗关闭即停——速度只在列表可见时
  * 展示，重开后 1-2 秒内重新收敛，不浪费后台定时器。
+ *
+ * 泛型约束:任何带 string id、status、loaded 的任务对象均可采样
+ * (SFTP TransferTask / ZMODEM ZmodemTransferItem 等)。
  */
-export function useTransferSpeed(tasks: Ref<TransferTask[]>) {
+export function useTransferSpeed<
+  T extends { id: string; status: string; loaded: number },
+>(tasks: Ref<T[]>) {
   /** taskId -> 字节/秒 */
   const speeds = ref<Record<string, number>>({})
   const samples = new Map<string, { t: number; loaded: number }>()
