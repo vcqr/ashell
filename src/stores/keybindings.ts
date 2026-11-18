@@ -256,7 +256,10 @@ export const SHORTCUT_ACTIONS: ShortcutActionDef[] = [
     category: "panels",
     defaults: {
       mac: { key: "b", ctrl: false, meta: true, shift: false, alt: false },
-      win: { key: "b", ctrl: true, meta: false, shift: false, alt: false },
+      // 不用裸 Ctrl+B：tmux 默认前缀就是 C-b，终端里按 Ctrl+B 会被这里
+      // 拦截消费（侧边栏开关），tmux 切窗口/建窗口全部失效。加 Alt 既有
+      // 别于 tmux 前缀，也不撞浏览器快捷键（Ctrl+Shift+B 是书签栏开关）。
+      win: { key: "b", ctrl: true, meta: false, shift: false, alt: true },
     },
   },
 ];
@@ -303,6 +306,14 @@ function loadConfig(): KeybindingsMap {
       } else if (isValidBinding(v)) {
         result[def.id] = v;
       }
+    }
+    // 存量迁移：panel.activityBar 旧 win 默认是裸 Ctrl+B，撞 tmux 前缀
+    // （终端里按 Ctrl+B 被侧边栏开关消费，tmux 切窗口全部失效）。恰为旧
+    // 默认的迁移到新默认；用户显式改成其他组合（含改回 Ctrl+B）的尊重不动
+    if (sameBinding(result["panel.activityBar"], {
+      key: "b", ctrl: true, meta: false, shift: false, alt: false,
+    })) {
+      result["panel.activityBar"] = defaults["panel.activityBar"];
     }
     return result;
   } catch {
