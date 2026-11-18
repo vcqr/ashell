@@ -38,6 +38,7 @@ import WindowControls from "@/components/WindowControls.vue";
 import HostInfoDrawer from "@/components/HostInfoDrawer.vue";
 import HostInfoWindow from "@/components/HostInfoWindow.vue";
 import ForwardDrawer from "@/components/ForwardDrawer.vue";
+import TmuxDrawer from "@/components/TmuxDrawer.vue";
 import TemplateDrawer from "@/components/TemplateDrawer.vue";
 import SettingsModal from "@/components/settings/SettingsModal.vue";
 import QuitConfirmModal from "@/components/QuitConfirmModal.vue";
@@ -46,6 +47,7 @@ import LoginGate from "@/components/LoginGate.vue";
 import NotifyBridge from "@/components/NotifyBridge.vue";
 import QuickConnectPalette from "@/components/QuickConnectPalette.vue";
 import { isTauri } from "@/utils/platform";
+import { buildTmuxSwitchCommand } from "@/utils/tmux";
 import { installTauriDblclickGuard, onTitlebarDblclick } from "@/utils/titlebar";
 import { installCrossWindowPathDropTarget, installFileDropBridge } from "@/composables/useFileDropBridge";
 import { installDevtoolsShortcut } from "@/utils/devtools";
@@ -416,6 +418,7 @@ const {
   sftpOpen,
   hostInfoOpen,
   forwardOpen,
+  tmuxOpen,
   templateOpen,
   localFilesOpen,
   settingsOpen,
@@ -424,6 +427,7 @@ const {
   toggleSftp,
   toggleHostInfo,
   toggleForward,
+  toggleTmux,
   toggleTemplate,
   toggleLocalFiles,
   toggleSettings,
@@ -499,6 +503,13 @@ void installCrossWindowPathDropTarget();
 // SFTP 面板右键目录 -> 当前终端 cd 到该目录（sendCommand 自动补 \r 执行）
 function onSftpOpenTerminalHere(path: string) {
   sendCommandToActive(`cd '${path.replace(/'/g, `'\\''`)}'`)
+}
+
+// tmux 会话面板「接入」：向当前终端注入 switch-client（已在 tmux 内时瞬时
+// 切换）或 attach（裸 shell），不新建 SSH 连接；命令组装与一期共用同一套
+// 会话名转义规则（utils/tmux.ts）
+function onTmuxAttach(name: string) {
+  sendCommandToActive(buildTmuxSwitchCommand(name));
 }
 
 // 本地文件抽屉右键"在终端中打开"：按绑定本地终端的 shell 生成对应语法的 cd
@@ -877,6 +888,7 @@ if (!isTauri) {
                 :sftp-open="sftpOpen"
                 :host-info-open="hostInfoOpen"
                 :forward-open="forwardOpen"
+                :tmux-open="tmuxOpen"
                 :ai-open="aiOpen"
                 :template-open="templateOpen"
                 :local-files-open="localFilesOpen"
@@ -888,6 +900,7 @@ if (!isTauri) {
                 @toggle-sftp="toggleSftp"
                 @toggle-host-info="toggleHostInfo"
                 @toggle-forward="toggleForward"
+                @toggle-tmux="toggleTmux"
                 @toggle-ai="toggleAi"
                 @toggle-template="toggleTemplate"
                 @toggle-local-files="toggleLocalFiles"
@@ -925,6 +938,13 @@ if (!isTauri) {
                 v-model:open="forwardOpen"
                 :sid="activeSftpTab?.sid ?? null"
                 :host-name="activeSftpTab?.title"
+              />
+              <TmuxDrawer
+                v-model:open="tmuxOpen"
+                :sid="activeSftpTab?.sid ?? null"
+                :host-id="activeSftpTab?.hostId ?? null"
+                :host-name="activeSftpTab?.title"
+                @attach="onTmuxAttach"
               />
               <TemplateDrawer
                 v-model:open="templateOpen"

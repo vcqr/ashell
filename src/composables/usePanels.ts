@@ -25,6 +25,7 @@ export type SwitchablePanelId =
   | "sftp"
   | "hostInfo"
   | "forward"
+  | "tmux"
   | "template"
   | "localFiles";
 
@@ -68,6 +69,7 @@ export function usePanels(
   const sftpOpen = ref(false);
   const hostInfoOpen = ref(false);
   const forwardOpen = ref(false);
+  const tmuxOpen = ref(false);
   const templateOpen = ref(false);
   const localFilesOpen = ref(false);
   const settingsOpen = ref(false);
@@ -119,6 +121,10 @@ export function usePanels(
     if (except !== "forward" && forwardOpen.value) {
       forwardOpen.value = false;
       closed.push("forward");
+    }
+    if (except !== "tmux" && tmuxOpen.value) {
+      tmuxOpen.value = false;
+      closed.push("tmux");
     }
     if (except !== "template" && templateOpen.value) {
       templateOpen.value = false;
@@ -172,6 +178,12 @@ export function usePanels(
     if (forwardOpen.value) markSwitchClosed(closeOthers("forward"));
   }
 
+  function toggleTmux() {
+    if (!activeSftpTab.value) return;
+    tmuxOpen.value = !tmuxOpen.value;
+    if (tmuxOpen.value) markSwitchClosed(closeOthers("tmux"));
+  }
+
   function toggleTemplate() {
     if (!activeTerminalTab.value) return;
     templateOpen.value = !templateOpen.value;
@@ -201,6 +213,7 @@ export function usePanels(
       sftpOpen.value = false;
       hostInfoOpen.value = false;
       forwardOpen.value = false;
+      tmuxOpen.value = false;
     }
   });
 
@@ -239,6 +252,7 @@ export function usePanels(
     sftpOpen,
     hostInfoOpen,
     forwardOpen,
+    tmuxOpen,
     templateOpen,
     localFilesOpen,
     settingsOpen,
@@ -248,6 +262,7 @@ export function usePanels(
     toggleSftp,
     toggleHostInfo,
     toggleForward,
+    toggleTmux,
     toggleTemplate,
     toggleLocalFiles,
     toggleSettings,

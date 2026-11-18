@@ -8,6 +8,7 @@ pub mod serial;
 pub mod sftp;
 pub mod sysinfo;
 pub mod telnet;
+pub mod tmux;
 pub mod terminal;
 pub mod ai_provider;
 pub mod op_password;

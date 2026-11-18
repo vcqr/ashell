@@ -63,6 +63,8 @@ export default {
     hostInfoDisabled: "Available after connecting",
     forward: "Port forwarding",
     forwardDisabled: "Available after connecting",
+    tmux: "tmux sessions",
+    tmuxDisabled: "Available after connecting",
     templates: "Command Templates",
     templatesDisabled: "Available after connecting",
     ai: "AI assistant",

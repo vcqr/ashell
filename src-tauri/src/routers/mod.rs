@@ -198,6 +198,12 @@ pub fn build_router(state: AppState) -> Router {
         )
         // 主机系统信息（复用已建立的 sid 会话）
         .route("/api/ssh/sysinfo", get(handlers::sysinfo::get))
+        // tmux 会话管理（列出 / 终止；复用已建立的 sid 会话）
+        .route(
+            "/api/ssh/tmux/sessions",
+            get(handlers::tmux::sessions),
+        )
+        .route("/api/ssh/tmux/kill", post(handlers::tmux::kill))
         // 端口转发（-L / -R / -D）
         .route(
             "/api/ssh/forward",

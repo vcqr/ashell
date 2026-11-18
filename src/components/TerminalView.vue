@@ -21,6 +21,7 @@ import { NCheckbox, NIcon, NInput, NModal, NTooltip, NButton, useMessage } from 
 
 import { pasteText, copyText, sanitizePastedText } from "@/utils/clipboard"
 import { openExternal } from "@/utils/platform"
+import { buildTmuxCommand } from "@/utils/tmux"
 import { useI18n } from "vue-i18n"
 import { useApiStore } from "@/stores/api"
 import {
@@ -1402,16 +1403,8 @@ function teardownWs() {
 
 /**
  * 组装 tmux 集成命令：`tmux new -A` 存在即 attach、不存在则新建。
- * 会话名留空用 tmux 默认会话；含安全字符直接拼，否则单引号包裹转义。
+ * 实现在 utils/tmux.ts（二期会话面板「接入」共用同一套转义规则）。
  */
-function buildTmuxCommand(session: string | null | undefined): string {
-  const name = (session ?? "").trim()
-  if (!name) return "tmux new -A"
-  const safe = /^[A-Za-z0-9_-]+$/.test(name)
-    ? name
-    : `'${name.replace(/'/g, `'\\''`)}'`
-  return `tmux new -A -s ${safe}`
-}
 
 /**
  * 连接就绪后注入初始命令（每次建连一次；PTY 会缓冲输入，shell 未出提示符也不丢字）。

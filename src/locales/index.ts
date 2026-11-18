@@ -10,6 +10,7 @@ import zhCNTerminal from "./zh-CN/terminal"
 import zhCNSftp from "./zh-CN/sftp"
 import zhCNHostInfo from "./zh-CN/hostInfo"
 import zhCNForward from "./zh-CN/forward"
+import zhCNTmux from "./zh-CN/tmux"
 import zhCNAi from "./zh-CN/ai"
 import zhCNBroadcast from "./zh-CN/broadcast"
 import zhCNTemplates from "./zh-CN/templates"
@@ -23,6 +24,7 @@ import enUSTerminal from "./en-US/terminal"
 import enUSSftp from "./en-US/sftp"
 import enUSHostInfo from "./en-US/hostInfo"
 import enUSForward from "./en-US/forward"
+import enUSTmux from "./en-US/tmux"
 import enUSAi from "./en-US/ai"
 import enUSBroadcast from "./en-US/broadcast"
 import enUSTemplates from "./en-US/templates"
@@ -43,6 +45,7 @@ const messages = {
     sftp: zhCNSftp,
     hostInfo: zhCNHostInfo,
     forward: zhCNForward,
+    tmux: zhCNTmux,
     ai: zhCNAi,
     broadcast: zhCNBroadcast,
     templates: zhCNTemplates,
@@ -57,6 +60,7 @@ const messages = {
     sftp: enUSSftp,
     hostInfo: enUSHostInfo,
     forward: enUSForward,
+    tmux: enUSTmux,
     ai: enUSAi,
     broadcast: enUSBroadcast,
     templates: enUSTemplates,

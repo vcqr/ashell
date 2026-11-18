@@ -532,6 +532,15 @@ export interface ForwardCreate {
   destPort?: number | null
 }
 
+/** tmux 会话（与后端 service::tmux::TmuxSession 对齐） */
+export interface TmuxSessionInfo {
+  name: string
+  windows: number
+  attached: number
+  /** 会话创建时间（unix 秒） */
+  created: number
+}
+
 /* ---------- AI 供应商（纯端点定义，与 sidecar 引擎解耦） ---------- */
 
 export interface AiProvider {

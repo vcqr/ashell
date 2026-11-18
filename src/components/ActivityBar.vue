@@ -6,6 +6,7 @@ import {
   RiFolderOpenLine,
   RiMegaphoneLine,
   RiSparklingLine,
+  RiStackLine,
   RiTerminalBoxLine,
 } from "@remixicon/vue"
 import { h } from "vue"
@@ -33,6 +34,7 @@ defineProps<{
   sftpOpen: boolean
   hostInfoOpen: boolean
   forwardOpen: boolean
+  tmuxOpen: boolean
   aiOpen: boolean
   templateOpen: boolean
   /** 本地文件抽屉开关状态 */
@@ -52,6 +54,7 @@ const emit = defineEmits<{
   "toggle-sftp": []
   "toggle-host-info": []
   "toggle-forward": []
+  "toggle-tmux": []
   "toggle-ai": []
   "toggle-template": []
   "toggle-local-files": []
@@ -195,6 +198,22 @@ function renderIcon(comp: unknown) {
         </button>
       </template>
       {{ hasActiveSession ? t("terminal.activityBar.forward") : t("terminal.activityBar.forwardDisabled") }}
+    </NTooltip>
+
+    <!-- tmux 会话 -->
+    <NTooltip placement="left" :show-arrow="false">
+      <template #trigger>
+        <button
+          class="ab-btn"
+          :class="{ active: tmuxOpen }"
+          type="button"
+          :disabled="!hasActiveSession"
+          @click="emit('toggle-tmux')"
+        >
+          <component :is="renderIcon(RiStackLine)" />
+        </button>
+      </template>
+      {{ hasActiveSession ? t("terminal.activityBar.tmux") : t("terminal.activityBar.tmuxDisabled") }}
     </NTooltip>
 
     <!-- AI 助手 -->
