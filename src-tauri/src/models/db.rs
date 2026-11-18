@@ -426,6 +426,25 @@ async fn migrate(pool: &DbPool) -> AppResult<()> {
             .await?;
     }
 
+    // v17: hosts 增加 tmux 集成字段（tmux_enabled = 连接就绪后自动执行
+    // tmux new -A [-s 会话名]；tmux_session 为空用 tmux 默认会话。
+    // bastion 会话落库时强制 tmux_enabled = 0）
+    if current < 17 {
+        sqlx::query("ALTER TABLE hosts ADD COLUMN tmux_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("ALTER TABLE hosts ADD COLUMN tmux_session TEXT")
+            .execute(pool)
+            .await
+            .ok();
+
+        sqlx::query("INSERT INTO schema_version (version) VALUES (17)")
+            .execute(pool)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -434,7 +453,7 @@ mod tests {
     use super::*;
     use sqlx::Row;
 
-    const LATEST_VERSION: i64 = 16;
+    const LATEST_VERSION: i64 = 17;
 
     async fn current_version(pool: &DbPool) -> i64 {
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")

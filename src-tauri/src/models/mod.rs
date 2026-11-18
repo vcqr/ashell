@@ -77,6 +77,11 @@ pub struct Host {
     pub jump_host_id: Option<i64>,
     /// 连接建立后自动执行的命令（终端 ready 后注入；空/None 不执行）
     pub connect_command: Option<String>,
+    /// tmux 集成：连接就绪后自动执行 tmux new -A [-s tmux_session]（存在即
+    /// attach，不存在则新建）；bastion 会话强制 false（注入会打进菜单 TUI）
+    pub tmux_enabled: bool,
+    /// tmux 会话名；None/空用 tmux 默认会话
+    pub tmux_session: Option<String>,
     /// 堡垒机（交互网关）模式：登录后经菜单选择目标主机；跳过遥测钩子注入
     pub bastion: bool,
     pub created_at: Option<String>,
@@ -110,6 +115,11 @@ pub struct HostCreate {
     pub idle_send_interval: Option<i64>,
     pub jump_host_id: Option<i64>,
     pub connect_command: Option<String>,
+    /// tmux 集成开关（仅 SSH；缺省 false；bastion 时后端强制 false）
+    #[serde(default)]
+    pub tmux_enabled: bool,
+    /// tmux 会话名（空/None 用 tmux 默认会话）
+    pub tmux_session: Option<String>,
     /// 堡垒机（交互网关）模式（仅 SSH；缺省 false）
     #[serde(default)]
     pub bastion: bool,
@@ -148,6 +158,12 @@ pub struct HostUpdate {
     /// 双层 Option：缺省 = 不修改（HostTree 拖拽等部分更新不误清）；显式 null = 清除
     #[serde(default, deserialize_with = "double_option::deserialize")]
     pub connect_command: Option<Option<String>>,
+    /// tmux 集成开关；None = 不修改
+    #[serde(default)]
+    pub tmux_enabled: Option<bool>,
+    /// 双层 Option：缺省 = 不修改；显式 null = 清除（用 tmux 默认会话）
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub tmux_session: Option<Option<String>>,
     /// 堡垒机（交互网关）模式开关；None = 不修改
     #[serde(default)]
     pub bastion: Option<bool>,
@@ -199,6 +215,10 @@ pub struct HostWithGroup {
     pub idle_send_interval: Option<i64>,
     pub jump_host_id: Option<i64>,
     pub connect_command: Option<String>,
+    /// tmux 集成开关（bastion 会话恒为 false）
+    pub tmux_enabled: bool,
+    /// tmux 会话名；None/空用 tmux 默认会话
+    pub tmux_session: Option<String>,
     /// 堡垒机（交互网关）模式
     pub bastion: bool,
     pub created_at: Option<String>,
@@ -371,5 +391,23 @@ mod tests {
         let v: HostUpdate =
             serde_json::from_str(r#"{"connect_command":"tmux attach"}"#).unwrap();
         assert_eq!(v.connect_command, Some(Some("tmux attach".to_string())));
+    }
+
+    /// tmux_session 同为双层 Option：部分更新（缺省键）不得误清会话名；
+    /// 显式 null = 清除（回落 tmux 默认会话）；tmux_enabled 缺省 = 不修改
+    #[test]
+    fn host_update_tmux_fields_partial_semantics() {
+        let v: HostUpdate = serde_json::from_str(r#"{"gid":3}"#).unwrap();
+        assert_eq!(v.tmux_session, None);
+        assert_eq!(v.tmux_enabled, None);
+
+        let v: HostUpdate = serde_json::from_str(r#"{"tmux_session":null}"#).unwrap();
+        assert_eq!(v.tmux_session, Some(None));
+
+        let v: HostUpdate = serde_json::from_str(r#"{"tmux_session":"work"}"#).unwrap();
+        assert_eq!(v.tmux_session, Some(Some("work".to_string())));
+
+        let v: HostUpdate = serde_json::from_str(r#"{"tmux_enabled":true}"#).unwrap();
+        assert_eq!(v.tmux_enabled, Some(true));
     }
 }

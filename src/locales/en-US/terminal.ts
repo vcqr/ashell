@@ -173,6 +173,7 @@ export default {
   disconnectedByUser: "Disconnected by user",
   reconnecting: "Reconnecting…",
   autoReconnected: "Auto-reconnected successfully.",
+  tmuxMissing: "tmux not detected on the remote host; tmux integration skipped.",
   sudoHint: 'Press Enter or click to auto-fill the saved password',
   sudoHintWeak: 'Click or press Ctrl+Enter to auto-fill the saved password',
   commandSuggest: {

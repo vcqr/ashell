@@ -188,6 +188,12 @@ export default {
     connectCommand: "Run after connect",
     connectCommandPlaceholder: "e.g. cd /var/log && tail -f app.log",
     connectCommandDesc: "Command executed automatically in the terminal once the SSH connection is established. Leave empty to disable.",
+    tmux: "tmux integration",
+    tmuxSession: "tmux session",
+    tmuxSessionPlaceholder: "e.g. work (empty = default session)",
+    tmuxDesc:
+      "Runs tmux new -A [-s session] once connected: attaches if it exists, creates otherwise; the command above runs after it. Automatically skipped with a notice when tmux is not installed on the remote host.",
+    tmuxBastionHint: "Unavailable for bastion hosts: the command would be typed into the bastion menu",
     cancel: "Cancel",
     create: "Create",
     save: "Save",
@@ -223,6 +229,7 @@ export default {
       portRequired: "Please enter a port",
       portRange: "Port must be an integer between 1 and 65535",
       usernameRequired: "Please enter a username",
+      tmuxSessionInvalid: "Session name cannot contain '.' or ':'",
     },
   },
   import: {

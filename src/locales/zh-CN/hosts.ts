@@ -187,6 +187,12 @@ export default {
     connectCommand: "连接后自动执行",
     connectCommandPlaceholder: "如：cd /var/log && tail -f app.log",
     connectCommandDesc: "SSH 连接建立后自动在终端中执行的命令；留空不执行",
+    tmux: "tmux 集成",
+    tmuxSession: "tmux 会话名",
+    tmuxSessionPlaceholder: "如：work（留空用默认会话）",
+    tmuxDesc:
+      "连接就绪后自动执行 tmux new -A [-s 会话名]：存在即接入、不存在则新建；之后才执行上方「连接后自动执行」。远端未安装 tmux 时自动跳过并提示",
+    tmuxBastionHint: "堡垒机模式下不可用：自动命令会打进堡垒机菜单界面",
     cancel: "取消",
     create: "创建",
     save: "保存",
@@ -222,6 +228,7 @@ export default {
       portRequired: "请输入端口",
       portRange: "端口必须是 1-65535 的整数",
       usernameRequired: "请输入用户名",
+      tmuxSessionInvalid: "会话名不能包含 . 或 :",
     },
   },
   import: {

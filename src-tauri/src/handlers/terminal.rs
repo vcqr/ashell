@@ -106,6 +106,15 @@ struct ReadyMsg<'a> {
     sid: &'a str,
 }
 
+/// 服务端消息：shell 探测结果（远端环境）。tmux_installed：Some = 探测成功
+/// （远端是否安装 tmux），None = 未探测（堡垒机 / exec 失败/超时），前端
+/// 收到后对 ssh 会话执行初始命令注入（tmux 集成 / 连接后自动执行）
+#[derive(Debug, Serialize)]
+struct EnvMsg<'a> {
+    kind: &'a str,
+    tmux_installed: Option<bool>,
+}
+
 /// 服务端消息：SSH 认证失败（密码过期/被修改），请求前端弹窗重新输入
 #[derive(Debug, Serialize)]
 struct AuthRequiredMsg<'a> {
@@ -572,8 +581,11 @@ fn telemetry_line_zsh(cwd_report: bool) -> String {
 }
 
 /// 远端登录 shell 探测命令：第二行取 /bin/sh 软链目标（bash-as-sh 识别；
-/// 无 readlink 或非软链时该行为空/原样路径）
-const SHELL_PROBE: &str = "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null";
+/// 无 readlink 或非软链时该行为空/原样路径）；第三行探测 tmux 是否可用
+/// （command -v 找到输出路径、找不到静默无输出；csh 等非 POSIX shell 下
+/// command 内建不存在 → 第三行缺失，按未知处理，前端不阻塞）
+const SHELL_PROBE: &str =
+    "echo \"$SHELL\"; readlink -f /bin/sh 2>/dev/null; command -v tmux 2>/dev/null";
 
 /// shell 探测硬超时：堡垒机等对 exec 不回应的服务器上，超时即放弃遥测钩子，
 /// 保住后续中继循环的启动（见下方探测处的说明）
@@ -1696,6 +1708,9 @@ async fn run_terminal(
     let mut cwd_echo_strip: Option<CwdEchoStripper> = None;
     let mut loose_echo_filter: Option<LooseEchoFilter> = None;
     let mut marker_mode = false;
+    // 远端 tmux 可用性（随 shell 探测同一次 exec 顺带得出）；None = 未知
+    // （堡垒机跳过探测 / exec 失败或超时 / 输出整体不可用）
+    let mut tmux_installed: Option<bool> = None;
     // 堡垒机会话跳过探测与遥测注入：exec 与注入行都落在堡垒机的菜单 shell 上
     // （目标机 shell 在嵌套中继之内，钩子本就够不着），注入反而会往菜单 TUI
     // 打垃圾输入。命令完成检测随之按无遥测降级（与 exec 不响应的设备同路径）。
@@ -1707,6 +1722,14 @@ async fn run_terminal(
                 let mut lines = res.stdout.trim().lines();
                 let shell = lines.next().unwrap_or("").trim();
                 let binsh = lines.next().unwrap_or("").trim();
+                let tmux = lines.next().unwrap_or("").trim();
+                // 第一行为空说明探测输出整体不可用（csh 等对整行语法报错、
+                // 什么都没执行）：tmux 状态按未知处理，前端不据此提示
+                tmux_installed = if shell.is_empty() {
+                    None
+                } else {
+                    Some(!tmux.is_empty())
+                };
                 let (line, mode) = resolve_completion(shell, binsh, q.cwd_report);
                 marker_mode = mode == ssh_svc::CompletionMode::Marker;
                 if mode != ssh_svc::CompletionMode::None {
@@ -1738,6 +1761,16 @@ async fn run_terminal(
             }
         }
     }
+
+    // 探测结果无条件下发前端（堡垒机/exec 失败或超时 → tmux_installed = None），
+    // 前端收到后执行 ssh 会话的初始命令注入（tmux 集成 / 连接后自动执行）。
+    // 注意须在探测之后、中继循环启动之前发送：注入行经前端 cmd 帧排队，
+    // 中继循环启动后作为交互 channel 的首笔数据写入 PTY
+    let env = serde_json::to_string(&EnvMsg {
+        kind: "env",
+        tmux_installed,
+    })?;
+    let _ = ws_tx.send(Message::Text(env.into())).await;
 
     // 会话中断原因（session_end 帧下发给前端展示）：ExitStatus=shell 正常退出，
     // channel 收发错误按 russh 错误细分（心跳超时/服务器断开/网络错误），

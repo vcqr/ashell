@@ -161,6 +161,7 @@ export default {
   disconnectedByUser: "已由用户断开连接",
   reconnecting: "正在重新连接…",
   autoReconnected: "已自动重连成功。",
+  tmuxMissing: "远端未检测到 tmux，已跳过 tmux 自动接入。",
   sudoHint: "按回车或点击此处，自动填充已保存的密码",
   sudoHintWeak: "点击此处或按 Ctrl+Enter 自动填充已保存的密码",
   commandSuggest: {

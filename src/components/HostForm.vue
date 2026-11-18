@@ -77,6 +77,10 @@ interface FormState {
   idle_send_interval: number | null
   jump_host_id: number | null
   connect_command: string
+  /** tmux 集成（仅 SSH；bastion 时禁用） */
+  tmux_enabled: boolean
+  /** tmux 会话名（留空用 tmux 默认会话） */
+  tmux_session: string
   /** 堡垒机（交互网关）模式（仅 SSH） */
   bastion: boolean
 }
@@ -107,6 +111,8 @@ function makeInitial(): FormState {
     idle_send_interval: init?.idle_send_interval ?? null,
     jump_host_id: init?.jump_host_id ?? null,
     connect_command: init?.connect_command ?? "",
+    tmux_enabled: init?.tmux_enabled ?? false,
+    tmux_session: init?.tmux_session ?? "",
     bastion: init?.bastion ?? false,
   }
 }
@@ -251,6 +257,18 @@ const rules = computed<FormRules>(() => ({
     : [
         { required: true, message: t("hosts.form.rules.usernameRequired"), trigger: ["blur", "input"] },
       ],
+  // tmux 会话名软校验：tmux 不允许 '.' 与 ':'（会话定位语法保留字符）
+  tmux_session: [
+    {
+      validator(_rule, value: string) {
+        if ((value ?? "").trim().match(/[.:]/)) {
+          return new Error(t("hosts.form.rules.tmuxSessionInvalid"))
+        }
+        return true
+      },
+      trigger: ["blur", "input"],
+    },
+  ],
 }))
 
 function emptyToNull(v: string | null | undefined): string | null {
@@ -308,6 +326,8 @@ async function submit() {
       jump_host_id: isSsh.value ? form.jump_host_id : null,
       bastion: isSsh.value ? form.bastion : false,
       connect_command: emptyToNull(form.connect_command),
+      tmux_enabled: isSsh.value && !form.bastion && form.tmux_enabled,
+      tmux_session: emptyToNull(form.tmux_session),
     }
     emit("submit", payload)
   } else {
@@ -334,6 +354,8 @@ async function submit() {
       bastion: isSsh.value ? form.bastion : false,
       // 编辑表单总是显式发送（null = 清除）；缺省键才表示不修改
       connect_command: emptyToNull(form.connect_command),
+      tmux_enabled: isSsh.value && !form.bastion && form.tmux_enabled,
+      tmux_session: emptyToNull(form.tmux_session),
     }
     if (form.password.length > 0) payload.password = form.password
     if (form.private_key.length > 0) payload.private_key = form.private_key
@@ -702,6 +724,31 @@ function onOpPasswordDone() {
               />
             </NFormItem>
             <p class="form-field-hint">{{ t('hosts.form.connectCommandDesc') }}</p>
+            <NFormItem
+              :label="t('hosts.form.tmux')"
+              path="tmux_enabled"
+              style="margin-top: 12px"
+            >
+              <NSwitch
+                v-model:value="form.tmux_enabled"
+                :disabled="form.bastion"
+              />
+            </NFormItem>
+            <p v-if="form.bastion" class="form-field-hint">{{ t('hosts.form.tmuxBastionHint') }}</p>
+            <NFormItem
+              v-else-if="form.tmux_enabled"
+              :label="t('hosts.form.tmuxSession')"
+              path="tmux_session"
+            >
+              <NInput
+                v-model:value="form.tmux_session"
+                :placeholder="t('hosts.form.tmuxSessionPlaceholder')"
+                clearable
+              />
+            </NFormItem>
+            <p v-if="!form.bastion && form.tmux_enabled" class="form-field-hint">
+              {{ t('hosts.form.tmuxDesc') }}
+            </p>
           </NTabPane>
 
           <NTabPane v-if="isSsh" :tab="t('hosts.form.tabJump')" name="jump">

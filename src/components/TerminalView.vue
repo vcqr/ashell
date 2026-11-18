@@ -266,6 +266,9 @@ const connectElapsed = ref(0)
 let connectElapsedTimer: number | null = null
 /** 断开态输入是否已提示过：每个断开周期只提示一次，重连发起时重置 */
 let deadInputHintShown = false
+/** 远端 tmux 可用性（后端 shell 探测经 env 帧下发）：true/false = 探测成功，
+ * null = 未知（堡垒机 / exec 失败或超时）。每次 connectWs 开始时重置 */
+let tmuxInstalled: boolean | null = null
 
 // ===== SSH 认证失败重试弹窗（密码过期 / 被修改后重新输入） =====
 const authPromptVisible = ref(false)
@@ -1398,8 +1401,23 @@ function teardownWs() {
 }
 
 /**
+ * 组装 tmux 集成命令：`tmux new -A` 存在即 attach、不存在则新建。
+ * 会话名留空用 tmux 默认会话；含安全字符直接拼，否则单引号包裹转义。
+ */
+function buildTmuxCommand(session: string | null | undefined): string {
+  const name = (session ?? "").trim()
+  if (!name) return "tmux new -A"
+  const safe = /^[A-Za-z0-9_-]+$/.test(name)
+    ? name
+    : `'${name.replace(/'/g, `'\\''`)}'`
+  return `tmux new -A -s ${safe}`
+}
+
+/**
  * 连接就绪后注入初始命令（每次建连一次；PTY 会缓冲输入，shell 未出提示符也不丢字）。
- * 本地 tab 用启动设置的"本地终端初始命令"；SSH tab 用主机配置的"连接后自动执行"。
+ * 本地 tab 用启动设置的"本地终端初始命令"，在 ready 帧时注入；SSH tab 在 env 帧
+ * （shell 探测完成）时注入：先 tmux 集成（远端确认未装则跳过并提示），后"连接后
+ * 自动执行"——顺序保证后者在 tmux 会话内执行。
  */
 function sendInitCommand() {
   if (props.tab.kind === "local") {
@@ -1412,6 +1430,14 @@ function sendInitCommand() {
       props.tab.hostId !== undefined
         ? hostStore.findHost(props.tab.hostId)
         : undefined
+    if (host?.tmux_enabled) {
+      if (tmuxInstalled === false) {
+        // 探测确认远端没有 tmux：跳过注入（注入只会得到 command not found）
+        term?.writeln(`\x1b[33m[ashell] ${t("terminal.tmuxMissing")}\x1b[0m`)
+      } else {
+        sendCommand(buildTmuxCommand(host.tmux_session))
+      }
+    }
     const cmd = host?.connect_command?.trim()
     if (cmd) sendCommand(cmd)
   }
@@ -1428,6 +1454,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
   lastFatalReason = ""
   lastFatalCode = ""
   lastSessionEndCode = ""
+  tmuxInstalled = null
   progressStage.value = "tcp"
   deadInputHintShown = false
   const isLocal = props.tab.kind === "local"
@@ -1521,6 +1548,7 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           sid?: string
           accepted?: boolean
           tier?: string
+          tmux_installed?: boolean | null
         }
         if (msg.kind === "ready" && typeof msg.sid === "string") {
           emit("sid-ready", props.tab.key, msg.sid)
@@ -1542,8 +1570,10 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           // 服务端可能采用了客户端建议的尺寸，确保再同步一次
           sendResize()
           startHeartbeat()
-          // 连接就绪：注入初始命令（本地终端初始命令 / 主机连接后自动执行）
-          sendInitCommand()
+          // 连接就绪：注入本地终端初始命令。SSH 初始命令（tmux 集成 /
+          // 主机连接后自动执行）等 env 帧（shell 探测完成）后再注入，
+          // 以便远端未装 tmux 时跳过注入并提示
+          if (props.tab.kind === "local") sendInitCommand()
           if (props.active) {
             requestAnimationFrame(() => term?.focus())
           }
@@ -1561,6 +1591,15 @@ async function connectWs(opts: { newSession?: boolean } = {}) {
           ) {
             progressStage.value = m.stage
           }
+          return
+        }
+        if (msg.kind === "env") {
+          // shell 探测结果帧（tmux 可用性；堡垒机/exec 失败或超时为 null）。
+          // 同样必须在"未知帧写终端"兜底之前处理。SSH 初始命令的注入时点：
+          // 注入行经 cmd 帧排队，中继循环启动后作为交互 channel 首笔数据
+          // 写入 PTY，与探测完成时序天然衔接
+          tmuxInstalled = msg.tmux_installed === true ? true : msg.tmux_installed === false ? false : null
+          if (props.tab.kind === "ssh") sendInitCommand()
           return
         }
         if (msg.kind === "session_end") {

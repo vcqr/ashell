@@ -65,6 +65,10 @@ export interface Host {
   jump_host_id?: number | null
   /** 连接建立后自动执行的命令（终端 ready 后注入；空/缺省不执行） */
   connect_command?: string | null
+  /** tmux 集成：连接就绪后自动 tmux new -A [-s 会话名]；bastion 会话恒为 false */
+  tmux_enabled?: boolean
+  /** tmux 会话名；空/缺省用 tmux 默认会话 */
+  tmux_session?: string | null
   /** 堡垒机（交互网关）模式：登录后经菜单选择目标主机；跳过遥测钩子注入 */
   bastion?: boolean
   created_at?: string | null
@@ -104,6 +108,10 @@ export interface HostCreate {
   /** 堡垒机（交互网关）模式（仅 SSH；缺省 false） */
   bastion?: boolean
   connect_command?: string | null
+  /** tmux 集成开关（仅 SSH；缺省 false；bastion 时后端强制 false） */
+  tmux_enabled?: boolean
+  /** tmux 会话名（空/缺省用 tmux 默认会话） */
+  tmux_session?: string | null
 }
 
 export interface HostUpdate {
@@ -135,6 +143,10 @@ export interface HostUpdate {
   bastion?: boolean
   /** 缺省 = 不修改；显式传 null 表示清除 */
   connect_command?: string | null
+  /** tmux 集成开关；缺省 = 不修改 */
+  tmux_enabled?: boolean
+  /** tmux 会话名；缺省 = 不修改；显式传 null 表示清除（用 tmux 默认会话） */
+  tmux_session?: string | null
 }
 
 /** 从 ~/.ssh/config 解析出的主机条目 */
