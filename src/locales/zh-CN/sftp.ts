@@ -2,6 +2,12 @@ export default {
   title: "SFTP",
   needSession: "请先建立连接",
   dragToResize: "拖动调整宽度",
+  dragToResizeHeight: "拖动调整高度",
+  dock: {
+    right: "停靠到右侧",
+    left: "停靠到左侧",
+    bottom: "停靠到底部",
+  },
   dropHint: "释放以上传到 {path}",
   refresh: "刷新",
   close: "关闭",

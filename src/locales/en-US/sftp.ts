@@ -2,6 +2,12 @@ export default {
   title: "SFTP",
   needSession: "Please establish a connection first",
   dragToResize: "Drag to resize",
+  dragToResizeHeight: "Drag to resize height",
+  dock: {
+    right: "Dock to right",
+    left: "Dock to left",
+    bottom: "Dock to bottom",
+  },
   dropHint: "Drop to upload to {path}",
   refresh: "Refresh",
   close: "Close",

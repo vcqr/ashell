@@ -21,6 +21,9 @@ import {
   RiFocus3Line,
   RiFolderAddLine,
   RiFolderOpenLine,
+  RiLayoutBottomLine,
+  RiLayoutLeftLine,
+  RiLayoutRightLine,
   RiMacbookLine,
   RiRefreshLine,
   RiScissorsCutLine,
@@ -2982,13 +2985,77 @@ const dualPane = ref(
   typeof localStorage !== "undefined" && localStorage.getItem(DUAL_PANE_KEY) === "1",
 )
 
-// 宽度记忆/拖动/上限接线统一在 useDrawerWidth（右缘锚定）；
-// 单栏/双栏各自的 storageKey/min/default 由 resolve 按当前模式返回
+/* ---------- 停靠位置（右 / 左 / 底部，持久化） ----------
+ * 右/左停靠共用同一组宽度记忆键（都是"侧栏列宽"偏好），底部停靠是高度，
+ * 单独一组记忆键；单栏/双栏各自独立，与既有宽度键约定一致 */
+const SFTP_DOCK_KEY = "ashell:sftp-dock"
+type SftpDock = "left" | "right" | "bottom"
+const SFTP_DOCKS: readonly SftpDock[] = ["left", "right", "bottom"]
+
+function loadDock(): SftpDock {
+  try {
+    const raw = localStorage.getItem(SFTP_DOCK_KEY)
+    return SFTP_DOCKS.includes(raw as SftpDock) ? (raw as SftpDock) : "right"
+  } catch {
+    return "right"
+  }
+}
+
+const dock = ref<SftpDock>(loadDock())
+
+function persistDock() {
+  try {
+    localStorage.setItem(SFTP_DOCK_KEY, dock.value)
+  } catch {
+    // ignore
+  }
+}
+
+/** 切换停靠位置：先把当前尺寸存回旧 dock 的记忆键，再换 dock 并加载新键
+ *  （bottom 的记忆值是高度，与左右宽度互不污染） */
+function setDock(next: SftpDock) {
+  if (dock.value === next) return
+  saveWidth(width.value)
+  dock.value = next
+  persistDock()
+  width.value = loadWidth()
+}
+
+// 宽度/高度记忆、拖动与上限接线统一在 useDrawerWidth；
+// 单栏/双栏/停靠方位各自的 storageKey/min/default/anchor 由 resolve 按当前状态返回
 const { width, resizing, loadWidth, saveWidth, onResizeStart } = useDrawerWidth({
-  resolve: () =>
-    dualPane.value
-      ? { storageKey: "ashell:sftp-dual-width", minWidth: 760, defaultWidth: 1040 }
-      : { storageKey: "ashell:sftp-width", minWidth: 480, defaultWidth: 800 },
+  resolve: () => {
+    if (dock.value === "bottom") {
+      return dualPane.value
+        ? {
+            storageKey: "ashell:sftp-dual-height",
+            minWidth: 300,
+            defaultWidth: 480,
+            anchor: "bottom",
+          }
+        : {
+            storageKey: "ashell:sftp-height",
+            minWidth: 260,
+            defaultWidth: 440,
+            anchor: "bottom",
+          }
+    }
+    // 左右停靠共用侧栏列宽键；anchor 必须跟随停靠方位——拖拽数学依赖锚定边
+    // （右缘=视口宽-光标X、左缘=光标X），漏传左停靠会沿用右缘公式导致方向反向
+    return dualPane.value
+      ? {
+          storageKey: "ashell:sftp-dual-width",
+          minWidth: 760,
+          defaultWidth: 1040,
+          anchor: dock.value,
+        }
+      : {
+          storageKey: "ashell:sftp-width",
+          minWidth: 480,
+          defaultWidth: 800,
+          anchor: dock.value,
+        }
+  },
 })
 
 /** 本地栏当前目录，持久化 */
@@ -3123,12 +3190,29 @@ const switchClosed = usePanelSwitchClosed("sftp");
 const panelStyle = computed(() => {
   // 独立窗口模式：铺满窗口，由 .standalone 类接管布局
   if (props.standalone) return {}
+  const transition =
+    resizing.value || switchClosed.value
+      ? "none"
+      : "transform 0.25s ease, box-shadow 0.15s ease"
+  // 底部停靠：width 实为高度记忆值，收起时向下平移出视口（锚定 bottom）
+  if (dock.value === "bottom") {
+    return {
+      height: `${width.value}px`,
+      transition,
+      transform: props.open ? "translateY(0)" : "translateY(100%)",
+    }
+  }
+  // 左停靠：活动栏在右缘，直接向左平移即可完全离屏
+  if (dock.value === "left") {
+    return {
+      width: `${width.value}px`,
+      transition,
+      transform: props.open ? "translateX(0)" : "translateX(-100%)",
+    }
+  }
   return {
     width: `${width.value}px`,
-    transition:
-      resizing.value || switchClosed.value
-        ? "none"
-        : "transform 0.25s ease, box-shadow 0.15s ease",
+    transition,
     // 关闭态平移叠加活动栏宽度，理由同 AiAssistant（锚定 right: 活动栏宽）
     transform: props.open
       ? "translateX(0)"
@@ -3171,7 +3255,13 @@ function openInStandaloneWindow() {
     <aside
       ref="panelRef"
       class="sftp-panel"
-      :class="{ open: props.open, resizing: resizing, standalone: props.standalone }"
+      :class="{
+        open: props.open,
+        resizing: resizing,
+        standalone: props.standalone,
+        'dock-left': dock === 'left',
+        'dock-bottom': dock === 'bottom',
+      }"
       :style="panelStyle"
       :aria-hidden="!props.open"
       @dragover="onPanelDragOver"
@@ -3182,7 +3272,7 @@ function openInStandaloneWindow() {
       <div
         v-if="!props.standalone"
         class="resize-handle"
-        :title="t('common.dragToResize')"
+        :title="dock === 'bottom' ? t('sftp.dragToResizeHeight') : t('common.dragToResize')"
         @pointerdown="onResizeStart"
       />
 
@@ -3222,6 +3312,43 @@ function openInStandaloneWindow() {
           </NTooltip>
         </div>
         <NSpace :size="6" align="center" :wrap="false">
+          <!-- 停靠位置三连按钮：右/左/底部，当前停靠项高亮（primary） -->
+          <NButton
+            size="small"
+            quaternary
+            circle
+            :type="dock === 'right' ? 'primary' : 'default'"
+            :title="t('sftp.dock.right')"
+            @click="setDock('right')"
+          >
+            <template #icon>
+              <NIcon><RiLayoutRightLine /></NIcon>
+            </template>
+          </NButton>
+          <NButton
+            size="small"
+            quaternary
+            circle
+            :type="dock === 'left' ? 'primary' : 'default'"
+            :title="t('sftp.dock.left')"
+            @click="setDock('left')"
+          >
+            <template #icon>
+              <NIcon><RiLayoutLeftLine /></NIcon>
+            </template>
+          </NButton>
+          <NButton
+            size="small"
+            quaternary
+            circle
+            :type="dock === 'bottom' ? 'primary' : 'default'"
+            :title="t('sftp.dock.bottom')"
+            @click="setDock('bottom')"
+          >
+            <template #icon>
+              <NIcon><RiLayoutBottomLine /></NIcon>
+            </template>
+          </NButton>
           <NButton
             v-if="!props.standalone"
             size="small"
@@ -3841,6 +3968,30 @@ function openInStandaloneWindow() {
   z-index: 1010;
 }
 
+/* 左停靠：贴左缘，分隔边与投影翻到右侧；收起向左平移（panelStyle） */
+.sftp-panel.dock-left {
+  right: auto;
+  left: 0;
+  border-left: none;
+  border-right: 1px solid var(--ashell-border);
+}
+
+.sftp-panel.dock-left.open {
+  box-shadow: 8px 0 24px var(--ashell-shadow);
+}
+
+/* 底部停靠：横向铺满（右缘仍让位活动栏），高度由 panelStyle 内联提供 */
+.sftp-panel.dock-bottom {
+  left: 0;
+  top: auto;
+  border-left: none;
+  border-top: 1px solid var(--ashell-border);
+}
+
+.sftp-panel.dock-bottom.open {
+  box-shadow: 0 -8px 24px var(--ashell-shadow);
+}
+
 /* 独立窗口模式：面板铺满窗口（顶部让位给窗口标题栏），无侧边阴影 */
 .sftp-panel.standalone {
   left: 0;
@@ -3867,6 +4018,20 @@ function openInStandaloneWindow() {
   z-index: 1;
   background: transparent;
   transition: background 0.15s ease;
+}
+
+/* 左停靠：手柄在右缘；底部停靠：手柄移到顶缘（横向通条） */
+.sftp-panel.dock-left .resize-handle {
+  left: auto;
+  right: -3px;
+}
+
+.sftp-panel.dock-bottom .resize-handle {
+  top: -3px;
+  left: 0;
+  width: 100%;
+  height: 6px;
+  cursor: row-resize;
 }
 
 .resize-handle:hover,
@@ -3904,10 +4069,11 @@ function openInStandaloneWindow() {
   align-items: center;
   justify-content: space-between;
   flex-wrap: nowrap;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 14px 16px;
+  /* 紧凑化：底部停靠时纵向空间昂贵，标题行只留最小呼吸感 */
+  padding: 6px 12px;
   border-bottom: 1px solid var(--ashell-border-soft);
   flex-shrink: 0;
 }
@@ -3917,7 +4083,7 @@ function openInStandaloneWindow() {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 12px 16px;
+  padding: 8px 12px;
 }
 
 .drawer-title-wrap {
@@ -3931,7 +4097,7 @@ function openInStandaloneWindow() {
 .drawer-title {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ashell-text-strong);
   overflow: hidden;
@@ -4050,15 +4216,15 @@ function openInStandaloneWindow() {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  gap: 10px;
+  gap: 6px;
 }
 
 .path-bar {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 8px;
-  padding: 4px 0;
+  gap: 6px;
+  padding: 2px 0;
   min-width: 0;
 }
 
@@ -4249,7 +4415,7 @@ function openInStandaloneWindow() {
   flex-wrap: wrap;
   flex-shrink: 0;
   min-width: 0;
-  padding-bottom: 10px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--ashell-border-soft);
 }
 
