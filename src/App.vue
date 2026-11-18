@@ -605,7 +605,14 @@ if (!isTauri) {
   const GUARD_FKEYS = new Set(["F1", "F3", "F5", "F6", "F7", "F10"]);
   const onGuardKey = (e: KeyboardEvent) => {
     if (keybindingStore.recording) return;
-    if (e.shiftKey) return; // Shift 组合多为浏览器窗口功能，终端场景少用
+    // Ctrl+Shift+B = 活动栏开关（panel.activityBar 默认键位），web 版 Chrome
+    // 同键是书签栏开关——特判防下浏览器默认，放行后 useGlobalShortcuts
+    // 照常收到并处理面板开关（guard 只 preventDefault 不阻断传播）
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "b") {
+      e.preventDefault();
+      return;
+    }
+    if (e.shiftKey) return; // 其余 Shift 组合多为浏览器窗口功能，终端场景少用
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (
       (e.ctrlKey || e.metaKey || e.altKey) &&

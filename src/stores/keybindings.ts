@@ -257,9 +257,11 @@ export const SHORTCUT_ACTIONS: ShortcutActionDef[] = [
     defaults: {
       mac: { key: "b", ctrl: false, meta: true, shift: false, alt: false },
       // 不用裸 Ctrl+B：tmux 默认前缀就是 C-b，终端里按 Ctrl+B 会被这里
-      // 拦截消费（侧边栏开关），tmux 切窗口/建窗口全部失效。加 Alt 既有
-      // 别于 tmux 前缀，也不撞浏览器快捷键（Ctrl+Shift+B 是书签栏开关）。
-      win: { key: "b", ctrl: true, meta: false, shift: false, alt: true },
+      // 拦截消费（侧边栏开关），tmux 切窗口/建窗口全部失效。也不用
+      // Ctrl+Alt+B：Ctrl+Alt 在 Windows 是 AltGr 合成键，部分布局/输入法
+      // 下会触发系统行为。取 Ctrl+Shift+B 与面板家族（Ctrl+Shift+I/P）一致，
+      // web 版 Chrome 书签栏开关同键，由 GUARD 特判防下（见 App.vue）。
+      win: { key: "b", ctrl: true, meta: false, shift: true, alt: false },
     },
   },
 ];
@@ -307,12 +309,15 @@ function loadConfig(): KeybindingsMap {
         result[def.id] = v;
       }
     }
-    // 存量迁移：panel.activityBar 旧 win 默认是裸 Ctrl+B，撞 tmux 前缀
-    // （终端里按 Ctrl+B 被侧边栏开关消费，tmux 切窗口全部失效）。恰为旧
-    // 默认的迁移到新默认；用户显式改成其他组合（含改回 Ctrl+B）的尊重不动
-    if (sameBinding(result["panel.activityBar"], {
-      key: "b", ctrl: true, meta: false, shift: false, alt: false,
-    })) {
+    // 存量迁移：panel.activityBar 历史默认伤过两类键位——裸 Ctrl+B 撞 tmux
+    // 前缀（终端里被侧边栏开关消费，tmux 切窗口全部失效），Ctrl+Alt+B 撞
+    // Windows 的 AltGr 合成键。恰为这两个历史值的迁移到当前默认；用户显式
+    // 改成其他组合（含又改回历史值）的尊重不动
+    const LEGACY_ACTIVITY_BAR = [
+      { key: "b", ctrl: true, meta: false, shift: false, alt: false }, // 裸 Ctrl+B
+      { key: "b", ctrl: true, meta: false, shift: false, alt: true }, // Ctrl+Alt+B
+    ];
+    if (LEGACY_ACTIVITY_BAR.some((l) => sameBinding(result["panel.activityBar"], l))) {
       result["panel.activityBar"] = defaults["panel.activityBar"];
     }
     return result;
