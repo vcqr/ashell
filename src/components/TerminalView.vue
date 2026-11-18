@@ -2587,6 +2587,17 @@ onBeforeUnmount(() => {
   padding-left: 8px;
   box-sizing: border-box;
   contain: layout paint;
+  /* 终端滚动条 thumb 颜色，与全局 ::-webkit-scrollbar 同色系（src/assets/main.css），
+     浅色主题用 :root[data-ashell-theme="light"] 覆盖 */
+  --term-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --term-scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+  --term-scrollbar-thumb-active: rgba(255, 255, 255, 0.32);
+}
+
+:root[data-ashell-theme="light"] .terminal-host {
+  --term-scrollbar-thumb: rgba(20, 24, 33, 0.18);
+  --term-scrollbar-thumb-hover: rgba(20, 24, 33, 0.3);
+  --term-scrollbar-thumb-active: rgba(20, 24, 33, 0.4);
 }
 
 /* SFTP 面板行拖入终端时的落点提示（useFileDrag 拖拽期给 body 加的 class）：
@@ -2636,6 +2647,32 @@ onBeforeUnmount(() => {
    原生滚动条的 thumb 上下跳动是视觉抖动的直接来源之一。 */
 .terminal-host :deep(.xterm.enable-mouse-events .xterm-viewport) {
   overflow: hidden !important;
+}
+
+/* xterm 6 自绘滚动条（VS Code ScrollableElement 移植）默认是 14px 方角矩形铺满
+   轨道，观感生硬。改成胶囊 thumb：透明 border + background-clip:padding-box 让视觉
+   宽度只剩 8px（与全局 ::-webkit-scrollbar 一致），命中区仍是 JS 设定的整条 14px 轨道。
+   颜色必须 !important——xterm 运行时会注入运行时样式表按 .slider/.slider:hover/.slider.active
+   写 background，普通优先级盖不过它。 */
+.terminal-host :deep(.xterm .xterm-scrollable-element > .scrollbar > .slider) {
+  box-sizing: border-box;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+  background-color: var(--term-scrollbar-thumb) !important;
+  transition: background-color 120ms ease;
+}
+
+.terminal-host :deep(.xterm .xterm-scrollable-element > .scrollbar > .slider:hover),
+.terminal-host :deep(.xterm .xterm-scrollable-element > .scrollbar:hover > .slider) {
+  background-color: var(--term-scrollbar-thumb-hover) !important;
+}
+
+/* 拖拽中（.active 由 JS 在 pointerdown 时加到 thumb 上）。两档都要：拖拽把指针移出
+   thumb 仍在轨道内时，仅有 :hover 的版本会盖掉单写 .slider.active 的低优先级规则 */
+.terminal-host :deep(.xterm .xterm-scrollable-element > .scrollbar > .slider.active),
+.terminal-host :deep(.xterm .xterm-scrollable-element > .scrollbar:hover > .slider.active) {
+  background-color: var(--term-scrollbar-thumb-active) !important;
 }
 
 .search-bar {
