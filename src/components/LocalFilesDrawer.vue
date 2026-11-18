@@ -387,7 +387,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 14px;
+  /* 与各抽屉统一的紧凑头部规格（同 SftpDrawer） */
+  padding: 6px 12px;
   border-bottom: 1px solid var(--ashell-border-soft);
   flex-shrink: 0;
 }
@@ -407,7 +408,7 @@ onBeforeUnmount(() => {
 }
 
 .drawer-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ashell-text-strong);
   white-space: nowrap;

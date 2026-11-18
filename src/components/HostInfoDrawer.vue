@@ -1008,10 +1008,11 @@ const panelStyle = computed(() => {
   align-items: center;
   justify-content: space-between;
   flex-wrap: nowrap;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 14px 16px;
+  /* 与各抽屉统一的紧凑头部规格（同 SftpDrawer） */
+  padding: 6px 12px;
   border-bottom: 1px solid var(--ashell-border-soft);
   flex-shrink: 0;
 }
@@ -1035,7 +1036,7 @@ const panelStyle = computed(() => {
 .drawer-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ashell-text-strong);
   overflow: hidden;

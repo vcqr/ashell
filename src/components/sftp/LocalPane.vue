@@ -1569,7 +1569,7 @@ onMounted(() => {
   min-height: 0;
   height: 100%;
   /* 与远程栏 .remote-pane 同距：两栏各行的垂直节奏一致，表格顶边对齐 */
-  gap: 10px;
+  gap: 6px;
 }
 
 .pane-label {
@@ -1586,8 +1586,8 @@ onMounted(() => {
   align-items: center;
   flex-wrap: nowrap;
   gap: 6px;
-  /* 与远程栏 .path-bar 同款（4px 上下内距），保证地址栏行高等高 */
-  padding: 4px 0;
+  /* 与远程栏 .path-bar 同款（2px 上下内距），保证地址栏行高等高 */
+  padding: 2px 0;
   min-width: 0;
   flex-shrink: 0;
 }
@@ -1597,7 +1597,7 @@ onMounted(() => {
 }
 
 /* 工具行：与远程栏 SftpDrawer 的 .toolbar 同规格
-   （28px 按钮行 + 10px 底距 + 1px 分隔线），双栏表格顶边对齐 */
+   （28px 按钮行 + 6px 底距 + 1px 分隔线），双栏表格顶边对齐 */
 .toolbar {
   display: flex;
   align-items: center;
@@ -1605,7 +1605,7 @@ onMounted(() => {
   flex-wrap: wrap;
   flex-shrink: 0;
   min-width: 0;
-  padding-bottom: 10px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--ashell-border-soft);
 }
 
@@ -1621,11 +1621,12 @@ onMounted(() => {
   background: var(--ashell-border-soft);
 }
 
-/* 过滤框靠右：基准宽度与远程栏 filter-input 一致，窄面板时可收缩换行 */
+/* 过滤框弹性填充：吃掉图标组与过滤框之间的空隙（原固定 170px + margin-left:auto
+   在宽面板下留大片死区）。basis 必须给显式 px——NInput 根元素 width:100%，
+   basis:auto 会按整行参与换行计算，直接被挤到第二行独占一行 */
 .filter-input {
-  flex: 0 1 170px;
-  min-width: 0;
-  margin-left: auto;
+  flex: 1 1 170px;
+  min-width: 120px;
 }
 
 .address-bar {

@@ -2384,14 +2384,15 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  /* 与各抽屉统一的紧凑头部规格（同 SftpDrawer） */
+  padding: 6px 12px;
   border-bottom: 1px solid var(--ashell-border-soft);
   flex-shrink: 0;
 }
 
 .ai-avatar {
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   border-radius: 10px;
   background: linear-gradient(
     135deg,
@@ -2406,7 +2407,7 @@ defineExpose({
 }
 
 .title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ashell-text-strong);
   line-height: 1.2;
@@ -2414,6 +2415,7 @@ defineExpose({
 
 .subtitle {
   font-size: 11px;
+  line-height: 1.2;
   color: var(--ashell-text-subtle);
 }
 
